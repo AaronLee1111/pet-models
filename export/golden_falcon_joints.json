@@ -1,0 +1,77 @@
+{
+  "note": "Pivots are part origins in Blender axes (X = model's left, Y = back, Z = up), in studs, ground at Z=0; model faces -Y. Connect each part to its parent with a Motor6D placed at the part's pivot.",
+  "parts": {
+    "Body": {
+      "parent": null,
+      "tris": 2278,
+      "pivot_blender_studs": [
+        0.0,
+        0.085,
+        0.93
+      ]
+    },
+    "Head": {
+      "parent": "Body",
+      "tris": 1884,
+      "pivot_blender_studs": [
+        0.0,
+        -0.344,
+        1.503
+      ]
+    },
+    "Beak": {
+      "parent": "Head",
+      "tris": 44,
+      "pivot_blender_studs": [
+        0.0,
+        -0.999,
+        1.765
+      ]
+    },
+    "WingL": {
+      "parent": "Body",
+      "tris": 500,
+      "pivot_blender_studs": [
+        0.34,
+        0.085,
+        1.431
+      ]
+    },
+    "WingR": {
+      "parent": "Body",
+      "tris": 500,
+      "pivot_blender_studs": [
+        -0.34,
+        0.085,
+        1.431
+      ]
+    },
+    "Tail": {
+      "parent": "Body",
+      "tris": 162,
+      "pivot_blender_studs": [
+        0.0,
+        0.765,
+        0.787
+      ]
+    },
+    "LegL": {
+      "parent": "Body",
+      "tris": 610,
+      "pivot_blender_studs": [
+        0.233,
+        0.192,
+        0.537
+      ]
+    },
+    "LegR": {
+      "parent": "Body",
+      "tris": 610,
+      "pivot_blender_studs": [
+        -0.233,
+        0.192,
+        0.537
+      ]
+    }
+  }
+}
