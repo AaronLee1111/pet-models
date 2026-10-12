@@ -1,0 +1,17 @@
+{
+  "name": "MemeParty",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "PartyShared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "PartyServer": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "PartyClient": { "$path": "src/client" }
+      }
+    }
+  }
+}

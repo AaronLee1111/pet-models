@@ -1,0 +1,48 @@
+{
+  "name": "MemeParty",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "PartyShared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "PartyServer": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "PartyClient": { "$path": "src/client" }
+      }
+    },
+    "Workspace": {
+      "$properties": { "FilteringEnabled": true },
+      "PartyLobby": {
+        "$className": "Model",
+        "Floor": {
+          "$className": "Part",
+          "$properties": {
+            "Anchored": true,
+            "Size": [80, 2, 80],
+            "Position": [0, -1, 0],
+            "Color": [1, 0.67, 0.9],
+            "Material": "SmoothPlastic",
+            "TopSurface": "Smooth",
+            "BottomSurface": "Smooth"
+          }
+        },
+        "LobbySpawn": {
+          "$className": "SpawnLocation",
+          "$properties": {
+            "Anchored": true,
+            "Size": [12, 1, 12],
+            "Position": [0, 0.5, 0],
+            "Color": [1, 0.86, 0.35],
+            "Neutral": true,
+            "Duration": 0,
+            "TopSurface": "Smooth",
+            "BottomSurface": "Smooth"
+          }
+        }
+      }
+    }
+  }
+}

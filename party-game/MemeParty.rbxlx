@@ -1,0 +1,3460 @@
+<roblox version="4">
+  <Item class="ReplicatedStorage" referent="0">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">PartyShared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[--[[
+	Config
+	Shared tuning knobs for the party framework. Safe to require from server and client.
+	Everything timing/coin related lives here so designers can tweak without touching logic.
+]]
+
+local Config = {}
+
+-- Match shape ---------------------------------------------------------------
+
+-- Every round always has exactly this many participants; bots fill empty slots.
+Config.PlayersPerMatch = 4
+
+-- Layouts a minigame can declare in Info.Layout.
+Config.Layouts = {
+	FFA = "FFA", -- everyone for themselves
+	OneVsThree = "1v3", -- one solo player vs a team of three
+	TwoVsTwo = "2v2", -- two teams of two
+}
+
+-- Phase timings (seconds) ----------------------------------------------------
+
+Config.IntermissionDuration = 5 -- lobby wait before the vote opens
+Config.VoteChoices = 3 -- cards shown on the vote screen
+Config.VoteDuration = 12
+Config.InstructionsDuration = 7
+Config.CountdownFrom = 3
+Config.FinishBannerDuration = 2 -- "FINISH!" beat before teleporting back
+Config.ResultsDuration = 8
+
+-- Coins ----------------------------------------------------------------------
+
+-- Coins awarded by placement. Ties share a placement, so two 1st places both get 10.
+Config.CoinsByPlacement = { 10, 6, 3, 1 }
+
+-- World layout -----------------------------------------------------------------
+
+-- Arenas are built here, far away from the lobby so they never overlap it.
+Config.ArenaOrigin = Vector3.new(0, 80, 600)
+-- Eliminated participants watch from a glass box this far above the arena origin.
+Config.SpectatorOffset = Vector3.new(0, 45, 0)
+-- Anyone this many studs below the arena origin counts as having fallen out.
+Config.FallOutDepth = 25
+
+-- Movement defaults restored after every round.
+Config.DefaultWalkSpeed = 16
+Config.DefaultJumpPower = 50
+Config.DefaultJumpHeight = 7.2
+
+-- Bots ---------------------------------------------------------------------------
+
+Config.BotThinkInterval = 0.2 -- how often each bot's brain runs
+Config.BotVoteDelay = { 1.5, 5 } -- bots "think" about their vote for this long (min, max)
+Config.BotNames = {
+	"Doge",
+	"Big Chungus",
+	"Stonks",
+	"Sus Bean",
+	"Nyan",
+	"Shrek",
+	"Grumpy",
+	"Bonk",
+	"Pepe Jr",
+	"Rickroll",
+}
+
+-- Networking -------------------------------------------------------------------
+
+Config.InputRateLimit = 20 -- max inputs per second per player before they are dropped
+
+-- The extra vote card shown when there are fewer minigames than Config.VoteChoices.
+Config.RandomChoice = {
+	Id = "__random",
+	Name = "🎲 Surprise Me",
+	Description = "Can't decide? Let chaos pick for you.",
+	Layout = "???",
+}
+
+return Config
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Net</string>
+          <string name="Source"><![CDATA[--[[
+	Net
+	The two RemoteEvents the whole framework uses, plus the message vocabulary.
+
+	  PartyState  (server -> client): authoritative state. The client only ever renders this.
+	  PartyInput  (client -> server): inputs only (ready / vote / minigame action).
+	                                  The server validates every one of them.
+
+	The server creates the remotes; clients wait for them.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local FOLDER_NAME = "PartyRemotes"
+
+local Net = {}
+
+-- Phases the server walks through each round. The client shows a screen per phase.
+Net.Phase = {
+	Lobby = "Lobby",
+	Vote = "Vote",
+	Instructions = "Instructions",
+	Countdown = "Countdown",
+	Playing = "Playing",
+	Finished = "Finished",
+	Results = "Results",
+}
+
+-- Server -> client message types (message.Type).
+Net.Message = {
+	Phase = "Phase", -- full phase change; carries everything needed to draw that screen
+	VoteUpdate = "VoteUpdate", -- live vote counts during the Vote phase
+	Status = "Status", -- persistent HUD line set by the minigame ("Doge has the potato!")
+	Toast = "Toast", -- short-lived feed message ("BOOM!")
+}
+
+-- Client -> server input kinds (payload.Kind).
+Net.Input = {
+	Ready = "Ready", -- client finished loading; server replies with a state snapshot
+	Vote = "Vote", -- payload.Choice = index of the vote card
+	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
+}
+
+local function getFolder(): Instance
+	if RunService:IsServer() then
+		local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME)
+		if not folder then
+			folder = Instance.new("Folder")
+			folder.Name = FOLDER_NAME
+			folder.Parent = ReplicatedStorage
+		end
+		return folder
+	end
+	return ReplicatedStorage:WaitForChild(FOLDER_NAME)
+end
+
+local function getRemote(name: string): RemoteEvent
+	local folder = getFolder()
+	if RunService:IsServer() then
+		local remote = folder:FindFirstChild(name)
+		if not remote then
+			remote = Instance.new("RemoteEvent")
+			remote.Name = name
+			remote.Parent = folder
+		end
+		return remote :: RemoteEvent
+	end
+	return folder:WaitForChild(name) :: RemoteEvent
+end
+
+function Net.stateRemote(): RemoteEvent
+	return getRemote("PartyState")
+end
+
+function Net.inputRemote(): RemoteEvent
+	return getRemote("PartyInput")
+end
+
+return Net
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="4">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="5">
+      <Properties>
+        <string name="Name">PartyServer</string>
+      </Properties>
+      <Item class="ModuleScript" referent="6">
+        <Properties>
+          <string name="Name">Arena</string>
+          <string name="Source"><![CDATA[--[[
+	Arena
+	World helpers owned by the framework (minigames build their own map *inside* the arena):
+	  * the lobby (built automatically if the place has no SpawnLocation)
+	  * a fresh arena Folder per round, positioned at Config.ArenaOrigin
+	  * the glass spectator box eliminated participants are sent to
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local Arena = {}
+
+local function makePart(props): Part
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	for key, value in props do
+		(part :: any)[key] = value
+	end
+	return part
+end
+
+-- Returns the lobby spawn, building a simple lobby first if the place has none.
+function Arena.ensureLobby(): SpawnLocation
+	local existing = Workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+	if existing then
+		return existing
+	end
+
+	local lobby = Instance.new("Model")
+	lobby.Name = "PartyLobby"
+
+	makePart({
+		Name = "Floor",
+		Size = Vector3.new(80, 2, 80),
+		Position = Vector3.new(0, -1, 0),
+		Color = Color3.fromRGB(255, 170, 230),
+		Material = Enum.Material.SmoothPlastic,
+		Parent = lobby,
+	})
+
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "LobbySpawn"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(12, 1, 12)
+	spawn.Position = Vector3.new(0, 0.5, 0)
+	spawn.Color = Color3.fromRGB(255, 220, 90)
+	spawn.Neutral = true
+	spawn.Duration = 0 -- no forcefield; it would block hot potato passes
+	spawn.Parent = lobby
+
+	lobby.Parent = Workspace
+	return spawn
+end
+
+-- A spot in a ring around the lobby spawn so returning players don't stack up.
+function Arena.lobbySpot(index: number): CFrame
+	local spawn = Arena.ensureLobby()
+	local angle = (index - 1) * (math.pi * 2 / Config.PlayersPerMatch)
+	local offset = Vector3.new(math.cos(angle) * 10, 4, math.sin(angle) * 10)
+	local position = spawn.Position + offset
+	return CFrame.lookAt(position, Vector3.new(spawn.Position.X, position.Y, spawn.Position.Z))
+end
+
+local function buildSpectatorBox(parent: Instance, origin: CFrame): CFrame
+	local box = Instance.new("Model")
+	box.Name = "SpectatorBox"
+
+	local center = origin.Position + Config.SpectatorOffset
+	local size = 28
+	makePart({
+		Name = "Glass",
+		Size = Vector3.new(size, 1, size),
+		Position = center,
+		Transparency = 0.7,
+		Material = Enum.Material.Glass,
+		Color = Color3.fromRGB(170, 230, 255),
+		Parent = box,
+	})
+	-- Low invisible walls so spectators can't wander off the glass.
+	for i = 0, 3 do
+		local angle = i * math.pi / 2
+		local wallCenter = center + Vector3.new(math.cos(angle) * size / 2, 4, math.sin(angle) * size / 2)
+		makePart({
+			Name = "Wall",
+			Size = Vector3.new(1, 8, size),
+			CFrame = CFrame.new(wallCenter) * CFrame.Angles(0, -angle, 0),
+			Transparency = 1,
+			Parent = box,
+		})
+	end
+	box.Parent = parent
+	return CFrame.new(center + Vector3.new(0, 4, 0))
+end
+
+--[[
+	Creates the arena object handed to Minigame:Setup(arena, ...):
+	  arena.Folder          parent everything you build here; it is destroyed after the round
+	  arena.Origin          CFrame at the centre of the play space
+	  arena.SpectatorCFrame where eliminated participants are sent
+]]
+function Arena.create(minigameName: string)
+	local folder = Instance.new("Folder")
+	folder.Name = "Arena_" .. minigameName
+	folder.Parent = Workspace
+
+	local origin = CFrame.new(Config.ArenaOrigin)
+	return {
+		Folder = folder,
+		Origin = origin,
+		SpectatorCFrame = buildSpectatorBox(folder, origin),
+	}
+end
+
+function Arena.destroy(arena)
+	if arena and arena.Folder then
+		arena.Folder:Destroy()
+	end
+end
+
+return Arena
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
+          <string name="Name">BotService</string>
+          <string name="Source"><![CDATA[--[[
+	BotService
+	Owns the AI players that fill empty seats.
+
+	  BotService.getBots(count)    returns `count` bots with living bodies, creating/despawning as needed
+	  BotService.setBrain(fn)      fn(bot, dt) runs every Config.BotThinkInterval for each live bot;
+	                               the MinigameManager points this at the active minigame's UpdateBot
+	  BotService.setActionHandler  how bot:Input(action) reaches the server (same path as player input)
+
+	The Bot object a minigame's UpdateBot(bot, dt) receives:
+	  bot.Participant              the bot's Participant for this round
+	  bot.Memory                   scratch table, wiped every round - store your per-bot state here
+	  bot.Skill                    0..1, use it to make some bots sloppier than others
+	  bot:GetPosition()            Vector3?
+	  bot:MoveTo(position)         walk towards a point
+	  bot:Stop()
+	  bot:Jump()
+	  bot:Input(actionName)        press a minigame action exactly like a player would
+	  bot:IsAlive()
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local BotService = {}
+
+local rng = Random.new()
+local bots = {} -- every bot we currently own, in seat order
+local nextBotNumber = 0
+local brain: ((any, number) -> ())? = nil
+local actionHandler: ((any, string) -> ())? = nil
+local botFolder: Folder? = nil
+
+-- Bot ------------------------------------------------------------------------------
+
+local Bot = {}
+Bot.__index = Bot
+
+function Bot:IsAlive(): boolean
+	local model = self.Model
+	local humanoid = self.Humanoid
+	return model ~= nil and model.Parent ~= nil and humanoid ~= nil and humanoid.Health > 0
+end
+
+function Bot:GetPosition(): Vector3?
+	return if self:IsAlive() then self.Root.Position else nil
+end
+
+function Bot:MoveTo(position: Vector3)
+	if self:IsAlive() then
+		self.Humanoid:MoveTo(position)
+	end
+end
+
+function Bot:Stop()
+	if self:IsAlive() then
+		self.Humanoid:MoveTo(self.Root.Position)
+	end
+end
+
+function Bot:Jump()
+	if self:IsAlive() then
+		self.Humanoid.Jump = true
+	end
+end
+
+function Bot:Input(action: string)
+	if actionHandler and self.Participant then
+		actionHandler(self.Participant, action)
+	end
+end
+
+-- Bodies -----------------------------------------------------------------------------
+
+local function getFolder(): Folder
+	if not botFolder or not botFolder.Parent then
+		local folder = Instance.new("Folder")
+		folder.Name = "PartyBots"
+		folder.Parent = Workspace
+		botFolder = folder
+	end
+	return botFolder :: Folder
+end
+
+-- Plain blocky rig, only used if Roblox can't build an avatar (e.g. asset service hiccup).
+local function buildFallbackRig(color: Color3): Model
+	local model = Instance.new("Model")
+
+	local root = Instance.new("Part")
+	root.Name = "HumanoidRootPart"
+	root.Size = Vector3.new(2, 2, 1)
+	root.Color = color
+	root.Parent = model
+
+	local head = Instance.new("Part")
+	head.Name = "Head"
+	head.Size = Vector3.new(1.6, 1.6, 1.6)
+	head.Color = color
+	head.CFrame = root.CFrame * CFrame.new(0, 1.8, 0)
+	head.Parent = model
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = root
+	weld.Part1 = head
+	weld.Parent = root
+
+	local humanoid = Instance.new("Humanoid")
+	humanoid.HipHeight = 2
+	humanoid.Parent = model
+
+	model.PrimaryPart = root
+	return model
+end
+
+local function buildBody(name: string): Model
+	local color = Color3.fromHSV(rng:NextNumber(), 0.6, 1)
+	local description = Instance.new("HumanoidDescription")
+	description.HeadColor = color
+	description.TorsoColor = color
+	description.LeftArmColor = color
+	description.RightArmColor = color
+	description.LeftLegColor = color:Lerp(Color3.new(0, 0, 0), 0.3)
+	description.RightLegColor = color:Lerp(Color3.new(0, 0, 0), 0.3)
+
+	local ok, model = pcall(function()
+		return Players:CreateHumanoidModelFromDescription(description, Enum.HumanoidRigType.R15)
+	end)
+	if not ok or not model then
+		warn("[BotService] Avatar build failed, using fallback rig:", model)
+		model = buildFallbackRig(color)
+	end
+
+	model.Name = name
+	local humanoid = model:FindFirstChildOfClass("Humanoid") :: Humanoid
+	humanoid.DisplayName = "🤖 " .. name
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Subject
+	return model
+end
+
+-- Gives the bot a fresh body at `cframe`, replacing a dead or missing one.
+local function respawn(bot, cframe: CFrame)
+	if bot.Model then
+		bot.Model:Destroy()
+	end
+	local model = buildBody(bot.Name)
+	model:PivotTo(cframe)
+	model.Parent = getFolder()
+
+	bot.Model = model
+	bot.Humanoid = model:FindFirstChildOfClass("Humanoid")
+	bot.Root = model:FindFirstChild("HumanoidRootPart")
+	-- Server owns bot physics so MoveTo is smooth and nobody can hijack bots.
+	bot.Root:SetNetworkOwner(nil)
+end
+
+local function pickName(): string
+	local used = {}
+	for _, bot in bots do
+		used[bot.Name] = true
+	end
+	local candidates = {}
+	for _, name in Config.BotNames do
+		if not used[name] then
+			table.insert(candidates, name)
+		end
+	end
+	if #candidates == 0 then
+		return "Bot " .. nextBotNumber
+	end
+	return candidates[rng:NextInteger(1, #candidates)]
+end
+
+local function createBot()
+	nextBotNumber += 1
+	local bot = setmetatable({
+		Id = "bot_" .. nextBotNumber,
+		Name = pickName(),
+		Skill = rng:NextNumber(0.3, 1),
+		Memory = {},
+		Participant = nil,
+		Model = nil,
+		Humanoid = nil,
+		Root = nil,
+	}, Bot)
+	return bot
+end
+
+-- Public API -------------------------------------------------------------------------
+
+--[[
+	Returns exactly `count` bots, each with a living body somewhere near `spawnAt(index)`.
+	Extra bots from a previous round (e.g. a real player joined) are removed.
+]]
+function BotService.getBots(count: number, spawnAt: (number) -> CFrame)
+	while #bots > count do
+		local bot = table.remove(bots) :: any
+		if bot.Model then
+			bot.Model:Destroy()
+		end
+	end
+	while #bots < count do
+		table.insert(bots, createBot())
+	end
+
+	for index, bot in bots do
+		bot.Memory = {}
+		bot.Participant = nil
+		if not bot:IsAlive() then
+			respawn(bot, spawnAt(index))
+		end
+	end
+	return table.clone(bots)
+end
+
+-- Respawns any bot whose body died during the round.
+function BotService.reviveAll(spawnAt: (number) -> CFrame)
+	for index, bot in bots do
+		if not bot:IsAlive() then
+			respawn(bot, spawnAt(index))
+		end
+	end
+end
+
+function BotService.setBrain(fn: ((any, number) -> ())?)
+	brain = fn
+	for _, bot in bots do
+		bot.Memory = {}
+	end
+end
+
+function BotService.setActionHandler(fn: (any, string) -> ())
+	actionHandler = fn
+end
+
+-- Think loop -------------------------------------------------------------------------
+
+local accumulated = 0
+RunService.Heartbeat:Connect(function(dt)
+	accumulated += dt
+	if accumulated < Config.BotThinkInterval then
+		return
+	end
+	local step = accumulated
+	accumulated = 0
+
+	local currentBrain = brain
+	if not currentBrain then
+		return
+	end
+	for _, bot in bots do
+		if bot.Participant and bot:IsAlive() then
+			local ok, err = pcall(currentBrain, bot, step)
+			if not ok then
+				warn(("[BotService] %s's brain errored: %s"):format(bot.Name, tostring(err)))
+			end
+		end
+	end
+end)
+
+return BotService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="8">
+        <Properties>
+          <string name="Name">CoinService</string>
+          <string name="Source"><![CDATA[--[[
+	CoinService
+	Session coin totals. Real players get a "Coins" leaderstat; bots are tracked in memory.
+	(Swap this for DataStore persistence once the board game exists.)
+]]
+
+local Players = game:GetService("Players")
+
+local CoinService = {}
+
+local botCoins: { [string]: number } = {}
+
+local function setupPlayer(player: Player)
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	local coins = Instance.new("IntValue")
+	coins.Name = "Coins"
+	coins.Parent = leaderstats
+	leaderstats.Parent = player
+end
+
+local function getValue(player: Player): IntValue?
+	local leaderstats = player:FindFirstChild("leaderstats")
+	return leaderstats and leaderstats:FindFirstChild("Coins") :: IntValue?
+end
+
+function CoinService.get(participant): number
+	if participant.IsBot then
+		return botCoins[participant.Id] or 0
+	end
+	local value = getValue(participant.Player)
+	return if value then value.Value else 0
+end
+
+-- Adds coins and returns the new total.
+function CoinService.add(participant, amount: number): number
+	if participant.IsBot then
+		botCoins[participant.Id] = (botCoins[participant.Id] or 0) + amount
+		return botCoins[participant.Id]
+	end
+	local value = getValue(participant.Player)
+	if value then
+		value.Value += amount
+		return value.Value
+	end
+	return 0
+end
+
+Players.PlayerAdded:Connect(setupPlayer)
+for _, player in Players:GetPlayers() do
+	if not player:FindFirstChild("leaderstats") then
+		setupPlayer(player)
+	end
+end
+
+return CoinService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="9">
+        <Properties>
+          <string name="Name">Main</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[--[[
+	Main (server entry point)
+	The party loop: lobby -> seat 4 participants (real players first, bots fill the rest)
+	-> MinigameManager.runRound -> repeat.
+
+	When the board game exists, it replaces this loop and calls
+	MinigameManager.runRound(participants) at the end of each turn.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Arena = require(script.Parent.Arena)
+local BotService = require(script.Parent.BotService)
+local MinigameManager = require(script.Parent.MinigameManager)
+local Participant = require(script.Parent.Participant)
+
+Arena.ensureLobby()
+MinigameManager.init()
+
+-- First come, first seated: track join order so seats are fair when >4 players are on.
+local joinOrder: { Player } = {}
+for _, player in Players:GetPlayers() do
+	table.insert(joinOrder, player)
+end
+Players.PlayerAdded:Connect(function(player)
+	table.insert(joinOrder, player)
+end)
+Players.PlayerRemoving:Connect(function(player)
+	local index = table.find(joinOrder, player)
+	if index then
+		table.remove(joinOrder, index)
+	end
+end)
+
+local function buildParticipants()
+	local participants = {}
+	for _, player in joinOrder do
+		if #participants >= Config.PlayersPerMatch then
+			break -- extra players watch this round from the lobby
+		end
+		table.insert(participants, Participant.fromPlayer(player))
+	end
+
+	local realCount = #participants
+	local bots = BotService.getBots(Config.PlayersPerMatch - realCount, function(index)
+		return Arena.lobbySpot(realCount + index)
+	end)
+	for _, bot in bots do
+		table.insert(participants, Participant.fromBot(bot))
+	end
+	return participants
+end
+
+while true do
+	while #Players:GetPlayers() == 0 do
+		MinigameManager.showLobby("Waiting for players...")
+		Players.PlayerAdded:Wait()
+	end
+
+	MinigameManager.showLobby("Next minigame starting soon!", Config.IntermissionDuration)
+
+	local participants = buildParticipants()
+	local ok, err = xpcall(MinigameManager.runRound, debug.traceback, participants)
+	if not ok then
+		warn("[Party] Round crashed, returning to lobby:\n" .. tostring(err))
+		MinigameManager.abort("⚠️ Minigame crashed — back to the lobby!")
+	end
+end
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="10">
+        <Properties>
+          <string name="Name">MinigameManager</string>
+          <string name="Source"><![CDATA[--[[
+	MinigameManager
+	Runs one minigame round from start to finish. The server owns all game state;
+	clients only receive PartyState messages and send validated inputs.
+
+	Round flow (MinigameManager.runRound):
+	  Vote -> Instructions (arena is built + everyone teleported & frozen)
+	       -> Countdown 3-2-1 -> Playing -> Finished -> back to lobby -> Results
+
+	Minigames are ModuleScripts in PartyServer/Minigames (names starting with "_" are
+	ignored, e.g. _Template). See _Template.luau for the full interface.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local Arena = require(script.Parent.Arena)
+local BotService = require(script.Parent.BotService)
+local CoinService = require(script.Parent.CoinService)
+local ResultsUtil = require(script.Parent.ResultsUtil)
+local RoundContext = require(script.Parent.RoundContext)
+
+local MinigameManager = {}
+
+local stateRemote = Net.stateRemote()
+local inputRemote = Net.inputRemote()
+local rng = Random.new()
+
+local registry = {} -- { { Id = moduleName, Definition = module table } }
+
+local state = {
+	PhaseMessage = { Type = Net.Message.Phase, Phase = Net.Phase.Lobby } :: any,
+	Status = nil :: string?,
+	Participants = {},
+	ByPlayer = {} :: { [Player]: any },
+	Vote = nil :: any, -- { Choices, Votes = { [participant] = choiceIndex } }
+	Active = nil :: any, -- the round in progress, see runRound
+}
+
+local function now(): number
+	return Workspace:GetServerTimeNow()
+end
+
+-- Messaging ---------------------------------------------------------------------------
+
+local function broadcast(message)
+	stateRemote:FireAllClients(message)
+end
+
+local function setPhase(phase: string, data)
+	local message = data or {}
+	message.Type = Net.Message.Phase
+	message.Phase = phase
+	state.PhaseMessage = message
+	if phase ~= Net.Phase.Playing then
+		state.Status = nil
+	end
+	broadcast(message)
+end
+
+local function setStatus(text: string?)
+	state.Status = text
+	broadcast({ Type = Net.Message.Status, Text = text })
+end
+
+local function describeParticipants(participants)
+	local list = {}
+	for _, participant in participants do
+		table.insert(list, participant:Describe())
+	end
+	return list
+end
+
+-- Counts votes per card; also returns who voted for what (shown under each card).
+local function tallyVotes(vote)
+	local counts, voters = {}, {}
+	for i = 1, #vote.Choices do
+		counts[i] = 0
+		voters[i] = {}
+	end
+	for participant, choice in vote.Votes do
+		counts[choice] += 1
+		table.insert(voters[choice], participant.Name)
+	end
+	return counts, voters
+end
+
+local function voteUpdateMessage(vote)
+	local counts, voters = tallyVotes(vote)
+	return { Type = Net.Message.VoteUpdate, Counts = counts, Voters = voters }
+end
+
+-- Late joiners / reloaded clients get the current screen re-sent.
+local function sendSnapshot(player: Player)
+	stateRemote:FireClient(player, state.PhaseMessage)
+	if state.Vote then
+		stateRemote:FireClient(player, voteUpdateMessage(state.Vote))
+	end
+	if state.Status then
+		stateRemote:FireClient(player, { Type = Net.Message.Status, Text = state.Status })
+	end
+end
+
+-- Registry ----------------------------------------------------------------------------
+
+local REQUIRED_FUNCTIONS = { "Setup", "Start", "Cleanup", "GetResults" }
+
+local function validateDefinition(definition): string?
+	if type(definition) ~= "table" then
+		return "module must return a table"
+	end
+	local info = definition.Info
+	if type(info) ~= "table" then
+		return "missing Info table"
+	end
+	if type(info.Name) ~= "string" or type(info.Description) ~= "string" then
+		return "Info.Name and Info.Description must be strings"
+	end
+	if type(info.Duration) ~= "number" or info.Duration <= 0 then
+		return "Info.Duration must be a positive number"
+	end
+	if not table.find({ "FFA", "1v3", "2v2" }, info.Layout) then
+		return "Info.Layout must be FFA, 1v3 or 2v2"
+	end
+	for _, name in REQUIRED_FUNCTIONS do
+		if type(definition[name]) ~= "function" then
+			return ("missing function %s"):format(name)
+		end
+	end
+	return nil
+end
+
+local function loadMinigames()
+	local folder = script.Parent:WaitForChild("Minigames")
+	for _, module in folder:GetChildren() do
+		if not module:IsA("ModuleScript") or string.sub(module.Name, 1, 1) == "_" then
+			continue
+		end
+		local ok, definition = pcall(require, module)
+		local problem = if ok then validateDefinition(definition) else tostring(definition)
+		if problem then
+			warn(("[MinigameManager] Skipping minigame %s: %s"):format(module.Name, problem))
+			continue
+		end
+		table.insert(registry, { Id = module.Name, Definition = definition })
+	end
+	table.sort(registry, function(a, b)
+		return a.Id < b.Id
+	end)
+	print(("[MinigameManager] Loaded %d minigame(s)"):format(#registry))
+end
+
+local function describeMinigame(entry)
+	local info = entry.Definition.Info
+	return {
+		Id = entry.Id,
+		Name = info.Name,
+		Description = info.Description,
+		Layout = info.Layout,
+		Duration = info.Duration,
+		Controls = info.Controls or {},
+	}
+end
+
+local function findEntry(id: string)
+	for _, entry in registry do
+		if entry.Id == id then
+			return entry
+		end
+	end
+	return nil
+end
+
+-- Calls an optional minigame method, logging (not propagating) errors.
+local function safeCall(instance, methodName: string, ...)
+	local method = instance[methodName]
+	if type(method) ~= "function" then
+		return true, nil
+	end
+	local ok, result = pcall(method, instance, ...)
+	if not ok then
+		warn(("[MinigameManager] %s:%s errored: %s"):format(instance.Info.Name, methodName, tostring(result)))
+	end
+	return ok, result
+end
+
+-- Voting -------------------------------------------------------------------------------
+
+local function castVote(participant, choice)
+	local vote = state.Vote
+	if not vote or participant.Left then
+		return
+	end
+	-- Inputs are untrusted: must be an integer index of a real card.
+	if type(choice) ~= "number" or choice % 1 ~= 0 or choice < 1 or choice > #vote.Choices then
+		return
+	end
+	vote.Votes[participant] = choice
+	broadcast(voteUpdateMessage(vote))
+end
+
+local function everyoneVoted(vote, participants): boolean
+	for _, participant in participants do
+		if not participant.Left and vote.Votes[participant] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+local function runVote(participants)
+	local pool = table.clone(registry)
+	for i = #pool, 2, -1 do -- shuffle
+		local j = rng:NextInteger(1, i)
+		pool[i], pool[j] = pool[j], pool[i]
+	end
+
+	local choices = {}
+	for i = 1, math.min(Config.VoteChoices, #pool) do
+		table.insert(choices, describeMinigame(pool[i]))
+	end
+	if #choices < Config.VoteChoices and #registry > 1 then
+		table.insert(choices, table.clone(Config.RandomChoice))
+	end
+
+	local vote = { Choices = choices, Votes = {} }
+	state.Vote = vote
+	local endsAt = now() + Config.VoteDuration
+	setPhase(Net.Phase.Vote, { Choices = choices, EndsAt = endsAt })
+	broadcast(voteUpdateMessage(vote))
+
+	-- Bots vote after a short "thinking" delay, through the same validated path as players.
+	for _, participant in participants do
+		if participant.IsBot then
+			task.delay(rng:NextNumber(Config.BotVoteDelay[1], Config.BotVoteDelay[2]), function()
+				if state.Vote == vote then
+					castVote(participant, rng:NextInteger(1, #choices))
+				end
+			end)
+		end
+	end
+
+	while now() < endsAt and not everyoneVoted(vote, participants) do
+		task.wait(0.1)
+	end
+	if now() < endsAt then
+		task.wait(1) -- everyone voted early: let them see the final tally for a beat
+	end
+	state.Vote = nil
+
+	-- Most votes wins; ties (and no votes at all) are broken randomly.
+	local tally = tallyVotes(vote)
+	local best, bestCount = {}, -1
+	for i, count in tally do
+		if count > bestCount then
+			best, bestCount = { i }, count
+		elseif count == bestCount then
+			table.insert(best, i)
+		end
+	end
+	local winner = choices[best[rng:NextInteger(1, #best)]]
+
+	if winner.Id == Config.RandomChoice.Id then
+		return registry[rng:NextInteger(1, #registry)]
+	end
+	return findEntry(winner.Id)
+end
+
+-- Teams ----------------------------------------------------------------------------------
+
+local function assignTeams(participants, layout: string)
+	local shuffled = table.clone(participants)
+	for i = #shuffled, 2, -1 do
+		local j = rng:NextInteger(1, i)
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	end
+	for i, participant in shuffled do
+		if layout == "1v3" then
+			participant.Team = if i == 1 then 1 else 2 -- team 1 is the solo player
+		elseif layout == "2v2" then
+			participant.Team = if i <= 2 then 1 else 2
+		else
+			participant.Team = nil
+		end
+	end
+end
+
+-- Round lifecycle --------------------------------------------------------------------------
+
+local function returnToLobby(participants)
+	BotService.reviveAll(Arena.lobbySpot)
+	for index, participant in participants do
+		participant.Team = nil
+		if participant:IsAlive() then
+			participant:Teleport(Arena.lobbySpot(index))
+			participant:ResetMovement()
+		end
+		-- Dead real players simply respawn at the lobby SpawnLocation.
+	end
+end
+
+-- Tears down the active round. Safe to call more than once (used by abort too).
+local function finishRound()
+	local active = state.Active
+	if not active then
+		return
+	end
+	state.Active = nil
+	BotService.setBrain(nil)
+	for _, connection in active.Connections do
+		connection:Disconnect()
+	end
+	safeCall(active.Instance, "Cleanup")
+	Arena.destroy(active.Arena)
+	returnToLobby(active.Round.Participants)
+	if state.Status then
+		setStatus(nil)
+	end
+end
+
+-- A participant died, reset, or left mid-round: they are out.
+local function onParticipantLost(participant, reason: string)
+	local active = state.Active
+	if not active or active.Round.Ended or active.Round:IsEliminated(participant) then
+		return
+	end
+	active.Round:Eliminate(participant, true)
+	active.Round:Toast(
+		if reason == "Left" then ("👋 %s rage quit"):format(participant.Name) else ("💀 %s got bonked"):format(participant.Name)
+	)
+	safeCall(active.Instance, "OnParticipantLost", participant, reason)
+end
+
+-- Same entry point for real-player inputs (via the remote) and bot inputs (bot:Input).
+local function submitAction(participant, action: string)
+	local active = state.Active
+	if not active or state.PhaseMessage.Phase ~= Net.Phase.Playing or active.Round.Ended then
+		return
+	end
+	if not active.Actions[action] or active.Round:IsEliminated(participant) or not participant:IsAlive() then
+		return
+	end
+	safeCall(active.Instance, "OnInput", participant, action)
+end
+
+local function awardCoins(results)
+	local rows = {}
+	for _, result in results do
+		local participant = result.Participant
+		local coins = if participant.Left then 0 else (Config.CoinsByPlacement[result.Placement] or 0)
+		local total = CoinService.add(participant, coins)
+		local row = participant:Describe()
+		row.Placement = result.Placement
+		row.Coins = coins
+		row.Total = total
+		table.insert(rows, row)
+	end
+	return rows
+end
+
+local function ensureBodies(participants)
+	BotService.reviveAll(Arena.lobbySpot)
+	for _, participant in participants do
+		if not participant.IsBot and not participant.Left and not participant:IsAlive() then
+			pcall(function()
+				participant.Player:LoadCharacter()
+			end)
+		end
+	end
+end
+
+--[[
+	Plays one full round with exactly Config.PlayersPerMatch participants.
+	Returns the normalized ranked results and the coin rows shown on the results screen.
+	This is the hook a future board game calls between turns.
+]]
+function MinigameManager.runRound(participants)
+	assert(#registry > 0, "No minigames loaded")
+	state.Participants = participants
+	state.ByPlayer = {}
+	for _, participant in participants do
+		if participant.Player then
+			state.ByPlayer[participant.Player] = participant
+		end
+	end
+
+	-- 1. Vote
+	local entry = runVote(participants)
+	local definition = entry.Definition
+	local info = definition.Info
+	local described = describeMinigame(entry)
+	assignTeams(participants, info.Layout)
+
+	-- 2. Build the arena + a fresh minigame instance (all per-round state lives on it)
+	local arena = Arena.create(entry.Id)
+	local round = RoundContext.new({
+		Participants = participants,
+		Arena = arena,
+		Broadcast = broadcast,
+		SetStatus = setStatus,
+	})
+	local instance = setmetatable({ Round = round, Arena = arena, Participants = participants }, { __index = definition })
+
+	local actions = {}
+	for _, control in info.Controls or {} do
+		actions[control.Action] = true
+	end
+	state.Active = {
+		Entry = entry,
+		Instance = instance,
+		Round = round,
+		Arena = arena,
+		Actions = actions,
+		Connections = {},
+	}
+
+	-- 3. Instructions card; build the map and teleport while everyone reads it
+	local instructionsEnd = now() + Config.InstructionsDuration
+	setPhase(Net.Phase.Instructions, {
+		Minigame = described,
+		Participants = describeParticipants(participants),
+		EndsAt = instructionsEnd,
+	})
+
+	local spawns = instance:Setup(arena, participants, round) or {}
+	ensureBodies(participants)
+	for index, participant in participants do
+		local spawn = spawns[index] or (arena.Origin + Vector3.new(index * 4, 4, 0))
+		participant:Teleport(spawn)
+		participant:Freeze()
+	end
+	task.wait(math.max(0, instructionsEnd - now()))
+
+	-- 4. Countdown
+	for number = Config.CountdownFrom, 1, -1 do
+		setPhase(Net.Phase.Countdown, { Number = number, Minigame = described })
+		task.wait(1)
+	end
+
+	-- 5. Play
+	for _, participant in participants do
+		local humanoid = participant:GetHumanoid()
+		if humanoid then
+			table.insert(
+				state.Active.Connections,
+				humanoid.Died:Connect(function()
+					onParticipantLost(participant, "Died")
+				end)
+			)
+		end
+		if participant:IsAlive() then
+			participant:ResetMovement()
+		else
+			onParticipantLost(participant, "Died")
+		end
+	end
+
+	round.EndsAt = now() + info.Duration
+	setPhase(Net.Phase.Playing, {
+		Minigame = described,
+		Participants = describeParticipants(participants),
+		EndsAt = round.EndsAt,
+	})
+	BotService.setBrain(function(bot, dt)
+		if instance.UpdateBot and not round.Ended and not round:IsEliminated(bot.Participant) then
+			instance:UpdateBot(bot, dt)
+		end
+	end)
+	safeCall(instance, "Start")
+
+	while not round.Ended and now() < round.EndsAt do
+		task.wait(0.1)
+	end
+	local reason = if round.Ended then round.EndReason else "TimeUp"
+	round:End(reason)
+	BotService.setBrain(nil)
+	safeCall(instance, "OnRoundEnding", reason)
+
+	-- 6. Freeze, collect results, clean up, go home
+	for _, participant in participants do
+		if participant:IsAlive() then
+			participant:Freeze()
+		end
+	end
+	setPhase(Net.Phase.Finished, { Minigame = described })
+	local ok, rawResults = safeCall(instance, "GetResults")
+	local results = ResultsUtil.normalize(if ok then rawResults else nil, participants)
+	task.wait(Config.FinishBannerDuration)
+	finishRound()
+
+	-- 7. Results screen
+	local rows = awardCoins(results)
+	setPhase(Net.Phase.Results, {
+		Minigame = described,
+		Results = rows,
+		EndsAt = now() + Config.ResultsDuration,
+	})
+	task.wait(Config.ResultsDuration)
+	return results, rows
+end
+
+-- Emergency stop if anything in runRound threw. Leaves the server ready for the next round.
+function MinigameManager.abort(message: string?)
+	state.Vote = nil
+	finishRound()
+	broadcast({ Type = Net.Message.Toast, Text = message or "Round cancelled" })
+end
+
+-- Shows the lobby screen and waits `duration` seconds (0 = just show it).
+function MinigameManager.showLobby(text: string, duration: number?)
+	setPhase(Net.Phase.Lobby, {
+		Text = text,
+		EndsAt = if duration then now() + duration else nil,
+	})
+	if duration then
+		task.wait(duration)
+	end
+end
+
+function MinigameManager.getMinigames()
+	local list = {}
+	for _, entry in registry do
+		table.insert(list, describeMinigame(entry))
+	end
+	return list
+end
+
+function MinigameManager.init()
+	loadMinigames()
+	BotService.setActionHandler(submitAction)
+
+	-- Rate limit: at most Config.InputRateLimit inputs per player per second.
+	local buckets: { [Player]: { Start: number, Count: number } } = {}
+	inputRemote.OnServerEvent:Connect(function(player: Player, payload)
+		if type(payload) ~= "table" then
+			return
+		end
+		local clock = os.clock()
+		local bucket = buckets[player]
+		if not bucket or clock - bucket.Start >= 1 then
+			bucket = { Start = clock, Count = 0 }
+			buckets[player] = bucket
+		end
+		bucket.Count += 1
+		if bucket.Count > Config.InputRateLimit then
+			return
+		end
+
+		local kind = payload.Kind
+		if kind == Net.Input.Ready then
+			sendSnapshot(player)
+			return
+		end
+		local participant = state.ByPlayer[player]
+		if not participant then
+			return -- spectators (5th+ player) can't vote or act
+		end
+		if kind == Net.Input.Vote then
+			castVote(participant, payload.Choice)
+		elseif kind == Net.Input.Action and type(payload.Action) == "string" then
+			submitAction(participant, payload.Action)
+		end
+	end)
+
+	Players.PlayerRemoving:Connect(function(player)
+		buckets[player] = nil
+		local participant = state.ByPlayer[player]
+		if not participant then
+			return
+		end
+		participant.Left = true
+		state.ByPlayer[player] = nil
+		if state.Vote then
+			state.Vote.Votes[participant] = nil
+			broadcast(voteUpdateMessage(state.Vote))
+		end
+		onParticipantLost(participant, "Left")
+	end)
+end
+
+return MinigameManager
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="11">
+        <Properties>
+          <string name="Name">Minigames</string>
+        </Properties>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">FallingPlatforms</string>
+            <string name="Source"><![CDATA[--[[
+	Falling Platforms (FFA, elimination)
+	A grid of tiles floating over the void. Any tile you stand on starts to crumble, and
+	random tiles drop faster and faster as the round goes on. Fall and you're out.
+	Last one standing wins; if time runs out every survivor ties for 1st.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local FallingPlatforms = {}
+
+FallingPlatforms.Info = {
+	Name = "Falling Platforms",
+	Description = "The floor is lava's lazy cousin: tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
+	Duration = 75,
+	Layout = Config.Layouts.FFA,
+	Controls = {}, -- movement + jump only
+}
+
+local GRID = 7 -- GRID x GRID tiles
+local TILE_SIZE = 8
+local GAP = 1
+local STEP_DELAY = 0.8 -- crumble time after being stepped on
+local RANDOM_DELAY = 1.4 -- crumble time for a randomly picked tile (longer warning)
+local RANDOM_INTERVAL = { 2.0, 0.5 } -- seconds between random drops, start -> end of round
+local CHECK_INTERVAL = 0.1
+
+local SOLID_COLOR = Color3.fromRGB(110, 220, 255)
+local WARNING_COLOR = Color3.fromRGB(255, 200, 40)
+local CRUMBLE_COLOR = Color3.fromRGB(255, 70, 70)
+
+-- Setup -----------------------------------------------------------------------------------
+
+function FallingPlatforms:Setup(arena, participants, _round)
+	self.Tiles = {} -- [row][col] = { Part, State = "Solid" | "Warning" | "Fallen", Row, Col }
+	self.Connections = {}
+
+	local pitch = TILE_SIZE + GAP
+	local half = (GRID - 1) / 2
+	for row = 1, GRID do
+		self.Tiles[row] = {}
+		for col = 1, GRID do
+			local part = Instance.new("Part")
+			part.Name = ("Tile_%d_%d"):format(row, col)
+			part.Anchored = true
+			part.Size = Vector3.new(TILE_SIZE, 1, TILE_SIZE)
+			part.CFrame = arena.Origin * CFrame.new((col - 1 - half) * pitch, 0, (row - 1 - half) * pitch)
+			-- Checkerboard tint so the grid reads well from above.
+			part.Color = if (row + col) % 2 == 0 then SOLID_COLOR else SOLID_COLOR:Lerp(Color3.new(1, 1, 1), 0.3)
+			part.Material = Enum.Material.SmoothPlastic
+			part.Parent = arena.Folder
+			self.Tiles[row][col] = { Part = part, State = "Solid", Row = row, Col = col }
+		end
+	end
+
+	-- One player per corner-ish tile.
+	local spawnTiles = { { 2, 2 }, { 2, GRID - 1 }, { GRID - 1, 2 }, { GRID - 1, GRID - 1 } }
+	local spawns = {}
+	for index = 1, #participants do
+		local cell = spawnTiles[(index - 1) % #spawnTiles + 1]
+		local tile = self.Tiles[cell[1]][cell[2]]
+		local position = tile.Part.Position + Vector3.new(0, 4, 0)
+		spawns[index] = CFrame.lookAt(position, Vector3.new(arena.Origin.X, position.Y, arena.Origin.Z))
+	end
+	return spawns
+end
+
+-- Tiles -----------------------------------------------------------------------------------
+
+-- Which tile (if any) is directly under a world position.
+function FallingPlatforms:_tileAt(position: Vector3)
+	local localPosition = self.Arena.Origin:PointToObjectSpace(position)
+	local pitch = TILE_SIZE + GAP
+	local half = (GRID - 1) / 2
+	local col = math.floor(localPosition.X / pitch + half + 0.5) + 1
+	local row = math.floor(localPosition.Z / pitch + half + 0.5) + 1
+	local tileRow = self.Tiles[row]
+	return tileRow and tileRow[col]
+end
+
+function FallingPlatforms:_crumble(tile, delay: number)
+	if tile.State ~= "Solid" then
+		return
+	end
+	tile.State = "Warning"
+	tile.Part.Color = WARNING_COLOR
+	tile.Part.Material = Enum.Material.Neon
+
+	task.delay(delay * 0.5, function()
+		if tile.State == "Warning" and tile.Part.Parent then
+			tile.Part.Color = CRUMBLE_COLOR
+		end
+	end)
+	task.delay(delay, function()
+		if tile.State ~= "Warning" or not tile.Part.Parent then
+			return
+		end
+		tile.State = "Fallen"
+		tile.Part.CanCollide = false
+		tile.Part.Material = Enum.Material.Slate
+		TweenService:Create(tile.Part, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			CFrame = tile.Part.CFrame * CFrame.new(0, -40, 0) * CFrame.Angles(math.rad(25), 0, math.rad(15)),
+			Transparency = 1,
+		}):Play()
+	end)
+end
+
+function FallingPlatforms:_solidTiles()
+	local list = {}
+	for _, row in self.Tiles do
+		for _, tile in row do
+			if tile.State == "Solid" then
+				table.insert(list, tile)
+			end
+		end
+	end
+	return list
+end
+
+-- Interface -------------------------------------------------------------------------------
+
+function FallingPlatforms:Start()
+	local round = self.Round
+	local startedAt = os.clock()
+	local nextCheck = 0
+	local nextRandomDrop = os.clock() + RANDOM_INTERVAL[1]
+	local floorY = self.Arena.Origin.Y
+
+	table.insert(
+		self.Connections,
+		RunService.Heartbeat:Connect(function()
+			local clock = os.clock()
+			if round.Ended or clock < nextCheck then
+				return
+			end
+			nextCheck = clock + CHECK_INTERVAL
+
+			for _, participant in round:GetAlive() do
+				local position = participant:GetPosition()
+				if not position then
+					continue
+				end
+				if position.Y < floorY - Config.FallOutDepth then
+					round:Eliminate(participant, true)
+					round:Toast(("🪂 %s fell into the void"):format(participant.Name))
+				elseif position.Y < floorY + 8 then
+					-- Standing (or nearly) on the grid: the tile underneath starts crumbling.
+					local tile = self:_tileAt(position)
+					if tile then
+						self:_crumble(tile, STEP_DELAY)
+					end
+				end
+			end
+
+			-- Random drops speed up over the round.
+			if clock >= nextRandomDrop then
+				local progress = math.clamp((clock - startedAt) / self.Info.Duration, 0, 1)
+				local interval = RANDOM_INTERVAL[1] + (RANDOM_INTERVAL[2] - RANDOM_INTERVAL[1]) * progress
+				nextRandomDrop = clock + interval
+				local solid = self:_solidTiles()
+				if #solid > 0 then
+					self:_crumble(solid[round.Rng:NextInteger(1, #solid)], RANDOM_DELAY)
+				end
+			end
+
+			if #round:GetAlive() <= 1 then
+				round:End("LastStanding")
+			end
+		end)
+	)
+	round:SetStatus("Keep moving! 🏃")
+end
+
+--[[
+	Bot behaviour: hop to a neighbouring solid tile whenever the current one starts to go
+	(or every so often anyway). Low-skill bots occasionally make a bad call, which is funny.
+]]
+function FallingPlatforms:UpdateBot(bot, _dt)
+	local position = bot:GetPosition()
+	if not position then
+		return
+	end
+	local memory = bot.Memory
+	local current = self:_tileAt(position)
+	local target = memory.Target
+
+	local targetBad = not target or target.State ~= "Solid"
+	local currentBad = not current or current.State ~= "Solid"
+	local bored = os.clock() >= (memory.NextHop or 0)
+	if not targetBad and not (current == target and (currentBad or bored)) then
+		bot:MoveTo(target.Part.Position + Vector3.new(0, 3, 0))
+		return
+	end
+
+	-- Pick the next tile: a solid 4-neighbour, preferring tiles nearer the middle.
+	local from = current or target
+	local options = {}
+	if from then
+		for _, offset in { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } } do
+			local row = self.Tiles[from.Row + offset[1]]
+			local tile = row and row[from.Col + offset[2]]
+			if tile and tile.State == "Solid" then
+				table.insert(options, tile)
+			end
+		end
+	end
+	if #options == 0 or math.random() > 0.85 + bot.Skill * 0.15 then
+		-- Stuck (or just dumb): head for the nearest solid tile anywhere.
+		local best, bestDistance = nil, math.huge
+		for _, tile in self:_solidTiles() do
+			local distance = (tile.Part.Position - position).Magnitude
+			if distance < bestDistance and tile ~= current then
+				best, bestDistance = tile, distance
+			end
+		end
+		options = { best }
+	end
+	if #options == 0 then
+		memory.Target = nil -- no floor left anywhere; enjoy the fall
+		return
+	end
+
+	local center = self.Arena.Origin.Position
+	table.sort(options, function(a, b)
+		return (a.Part.Position - center).Magnitude < (b.Part.Position - center).Magnitude
+	end)
+	-- Skilled bots usually take the most central option; others pick at random.
+	local choice = if math.random() < bot.Skill then options[1] else options[math.random(1, #options)]
+
+	memory.Target = choice
+	memory.NextHop = os.clock() + 1 + math.random() * 1.5
+	bot:MoveTo(choice.Part.Position + Vector3.new(0, 3, 0))
+end
+
+function FallingPlatforms:GetResults()
+	return ResultsUtil.fromElimination(self.Participants, self.Round)
+end
+
+function FallingPlatforms:Cleanup()
+	for _, connection in self.Connections do
+		connection:Disconnect()
+	end
+end
+
+return FallingPlatforms
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="13">
+          <Properties>
+            <string name="Name">HotPotato</string>
+            <string name="Source"><![CDATA[--[[
+	Hot Potato (FFA, elimination)
+	One player holds a burning potato with a hidden fuse. Get next to someone and press
+	Pass to hand it over. Whoever holds it when it explodes is out. Last one standing wins.
+	If time runs out, the current holder explodes and everyone left ties for 1st.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local HotPotato = {}
+
+HotPotato.Info = {
+	Name = "Hot Potato",
+	Description = "Someone's holding a spicy potato 🥔🔥. Get close and pass it before it goes BOOM. Last one standing wins!",
+	Duration = 90,
+	Layout = Config.Layouts.FFA,
+	Controls = {
+		{ Action = "Pass", Label = "Pass!", Key = "E" },
+	},
+}
+
+local ARENA_RADIUS = 30
+local PASS_RANGE = 9 -- studs between root parts
+local PASS_COOLDOWN = 0.6 -- holder can't pass again this soon after receiving
+local NO_TAG_BACKS = 1.5 -- can't pass straight back to whoever just gave it to you
+local FUSE_RANGE = { 8, 14 } -- seconds, re-rolled for every new potato
+local HOLDER_SPEED = 21 -- holder is a bit faster so they can actually catch people
+local NEW_POTATO_DELAY = 2
+
+local function now()
+	return Workspace:GetServerTimeNow()
+end
+
+-- Setup ---------------------------------------------------------------------------------
+
+function HotPotato:Setup(arena, participants, _round)
+	local origin = arena.Origin
+
+	-- Round floor (cylinder parts lie along X, so rotate it flat).
+	local floor = Instance.new("Part")
+	floor.Name = "Floor"
+	floor.Shape = Enum.PartType.Cylinder
+	floor.Size = Vector3.new(2, ARENA_RADIUS * 2, ARENA_RADIUS * 2)
+	floor.CFrame = origin * CFrame.Angles(0, 0, math.rad(90))
+	floor.Anchored = true
+	floor.Material = Enum.Material.Sand
+	floor.Color = Color3.fromRGB(255, 200, 120)
+	floor.Parent = arena.Folder
+
+	-- Ring of see-through walls so nobody runs off the edge.
+	local segments = 24
+	for i = 1, segments do
+		local angle = (i / segments) * math.pi * 2
+		local wall = Instance.new("Part")
+		wall.Name = "Wall"
+		wall.Anchored = true
+		wall.Size = Vector3.new(2, 8, ARENA_RADIUS * 2 * math.pi / segments + 1)
+		wall.CFrame = origin
+			* CFrame.Angles(0, -angle, 0)
+			* CFrame.new(ARENA_RADIUS, 5, 0)
+		wall.Transparency = 0.6
+		wall.Color = Color3.fromRGB(255, 120, 60)
+		wall.Material = Enum.Material.ForceField
+		wall.Parent = arena.Folder
+	end
+
+	-- The potato itself. Anchored and moved every frame above the holder's head.
+	local potato = Instance.new("Part")
+	potato.Name = "Potato"
+	potato.Shape = Enum.PartType.Ball
+	potato.Size = Vector3.new(2.5, 2.5, 2.5)
+	potato.Color = Color3.fromRGB(160, 110, 60)
+	potato.Material = Enum.Material.Slate
+	potato.Anchored = true
+	potato.CanCollide = false
+	potato.CanQuery = false
+	potato.CanTouch = false
+	potato.Transparency = 1
+	potato.CFrame = origin
+	local fire = Instance.new("Fire")
+	fire.Size = 4
+	fire.Heat = 8
+	fire.Parent = potato
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromRGB(255, 140, 40)
+	light.Range = 12
+	light.Parent = potato
+	potato.Parent = arena.Folder
+
+	self.Potato = potato
+	self.Fire = fire
+	self.Holder = nil
+	self.PreviousHolder = nil
+	self.ReceivedAt = 0
+	self.FuseEndsAt = math.huge
+	self.Connections = {}
+	self.Highlight = nil
+
+	-- Spawns: evenly around a circle, facing the middle.
+	local spawns = {}
+	for index = 1, #participants do
+		local angle = (index / #participants) * math.pi * 2
+		local position = (origin * CFrame.new(math.cos(angle) * 14, 4, math.sin(angle) * 14)).Position
+		spawns[index] = CFrame.lookAt(position, Vector3.new(origin.X, position.Y, origin.Z))
+	end
+	return spawns
+end
+
+-- Potato handling -----------------------------------------------------------------------
+
+function HotPotato:_setHolder(participant)
+	local previous = self.Holder
+	if previous then
+		previous:SetMovement(Config.DefaultWalkSpeed, true)
+	end
+	if self.Highlight then
+		self.Highlight:Destroy()
+		self.Highlight = nil
+	end
+
+	self.PreviousHolder = previous
+	self.Holder = participant
+	self.ReceivedAt = now()
+	if not participant then
+		self.Potato.Transparency = 1
+		self.Fire.Enabled = false
+		return
+	end
+
+	participant:SetMovement(HOLDER_SPEED, true)
+	local character = participant:GetCharacter()
+	if character then
+		local highlight = Instance.new("Highlight")
+		highlight.FillColor = Color3.fromRGB(255, 80, 0)
+		highlight.OutlineColor = Color3.fromRGB(255, 230, 0)
+		highlight.FillTransparency = 0.5
+		highlight.Parent = character
+		self.Highlight = highlight
+	end
+	self.Potato.Transparency = 0
+	self.Fire.Enabled = true
+	self.Round:SetStatus(("🥔 %s has the potato!"):format(participant.Name))
+end
+
+-- Hands a fresh potato (new fuse) to a random survivor.
+function HotPotato:_newPotato()
+	local round = self.Round
+	if round.Ended then
+		return
+	end
+	local alive = round:GetAlive()
+	if #alive <= 1 then
+		round:End("LastStanding")
+		return
+	end
+	self.FuseEndsAt = now() + round.Rng:NextNumber(FUSE_RANGE[1], FUSE_RANGE[2])
+	self:_setHolder(alive[round.Rng:NextInteger(1, #alive)])
+	round:Toast(("🔥 New potato! %s is holding it"):format(self.Holder.Name))
+end
+
+function HotPotato:_explode(spawnNext: boolean)
+	local holder = self.Holder
+	if not holder then
+		return
+	end
+	self:_setHolder(nil)
+	self.FuseEndsAt = math.huge
+
+	local position = holder:GetPosition()
+	if position then
+		-- Visual only: no flinging and no joint breaking.
+		local explosion = Instance.new("Explosion")
+		explosion.Position = position
+		explosion.BlastPressure = 0
+		explosion.DestroyJointRadiusPercent = 0
+		explosion.Parent = self.Arena.Folder
+	end
+	self.Round:Toast(("💥 BOOM! %s got cooked"):format(holder.Name))
+	self.Round:Eliminate(holder, true)
+
+	if spawnNext then
+		if #self.Round:GetAlive() <= 1 then
+			self.Round:End("LastStanding")
+		else
+			self.Round:SetStatus("🥔 Reheating the potato...")
+			task.delay(NEW_POTATO_DELAY, function()
+				if not self.Cleaned then
+					self:_newPotato()
+				end
+			end)
+		end
+	end
+end
+
+-- Closest eligible survivor in pass range, or nil.
+function HotPotato:_passTarget(from)
+	local fromPosition = from:GetPosition()
+	if not fromPosition then
+		return nil
+	end
+	local best, bestDistance = nil, PASS_RANGE
+	for _, other in self.Round:GetAlive() do
+		local position = other:GetPosition()
+		local isTagBack = other == self.PreviousHolder and now() - self.ReceivedAt < NO_TAG_BACKS
+		if other ~= from and position and not isTagBack then
+			local distance = (position - fromPosition).Magnitude
+			if distance <= bestDistance then
+				best, bestDistance = other, distance
+			end
+		end
+	end
+	return best
+end
+
+function HotPotato:_tryPass(from)
+	if from ~= self.Holder or now() - self.ReceivedAt < PASS_COOLDOWN then
+		return
+	end
+	local target = self:_passTarget(from)
+	if target then
+		self:_setHolder(target)
+	end
+end
+
+-- Interface -----------------------------------------------------------------------------
+
+function HotPotato:Start()
+	self:_newPotato()
+	table.insert(
+		self.Connections,
+		RunService.Heartbeat:Connect(function()
+			if self.Round.Ended or not self.Holder then
+				return
+			end
+			-- Keep the potato floating above the holder's head.
+			local position = self.Holder:GetPosition()
+			if position then
+				self.Potato.CFrame = CFrame.new(position + Vector3.new(0, 4, 0))
+					* CFrame.Angles(0, os.clock() * 4, 0)
+			end
+			-- Flicker harder as the fuse gets short (we never show the real number).
+			local remaining = self.FuseEndsAt - now()
+			self.Fire.Size = if remaining < 3 then 7 + math.sin(os.clock() * 30) * 2 else 4
+			if remaining <= 0 then
+				self:_explode(true)
+			end
+		end)
+	)
+end
+
+function HotPotato:OnInput(participant, action)
+	if action == "Pass" then
+		self:_tryPass(participant)
+	end
+end
+
+-- Someone died or left: if they had the potato, hand out a new one.
+function HotPotato:OnParticipantLost(participant)
+	if participant == self.Holder then
+		self:_setHolder(nil)
+		task.delay(NEW_POTATO_DELAY, function()
+			if not self.Cleaned then
+				self:_newPotato()
+			end
+		end)
+	elseif #self.Round:GetAlive() <= 1 then
+		self.Round:End("LastStanding")
+	end
+end
+
+-- Time's up: whoever is holding it explodes on the buzzer.
+function HotPotato:OnRoundEnding(reason)
+	if reason == "TimeUp" then
+		self:_explode(false)
+	end
+end
+
+--[[
+	Bot behaviour: if I have the potato, chase the nearest player and pass when close.
+	Otherwise run away from the holder while staying inside the ring.
+]]
+function HotPotato:UpdateBot(bot, _dt)
+	local me = bot.Participant
+	local myPosition = bot:GetPosition()
+	if not myPosition then
+		return
+	end
+	local center = self.Arena.Origin.Position
+
+	if self.Holder == me then
+		local target, targetDistance = nil, math.huge
+		for _, other in self.Round:GetAlive() do
+			local position = other:GetPosition()
+			if other ~= me and position then
+				local distance = (position - myPosition).Magnitude
+				if distance < targetDistance then
+					target, targetDistance = other, distance
+				end
+			end
+		end
+		if target then
+			bot:MoveTo(target:GetPosition())
+			-- Sloppier bots sometimes hesitate before passing.
+			if targetDistance <= PASS_RANGE * 0.9 and math.random() < 0.4 + bot.Skill * 0.6 then
+				bot:Input("Pass")
+			end
+		end
+		return
+	end
+
+	local holderPosition = self.Holder and self.Holder:GetPosition()
+	if not holderPosition then
+		-- Nobody has it right now: drift back towards the middle.
+		bot:MoveTo(center + Vector3.new(math.random(-6, 6), 0, math.random(-6, 6)))
+		return
+	end
+
+	local away = myPosition - holderPosition
+	away = Vector3.new(away.X, 0, away.Z)
+	if away.Magnitude < 0.1 then
+		away = Vector3.new(1, 0, 0)
+	end
+	if away.Magnitude > 22 and math.random() < 0.7 then
+		return -- far enough, catch a breath
+	end
+	-- Run away with a sideways wobble so bots don't all flee in straight lines.
+	local direction = away.Unit + Vector3.new(-away.Unit.Z, 0, away.Unit.X) * (math.random() - 0.5)
+	local goal = myPosition + direction.Unit * 12
+	local fromCenter = Vector3.new(goal.X - center.X, 0, goal.Z - center.Z)
+	if fromCenter.Magnitude > ARENA_RADIUS - 5 then
+		-- Cornered against the wall: slide around the ring instead.
+		local tangent = Vector3.new(-fromCenter.Z, 0, fromCenter.X).Unit
+		if tangent:Dot(away) < 0 then
+			tangent = -tangent
+		end
+		goal = center + fromCenter.Unit * (ARENA_RADIUS - 7) + tangent * 8
+	end
+	bot:MoveTo(Vector3.new(goal.X, myPosition.Y, goal.Z))
+end
+
+function HotPotato:GetResults()
+	return ResultsUtil.fromElimination(self.Participants, self.Round)
+end
+
+function HotPotato:Cleanup()
+	self.Cleaned = true
+	for _, connection in self.Connections do
+		connection:Disconnect()
+	end
+	if self.Highlight then
+		self.Highlight:Destroy()
+	end
+	-- The potato and map live in arena.Folder, which the framework destroys.
+end
+
+return HotPotato
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="14">
+          <Properties>
+            <string name="Name">_Template</string>
+            <string name="Source"><![CDATA[--[[
+	_Template — copy this file to start a new minigame.
+	Files whose names start with "_" are ignored by the MinigameManager, so rename the copy
+	(e.g. "CoinRush") and it will show up in the vote automatically.
+
+	Lifecycle (all called by the MinigameManager on a fresh instance each round, so keep
+	per-round state on `self`):
+
+	  Setup(arena, participants, round) -> { CFrame }   REQUIRED
+	      Build your map inside arena.Folder (around arena.Origin). Return one spawn CFrame
+	      per participant, same order as `participants`. Players are teleported there and
+	      frozen while the instructions card + 3-2-1 countdown play.
+	  Start()                                           REQUIRED
+	      GO! Connect your loops here. Movement is already unfrozen.
+	  GetResults() -> results                           REQUIRED
+	      Ranked array { { Participant = p, Placement = 1 }, ... }. Use ResultsUtil
+	      (fromElimination(self.Participants, self.Round) / fromScores / fromTeams) - ties share a placement.
+	  Cleanup()                                         REQUIRED
+	      Disconnect everything and remove anything you put outside arena.Folder
+	      (e.g. Highlights on characters). arena.Folder itself is destroyed for you.
+
+	  OnInput(participant, action)          optional - a player or bot pressed one of Info.Controls
+	  UpdateBot(bot, dt)                    optional - bot brain, runs every Config.BotThinkInterval
+	  OnParticipantLost(participant, why)   optional - why = "Died" | "Left" (already eliminated)
+	  OnRoundEnding(reason)                 optional - reason = "TimeUp" or whatever you passed to round:End()
+
+	Available on self: self.Round (RoundContext), self.Arena, self.Participants, self.Info.
+	Each participant has a .Team (1 or 2) in 1v3 / 2v2 layouts; team 1 is the solo side in 1v3.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local Template = {}
+
+Template.Info = {
+	Name = "My Minigame",
+	Description = "One or two sentences shown on the vote card and instructions screen.",
+	Duration = 60, -- seconds; the round ends automatically when this runs out
+	Layout = Config.Layouts.FFA, -- FFA | OneVsThree ("1v3") | TwoVsTwo ("2v2")
+	Controls = {
+		-- Each control becomes a key bind + mobile button on the client and an OnInput call here.
+		{ Action = "Smack", Label = "Smack!", Key = "E" },
+	},
+}
+
+function Template:Setup(arena, participants, _round)
+	self.Connections = {}
+	self.Score = {}
+
+	local floor = Instance.new("Part")
+	floor.Anchored = true
+	floor.Size = Vector3.new(60, 2, 60)
+	floor.CFrame = arena.Origin
+	floor.Parent = arena.Folder
+
+	local spawns = {}
+	for index, participant in participants do
+		self.Score[participant] = 0
+		spawns[index] = arena.Origin * CFrame.new((index - 2.5) * 8, 4, 0)
+	end
+	return spawns
+end
+
+function Template:Start()
+	table.insert(
+		self.Connections,
+		RunService.Heartbeat:Connect(function()
+			-- game logic; call self.Round:End() to finish early
+		end)
+	)
+end
+
+function Template:OnInput(participant, action)
+	if action == "Smack" then
+		self.Score[participant] += 1
+	end
+end
+
+function Template:UpdateBot(bot, _dt)
+	bot:MoveTo(self.Arena.Origin.Position)
+	if math.random() < 0.2 then
+		bot:Input("Smack")
+	end
+end
+
+function Template:GetResults()
+	return ResultsUtil.fromScores(self.Participants, function(participant)
+		return self.Score[participant]
+	end)
+end
+
+function Template:Cleanup()
+	for _, connection in self.Connections do
+		connection:Disconnect()
+	end
+end
+
+return Template
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="15">
+        <Properties>
+          <string name="Name">Participant</string>
+          <string name="Source"><![CDATA[--[[
+	Participant
+	One seat in a round. Wraps either a real Player or a Bot behind the same API,
+	so minigames never need to care which one they are dealing with.
+
+	Fields:
+	  Id      unique string ("player_123" / "bot_1"), also what the client sees
+	  Name    display name
+	  IsBot   true for bots
+	  Player  the Player (real players only)
+	  Bot     the Bot object from BotService (bots only)
+	  Team    team number for 1v3 / 2v2 layouts, nil in FFA
+	  Left    true once a real player leaves mid-round
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local Participant = {}
+Participant.__index = Participant
+
+function Participant.fromPlayer(player: Player)
+	return setmetatable({
+		Id = "player_" .. player.UserId,
+		Name = player.DisplayName,
+		IsBot = false,
+		Player = player,
+		Bot = nil,
+		Team = nil,
+		Left = false,
+	}, Participant)
+end
+
+function Participant.fromBot(bot)
+	local self = setmetatable({
+		Id = bot.Id,
+		Name = bot.Name,
+		IsBot = true,
+		Player = nil,
+		Bot = bot,
+		Team = nil,
+		Left = false,
+	}, Participant)
+	bot.Participant = self
+	return self
+end
+
+function Participant:GetCharacter(): Model?
+	if self.IsBot then
+		return self.Bot.Model
+	end
+	return self.Player.Character
+end
+
+function Participant:GetHumanoid(): Humanoid?
+	local character = self:GetCharacter()
+	return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+function Participant:GetRoot(): BasePart?
+	local character = self:GetCharacter()
+	return character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+function Participant:GetPosition(): Vector3?
+	local root = self:GetRoot()
+	return root and root.Position
+end
+
+-- True if the participant is still in the game and has a living body in the world.
+function Participant:IsAlive(): boolean
+	if self.Left then
+		return false
+	end
+	local character = self:GetCharacter()
+	local humanoid = self:GetHumanoid()
+	return character ~= nil
+		and character.Parent ~= nil
+		and humanoid ~= nil
+		and humanoid.Health > 0
+		and self:GetRoot() ~= nil
+end
+
+-- Moves the whole character, killing any leftover momentum.
+function Participant:Teleport(cframe: CFrame)
+	local character = self:GetCharacter()
+	local root = self:GetRoot()
+	if not character or not root then
+		return
+	end
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	character:PivotTo(cframe)
+	if self.IsBot then
+		self.Bot:Stop()
+	end
+end
+
+function Participant:SetMovement(walkSpeed: number, canJump: boolean)
+	local humanoid = self:GetHumanoid()
+	if not humanoid then
+		return
+	end
+	humanoid.WalkSpeed = walkSpeed
+	-- Set both so it works whichever of UseJumpPower the place uses.
+	humanoid.JumpPower = if canJump then Config.DefaultJumpPower else 0
+	humanoid.JumpHeight = if canJump then Config.DefaultJumpHeight else 0
+end
+
+function Participant:Freeze()
+	self:SetMovement(0, false)
+	if self.IsBot then
+		self.Bot:Stop()
+	end
+end
+
+function Participant:ResetMovement()
+	self:SetMovement(Config.DefaultWalkSpeed, true)
+end
+
+-- Data the client needs to draw this participant (names, bot icon, team colour).
+function Participant:Describe()
+	return {
+		Id = self.Id,
+		Name = self.Name,
+		IsBot = self.IsBot,
+		Team = self.Team,
+	}
+end
+
+return Participant
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="16">
+        <Properties>
+          <string name="Name">ResultsUtil</string>
+          <string name="Source"><![CDATA[--[[
+	ResultsUtil
+	Helpers for the ranked results table every minigame returns from GetResults().
+
+	A results table is an array sorted best-first:
+	    { { Participant = p, Placement = 1 }, { Participant = q, Placement = 2 }, ... }
+	Ties share a placement using standard competition ranking (1, 1, 3, 4).
+]]
+
+local ResultsUtil = {}
+
+-- Ranks participants by a score. Higher is better unless lowerIsBetter is true.
+function ResultsUtil.fromScores(participants, scoreOf: (any) -> number, lowerIsBetter: boolean?)
+	local entries = {}
+	for index, participant in participants do
+		table.insert(entries, { Participant = participant, Score = scoreOf(participant), Index = index })
+	end
+	table.sort(entries, function(a, b)
+		if a.Score == b.Score then
+			return a.Index < b.Index -- keep the sort deterministic
+		end
+		if lowerIsBetter then
+			return a.Score < b.Score
+		end
+		return a.Score > b.Score
+	end)
+
+	local results = {}
+	for i, entry in entries do
+		local placement = i
+		if i > 1 and entries[i - 1].Score == entry.Score then
+			placement = results[i - 1].Placement
+		end
+		results[i] = { Participant = entry.Participant, Placement = placement }
+	end
+	return results
+end
+
+-- Survivors tie for 1st; everyone else ranks by how long they lasted (last out = best).
+-- Participants knocked out in the same instant (e.g. two falling on one tick) tie.
+function ResultsUtil.fromElimination(participants, round)
+	return ResultsUtil.fromScores(participants, function(participant)
+		return round.EliminatedAt[participant] or math.huge
+	end)
+end
+
+-- Every member of winningTeam ties for 1st, everyone else ties for the next placement.
+function ResultsUtil.fromTeams(participants, winningTeam: number)
+	return ResultsUtil.fromScores(participants, function(participant)
+		return if participant.Team == winningTeam then 1 else 0
+	end)
+end
+
+--[[
+	Makes whatever a minigame returned safe to use:
+	  * drops entries for unknown participants and duplicates
+	  * appends anyone missing (and anyone who left mid-round) at the bottom
+	  * recomputes placements so they are consistent competition ranks
+]]
+function ResultsUtil.normalize(rawResults, participants)
+	local known = {}
+	for _, participant in participants do
+		known[participant] = true
+	end
+
+	local seen = {}
+	local entries = {}
+	if type(rawResults) == "table" then
+		for _, entry in rawResults do
+			local participant = type(entry) == "table" and entry.Participant
+			local placement = type(entry) == "table" and tonumber(entry.Placement)
+			if participant and known[participant] and not seen[participant] and not participant.Left then
+				seen[participant] = true
+				table.insert(entries, { Participant = participant, Placement = placement or math.huge })
+			end
+		end
+	end
+
+	-- Missing participants share last place; leavers go below them.
+	for _, participant in participants do
+		if not seen[participant] then
+			table.insert(entries, {
+				Participant = participant,
+				Placement = if participant.Left then math.huge else 1e6,
+			})
+		end
+	end
+
+	for i, entry in entries do
+		entry.Order = i
+	end
+	table.sort(entries, function(a, b)
+		if a.Placement == b.Placement then
+			return a.Order < b.Order
+		end
+		return a.Placement < b.Placement
+	end)
+
+	local results = {}
+	for i, entry in entries do
+		local placement = i
+		if i > 1 and entries[i - 1].Placement == entry.Placement then
+			placement = results[i - 1].Placement
+		end
+		results[i] = { Participant = entry.Participant, Placement = placement }
+	end
+	return results
+end
+
+return ResultsUtil
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="17">
+        <Properties>
+          <string name="Name">RoundContext</string>
+          <string name="Source"><![CDATA[--[[
+	RoundContext
+	The toolbox the framework hands to a minigame for one round (third argument of Setup,
+	and stored on the minigame instance as self.Round). Minigames use it instead of
+	touching framework internals:
+
+	  round.Participants        all four participants (real players + bots)
+	  round.Arena               the arena object (Folder / Origin / SpectatorCFrame)
+	  round.Rng                 a Random for this round
+	  round.EliminationOrder    participants in the order they were eliminated
+	  round.EliminatedAt        participant -> server time they were eliminated
+
+	  round:Eliminate(p)        mark p out and send them to the spectator box
+	  round:IsEliminated(p)
+	  round:GetAlive()          participants still in play
+	  round:GetTeam(n)          participants on team n (1v3 / 2v2)
+	  round:End()               finish the round early (e.g. one player left)
+	  round:TimeLeft()
+	  round:Toast(text)         short feed message on every client
+	  round:SetStatus(text)     persistent HUD line on every client
+]]
+
+local Workspace = game:GetService("Workspace")
+
+local RoundContext = {}
+RoundContext.__index = RoundContext
+
+function RoundContext.new(params)
+	return setmetatable({
+		Participants = params.Participants,
+		Arena = params.Arena,
+		Rng = Random.new(),
+		EliminationOrder = {},
+		EliminatedAt = {},
+		Ended = false,
+		EndReason = nil,
+		EndsAt = math.huge,
+		_eliminated = {},
+		_broadcast = params.Broadcast,
+		_setStatus = params.SetStatus,
+	}, RoundContext)
+end
+
+function RoundContext:Eliminate(participant, silent: boolean?)
+	if self._eliminated[participant] then
+		return
+	end
+	self._eliminated[participant] = true
+	table.insert(self.EliminationOrder, participant)
+	self.EliminatedAt[participant] = Workspace:GetServerTimeNow()
+
+	if participant:IsAlive() then
+		local jitter = Vector3.new(self.Rng:NextNumber(-6, 6), 0, self.Rng:NextNumber(-6, 6))
+		participant:Teleport(self.Arena.SpectatorCFrame + jitter)
+		participant:ResetMovement() -- spectators may walk around the glass box
+	end
+	if not silent then
+		self:Toast(("❌ %s is out!"):format(participant.Name))
+	end
+end
+
+function RoundContext:IsEliminated(participant): boolean
+	return self._eliminated[participant] == true
+end
+
+function RoundContext:GetAlive()
+	local alive = {}
+	for _, participant in self.Participants do
+		if not self._eliminated[participant] and not participant.Left then
+			table.insert(alive, participant)
+		end
+	end
+	return alive
+end
+
+function RoundContext:GetTeam(team: number)
+	local members = {}
+	for _, participant in self.Participants do
+		if participant.Team == team then
+			table.insert(members, participant)
+		end
+	end
+	return members
+end
+
+function RoundContext:End(reason: string?)
+	if not self.Ended then
+		self.Ended = true
+		self.EndReason = reason or "Ended"
+	end
+end
+
+function RoundContext:TimeLeft(): number
+	return math.max(0, self.EndsAt - Workspace:GetServerTimeNow())
+end
+
+function RoundContext:Toast(text: string)
+	self._broadcast({ Type = "Toast", Text = text })
+end
+
+function RoundContext:SetStatus(text: string?)
+	self._setStatus(text)
+end
+
+return RoundContext
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="18">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="19">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="20">
+        <Properties>
+          <string name="Name">PartyClient</string>
+        </Properties>
+        <Item class="ModuleScript" referent="21">
+          <Properties>
+            <string name="Name">Controls</string>
+            <string name="Source"><![CDATA[--[[
+	Controls
+	Binds the active minigame's Info.Controls to keyboard, gamepad and an on-screen mobile
+	button. Pressing one only *sends an input*; the server decides what happens.
+]]
+
+local ContextActionService = game:GetService("ContextActionService")
+
+local Controls = {}
+
+local GAMEPAD_BUTTONS = { Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonY, Enum.KeyCode.ButtonB }
+local bound: { string } = {}
+
+function Controls.bind(controls, send: (string) -> ())
+	Controls.unbind()
+	for index, control in controls do
+		local bindName = "Party_" .. control.Action
+		local inputs = {}
+		local ok, keyCode = pcall(function()
+			return (Enum.KeyCode :: any)[control.Key]
+		end)
+		if ok and keyCode then
+			table.insert(inputs, keyCode)
+		end
+		if GAMEPAD_BUTTONS[index] then
+			table.insert(inputs, GAMEPAD_BUTTONS[index])
+		end
+
+		ContextActionService:BindAction(bindName, function(_, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				send(control.Action)
+			end
+			return Enum.ContextActionResult.Sink
+		end, true, table.unpack(inputs))
+		ContextActionService:SetTitle(bindName, control.Label)
+		table.insert(bound, bindName)
+	end
+end
+
+function Controls.unbind()
+	for _, bindName in bound do
+		ContextActionService:UnbindAction(bindName)
+	end
+	table.clear(bound)
+end
+
+return Controls
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="22">
+          <Properties>
+            <string name="Name">Main</string>
+            <string name="Source"><![CDATA[--[[
+	Main (client entry point)
+	Renders whatever state the server sends and forwards inputs. No game logic lives here:
+	the client never decides who won, who has the potato, or when a round ends.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Net = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Net"))
+local Controls = require(script.Parent:WaitForChild("Controls"))
+local UI = script.Parent:WaitForChild("UI")
+local Theme = require(UI:WaitForChild("Theme"))
+local Hud = require(UI:WaitForChild("Hud"))
+local VoteScreen = require(UI:WaitForChild("VoteScreen"))
+local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
+local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
+
+local player = Players.LocalPlayer
+local myId = "player_" .. player.UserId
+local stateRemote = Net.stateRemote()
+local inputRemote = Net.inputRemote()
+
+local function sendInput(payload)
+	inputRemote:FireServer(payload)
+end
+
+-- Screens ---------------------------------------------------------------------------------
+
+local screen = Theme.make("ScreenGui", {
+	Name = "PartyUI",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	Parent = player:WaitForChild("PlayerGui"),
+})
+
+local hud = Hud.new(screen)
+local voteScreen = VoteScreen.new(screen, function(choice)
+	sendInput({ Kind = Net.Input.Vote, Choice = choice })
+end)
+local instructions = InstructionsCard.new(screen)
+local results = ResultsScreen.new(screen)
+
+local function hideOverlays()
+	voteScreen:hide()
+	instructions:hide()
+	results:hide()
+end
+
+local function isParticipant(participants): boolean
+	for _, participant in participants or {} do
+		if participant.Id == myId then
+			return true
+		end
+	end
+	return false
+end
+
+-- Phase handlers ------------------------------------------------------------------------------
+
+local Phase = Net.Phase
+local phaseHandlers = {}
+
+phaseHandlers[Phase.Lobby] = function(message)
+	hideOverlays()
+	Controls.unbind()
+	hud:setTimer(nil)
+	hud:setStatus(nil)
+	hud:setLobby(message.Text or "Lobby", message.EndsAt)
+end
+
+phaseHandlers[Phase.Vote] = function(message)
+	hideOverlays()
+	hud:setLobby(nil)
+	voteScreen:show(message.Choices, message.EndsAt)
+end
+
+phaseHandlers[Phase.Instructions] = function(message)
+	hideOverlays()
+	hud:setLobby(nil)
+	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
+	if not isParticipant(message.Participants) then
+		hud:setStatus("👀 Spectating this round")
+	end
+end
+
+phaseHandlers[Phase.Countdown] = function(message)
+	hideOverlays()
+	hud:showBanner(tostring(message.Number), nil, 0.7)
+end
+
+phaseHandlers[Phase.Playing] = function(message)
+	hideOverlays()
+	hud:showBanner("GO!", Theme.Colors.Good, 0.8)
+	hud:setTimer(message.EndsAt)
+	if isParticipant(message.Participants) then
+		Controls.bind(message.Minigame.Controls, function(action)
+			sendInput({ Kind = Net.Input.Action, Action = action })
+		end)
+	end
+end
+
+phaseHandlers[Phase.Finished] = function(_message)
+	Controls.unbind()
+	hud:setTimer(nil)
+	hud:showBanner("FINISH!", Theme.Colors.Hot, 1.5)
+end
+
+phaseHandlers[Phase.Results] = function(message)
+	hideOverlays()
+	hud:setStatus(nil)
+	results:show(message.Minigame, message.Results, myId)
+end
+
+-- Message routing ------------------------------------------------------------------------------
+
+stateRemote.OnClientEvent:Connect(function(message)
+	if type(message) ~= "table" then
+		return
+	end
+	if message.Type == Net.Message.Phase then
+		local handler = phaseHandlers[message.Phase]
+		if handler then
+			handler(message)
+		end
+	elseif message.Type == Net.Message.VoteUpdate then
+		voteScreen:updateCounts(message.Counts, message.Voters)
+	elseif message.Type == Net.Message.Status then
+		hud:setStatus(message.Text)
+	elseif message.Type == Net.Message.Toast then
+		hud:toast(message.Text)
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	hud:update()
+	voteScreen:update()
+	instructions:update()
+end)
+
+-- Ask for the current state in case we joined mid-round.
+sendInput({ Kind = Net.Input.Ready })
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="23">
+          <Properties>
+            <string name="Name">UI</string>
+          </Properties>
+          <Item class="ModuleScript" referent="24">
+            <Properties>
+              <string name="Name">Hud</string>
+              <string name="Source"><![CDATA[--[[
+	Hud
+	Always-on pieces of the screen: round timer, minigame status line, the big centre
+	banner (3-2-1 / GO! / FINISH!), the toast feed, and the lobby message pill.
+]]
+
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local Hud = {}
+Hud.__index = Hud
+
+local MAX_TOASTS = 4
+local TOAST_LIFETIME = 3.5
+
+function Hud.new(screen: ScreenGui)
+	local self = setmetatable({}, Hud)
+
+	-- Timer pill (top centre)
+	self.TimerFrame = make("Frame", {
+		Name = "Timer",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 12),
+		Size = UDim2.fromOffset(150, 52),
+		BackgroundColor3 = Theme.Colors.Card,
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(26), Theme.stroke(Theme.Colors.Accent, 3) })
+	self.TimerLabel = Theme.label({
+		Size = UDim2.fromScale(1, 1),
+		Font = Theme.TitleFont,
+		Text = "0:00",
+		Parent = self.TimerFrame,
+	}, 40)
+
+	-- Status line under the timer
+	self.StatusLabel = Theme.label({
+		Name = "Status",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 70),
+		Size = UDim2.new(0.8, 0, 0, 34),
+		TextStrokeTransparency = 0.3,
+		Text = "",
+		Visible = false,
+		Parent = screen,
+	}, 30)
+
+	-- Big centre banner
+	self.Banner = Theme.label({
+		Name = "Banner",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.42),
+		Size = UDim2.fromScale(0.8, 0.25),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		TextStrokeTransparency = 0,
+		Text = "",
+		Visible = false,
+		Parent = screen,
+	}, 140)
+	self.BannerToken = 0
+
+	-- Toast feed (left side, newest at the bottom)
+	self.ToastList = make("Frame", {
+		Name = "Toasts",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 12, 0.5, 0),
+		Size = UDim2.fromScale(0.3, 0.4),
+		BackgroundTransparency = 1,
+		Parent = screen,
+	}, {
+		make("UIListLayout", {
+			Padding = UDim.new(0, 6),
+			VerticalAlignment = Enum.VerticalAlignment.Bottom,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+		make("UISizeConstraint", { MinSize = Vector2.new(220, 0) }),
+	})
+	self.ToastCount = 0
+
+	-- Lobby pill (bottom centre)
+	self.LobbyFrame = make("Frame", {
+		Name = "Lobby",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -24),
+		Size = UDim2.new(0.6, 0, 0, 50),
+		BackgroundColor3 = Theme.Colors.Card,
+		BackgroundTransparency = 0.15,
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(25), Theme.make("UISizeConstraint", { MaxSize = Vector2.new(560, 50) }) })
+	self.LobbyLabel = Theme.label({
+		Size = UDim2.fromScale(1, 1),
+		Font = Theme.TitleFont,
+		Parent = self.LobbyFrame,
+	}, 26)
+
+	self.TimerEndsAt = nil
+	self.LobbyText = nil
+	self.LobbyEndsAt = nil
+	return self
+end
+
+-- Called every frame by the client main script.
+function Hud:update()
+	local now = Workspace:GetServerTimeNow()
+	if self.TimerEndsAt then
+		local remaining = self.TimerEndsAt - now
+		self.TimerLabel.Text = Theme.formatTime(remaining)
+		self.TimerLabel.TextColor3 = if remaining <= 10 then Theme.Colors.Hot else Theme.Colors.Text
+	end
+	if self.LobbyText then
+		local text = self.LobbyText
+		if self.LobbyEndsAt then
+			text ..= ("  %d"):format(math.max(0, math.ceil(self.LobbyEndsAt - now)))
+		end
+		self.LobbyLabel.Text = text
+	end
+end
+
+function Hud:setTimer(endsAt: number?)
+	self.TimerEndsAt = endsAt
+	self.TimerFrame.Visible = endsAt ~= nil
+end
+
+function Hud:setStatus(text: string?)
+	self.StatusLabel.Text = text or ""
+	self.StatusLabel.Visible = text ~= nil and text ~= ""
+end
+
+function Hud:setLobby(text: string?, endsAt: number?)
+	self.LobbyText = text
+	self.LobbyEndsAt = endsAt
+	self.LobbyFrame.Visible = text ~= nil
+end
+
+-- Pops a big message in the middle, then fades it after `hold` seconds.
+function Hud:showBanner(text: string, color: Color3?, hold: number?)
+	self.BannerToken += 1
+	local token = self.BannerToken
+	local banner = self.Banner
+	banner.Text = text
+	banner.TextColor3 = color or Theme.Colors.Accent
+	banner.TextTransparency = 0
+	banner.TextStrokeTransparency = 0
+	banner.Visible = true
+	Theme.pop(banner)
+	task.delay(hold or 0.8, function()
+		if self.BannerToken ~= token then
+			return -- replaced by a newer banner
+		end
+		local fade = TweenService:Create(banner, TweenInfo.new(0.25), { TextTransparency = 1, TextStrokeTransparency = 1 })
+		fade:Play()
+		fade.Completed:Wait()
+		if self.BannerToken == token then
+			banner.Visible = false
+		end
+	end)
+end
+
+function Hud:toast(text: string)
+	self.ToastCount += 1
+	local toast = make("Frame", {
+		LayoutOrder = self.ToastCount,
+		Size = UDim2.new(1, 0, 0, 36),
+		BackgroundColor3 = Theme.Colors.Card,
+		BackgroundTransparency = 0.2,
+		Parent = self.ToastList,
+	}, { Theme.corner(10), Theme.padding(6) })
+	local label = Theme.label({
+		Size = UDim2.fromScale(1, 1),
+		Text = text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = toast,
+	}, 20)
+
+	-- Keep the feed short.
+	local toasts = {}
+	for _, child in self.ToastList:GetChildren() do
+		if child:IsA("Frame") then
+			table.insert(toasts, child)
+		end
+	end
+	table.sort(toasts, function(a, b)
+		return a.LayoutOrder < b.LayoutOrder
+	end)
+	for i = 1, #toasts - MAX_TOASTS do
+		toasts[i]:Destroy()
+	end
+
+	task.delay(TOAST_LIFETIME, function()
+		if toast.Parent then
+			TweenService:Create(toast, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+			TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+			task.wait(0.3)
+			toast:Destroy()
+		end
+	end)
+end
+
+return Hud
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="25">
+            <Properties>
+              <string name="Name">InstructionsCard</string>
+              <string name="Source"><![CDATA[--[[
+	InstructionsCard
+	"How to play" card shown while the server builds the arena and teleports everyone:
+	name, layout, description, controls, and (for 1v3 / 2v2) who is on which team.
+]]
+
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local InstructionsCard = {}
+InstructionsCard.__index = InstructionsCard
+
+function InstructionsCard.new(screen: ScreenGui)
+	local self = setmetatable({}, InstructionsCard)
+	self.EndsAt = nil
+
+	self.Root = make("Frame", {
+		Name = "Instructions",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.7, 0.7),
+		BackgroundColor3 = Theme.Colors.Card,
+		Visible = false,
+		Parent = screen,
+	}, {
+		Theme.corner(22),
+		Theme.stroke(Theme.Colors.Accent, 4),
+		Theme.padding(18),
+		make("UISizeConstraint", { MaxSize = Vector2.new(720, 460) }),
+	})
+
+	self.Title = Theme.label({
+		Size = UDim2.fromScale(1, 0.18),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Parent = self.Root,
+	}, 52)
+	self.Layout = Theme.label({
+		Position = UDim2.fromScale(0, 0.19),
+		Size = UDim2.fromScale(1, 0.08),
+		TextColor3 = Theme.Colors.Cool,
+		Parent = self.Root,
+	}, 22)
+	self.Description = Theme.label({
+		Position = UDim2.fromScale(0, 0.3),
+		Size = UDim2.fromScale(1, 0.28),
+		Parent = self.Root,
+	}, 26)
+	self.Controls = Theme.label({
+		Position = UDim2.fromScale(0, 0.6),
+		Size = UDim2.fromScale(1, 0.13),
+		TextColor3 = Theme.Colors.Good,
+		Parent = self.Root,
+	}, 24)
+	self.Teams = Theme.label({
+		Position = UDim2.fromScale(0, 0.74),
+		Size = UDim2.fromScale(1, 0.12),
+		RichText = true,
+		Parent = self.Root,
+	}, 20)
+	self.Clock = Theme.label({
+		Position = UDim2.fromScale(0, 0.88),
+		Size = UDim2.fromScale(1, 0.12),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Muted,
+		Parent = self.Root,
+	}, 24)
+	return self
+end
+
+local function controlsText(controls): string
+	local parts = { "🕹 Move + Jump" }
+	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+	for _, control in controls do
+		if touch then
+			table.insert(parts, ("👆 %s button"):format(control.Label))
+		else
+			table.insert(parts, ("[%s] %s"):format(control.Key, control.Label))
+		end
+	end
+	return table.concat(parts, "    ")
+end
+
+local function teamsText(participants, myId: string): string
+	local teams = { {}, {} }
+	for _, participant in participants do
+		if participant.Team then
+			local name = participant.Name
+			if participant.Id == myId then
+				name = "<b>YOU</b>"
+			end
+			table.insert(teams[participant.Team], name)
+		end
+	end
+	if #teams[1] == 0 then
+		return ""
+	end
+	local function hex(color: Color3)
+		return color:ToHex()
+	end
+	return ('<font color="#%s">%s</font>   vs   <font color="#%s">%s</font>'):format(
+		hex(Theme.TeamColors[1]),
+		table.concat(teams[1], ", "),
+		hex(Theme.TeamColors[2]),
+		table.concat(teams[2], ", ")
+	)
+end
+
+function InstructionsCard:show(minigame, participants, endsAt: number, myId: string)
+	self.EndsAt = endsAt
+	self.Title.Text = minigame.Name
+	self.Layout.Text = ("%s  •  %d seconds"):format(minigame.Layout, minigame.Duration)
+	self.Description.Text = minigame.Description
+	self.Controls.Text = controlsText(minigame.Controls)
+	self.Teams.Text = teamsText(participants, myId)
+	self.Root.Visible = true
+	Theme.pop(self.Root)
+end
+
+function InstructionsCard:update()
+	if self.Root.Visible and self.EndsAt then
+		local remaining = math.max(0, math.ceil(self.EndsAt - Workspace:GetServerTimeNow()))
+		self.Clock.Text = ("Get ready... %d"):format(remaining)
+	end
+end
+
+function InstructionsCard:hide()
+	self.Root.Visible = false
+end
+
+return InstructionsCard
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="26">
+            <Properties>
+              <string name="Name">ResultsScreen</string>
+              <string name="Source"><![CDATA[--[[
+	ResultsScreen
+	Placements and coins awarded, exactly as the server ranked them.
+]]
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local ResultsScreen = {}
+ResultsScreen.__index = ResultsScreen
+
+function ResultsScreen.new(screen: ScreenGui)
+	local self = setmetatable({}, ResultsScreen)
+
+	self.Root = make("Frame", {
+		Name = "Results",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.7, 0.75),
+		BackgroundColor3 = Theme.Colors.Card,
+		Visible = false,
+		Parent = screen,
+	}, {
+		Theme.corner(22),
+		Theme.stroke(Theme.Colors.Accent, 4),
+		Theme.padding(18),
+		make("UISizeConstraint", { MaxSize = Vector2.new(680, 500) }),
+	})
+	self.Title = Theme.label({
+		Size = UDim2.fromScale(1, 0.16),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Parent = self.Root,
+	}, 46)
+	self.List = make("Frame", {
+		Position = UDim2.fromScale(0, 0.2),
+		Size = UDim2.fromScale(1, 0.8),
+		BackgroundTransparency = 1,
+		Parent = self.Root,
+	}, {
+		make("UIListLayout", {
+			Padding = UDim.new(0.03, 0),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	return self
+end
+
+local function buildRow(parent: Instance, index: number, row, isMe: boolean)
+	local placeColor = Theme.PlacementColors[row.Placement] or Theme.PlacementColors[4]
+	local frame = make("Frame", {
+		LayoutOrder = index,
+		Size = UDim2.fromScale(1, 0.22),
+		BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Overlay,
+		Parent = parent,
+	}, { Theme.corner(12), Theme.padding(6) })
+	if isMe then
+		Theme.stroke(Theme.Colors.Accent, 2).Parent = frame
+	end
+
+	Theme.label({
+		Size = UDim2.fromScale(0.16, 1),
+		Font = Theme.TitleFont,
+		TextColor3 = placeColor,
+		Text = Theme.ordinal(row.Placement),
+		Parent = frame,
+	}, 34)
+	local name = (if row.IsBot then "🤖 " else "") .. row.Name .. (if isMe then " (you)" else "")
+	Theme.label({
+		Position = UDim2.fromScale(0.18, 0),
+		Size = UDim2.fromScale(0.46, 1),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = if row.Team then Theme.TeamColors[row.Team] else Theme.Colors.Text,
+		Text = name,
+		Parent = frame,
+	}, 26)
+	Theme.label({
+		Position = UDim2.fromScale(0.64, 0),
+		Size = UDim2.fromScale(0.16, 1),
+		Font = Theme.TitleFont,
+		TextColor3 = if row.Coins > 0 then Theme.Colors.Accent else Theme.Colors.Muted,
+		Text = ("+%d 🪙"):format(row.Coins),
+		Parent = frame,
+	}, 28)
+	Theme.label({
+		Position = UDim2.fromScale(0.8, 0),
+		Size = UDim2.fromScale(0.2, 1),
+		TextColor3 = Theme.Colors.Muted,
+		Text = ("Total %d"):format(row.Total),
+		Parent = frame,
+	}, 20)
+end
+
+function ResultsScreen:show(minigame, rows, myId: string)
+	for _, child in self.List:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	self.Title.Text = ("🏆 %s — Results"):format(minigame.Name)
+	for index, row in rows do
+		buildRow(self.List, index, row, row.Id == myId)
+	end
+	self.Root.Visible = true
+	Theme.pop(self.Root)
+end
+
+function ResultsScreen:hide()
+	self.Root.Visible = false
+end
+
+return ResultsScreen
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="27">
+            <Properties>
+              <string name="Name">Theme</string>
+              <string name="Source"><![CDATA[--[[
+	Theme
+	Colours, fonts and tiny helpers for building UI in code (no Studio-made GUIs needed).
+]]
+
+local TweenService = game:GetService("TweenService")
+
+local Theme = {}
+
+Theme.TitleFont = Enum.Font.FredokaOne
+Theme.BodyFont = Enum.Font.GothamBold
+
+Theme.Colors = {
+	Overlay = Color3.fromRGB(20, 10, 40),
+	Card = Color3.fromRGB(45, 30, 80),
+	CardLight = Color3.fromRGB(70, 50, 120),
+	Accent = Color3.fromRGB(255, 220, 60),
+	Hot = Color3.fromRGB(255, 90, 140),
+	Cool = Color3.fromRGB(90, 220, 255),
+	Text = Color3.fromRGB(255, 255, 255),
+	Muted = Color3.fromRGB(200, 190, 230),
+	Good = Color3.fromRGB(120, 255, 140),
+}
+
+Theme.TeamColors = {
+	[1] = Color3.fromRGB(255, 90, 90),
+	[2] = Color3.fromRGB(90, 160, 255),
+}
+
+Theme.PlacementColors = {
+	Color3.fromRGB(255, 215, 0),
+	Color3.fromRGB(200, 210, 225),
+	Color3.fromRGB(215, 140, 70),
+	Color3.fromRGB(140, 130, 170),
+}
+
+-- make("Frame", { Size = ..., Parent = x }, { children })
+function Theme.make(className: string, props: { [string]: any }?, children: { Instance }?)
+	local instance = Instance.new(className)
+	local parent = nil
+	for key, value in props or {} do
+		if key == "Parent" then
+			parent = value
+		else
+			(instance :: any)[key] = value
+		end
+	end
+	for _, child in children or {} do
+		child.Parent = instance
+	end
+	instance.Parent = parent
+	return instance
+end
+
+function Theme.corner(radius: number?)
+	return Theme.make("UICorner", { CornerRadius = UDim.new(0, radius or 14) })
+end
+
+function Theme.stroke(color: Color3?, thickness: number?)
+	return Theme.make("UIStroke", {
+		Color = color or Color3.new(0, 0, 0),
+		Thickness = thickness or 2,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+function Theme.padding(pixels: number)
+	local p = UDim.new(0, pixels)
+	return Theme.make("UIPadding", { PaddingTop = p, PaddingBottom = p, PaddingLeft = p, PaddingRight = p })
+end
+
+-- Scaled text label with a max size so it stays readable on phones and huge monitors.
+function Theme.label(props: { [string]: any }, maxTextSize: number?)
+	local label = Theme.make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextColor3 = Theme.Colors.Text,
+		TextScaled = true,
+		TextWrapped = true,
+	})
+	for key, value in props do
+		if key ~= "Parent" then
+			(label :: any)[key] = value
+		end
+	end
+	Theme.make("UITextSizeConstraint", { MaxTextSize = maxTextSize or 28, MinTextSize = 8, Parent = label })
+	label.Parent = props.Parent
+	return label
+end
+
+-- Bouncy "pop in" used for cards and banners.
+function Theme.pop(guiObject: GuiObject)
+	local scale = guiObject:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = guiObject })
+	scale.Scale = 0.6
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+end
+
+-- "1:05" style clock.
+function Theme.formatTime(seconds: number): string
+	seconds = math.max(0, math.ceil(seconds))
+	return ("%d:%02d"):format(seconds // 60, seconds % 60)
+end
+
+function Theme.ordinal(n: number): string
+	local suffix = "th"
+	if n % 100 < 11 or n % 100 > 13 then
+		suffix = ({ "st", "nd", "rd" })[n % 10] or "th"
+	end
+	return n .. suffix
+end
+
+return Theme
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="28">
+            <Properties>
+              <string name="Name">VoteScreen</string>
+              <string name="Source"><![CDATA[--[[
+	VoteScreen
+	Full-screen overlay with up to 3 minigame cards. Clicking a card sends a vote input;
+	the counts/voter names shown are whatever the server broadcasts (never local guesses).
+]]
+
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local VoteScreen = {}
+VoteScreen.__index = VoteScreen
+
+function VoteScreen.new(screen: ScreenGui, onVote: (number) -> ())
+	local self = setmetatable({}, VoteScreen)
+	self.OnVote = onVote
+	self.Cards = {}
+	self.Selected = nil
+	self.EndsAt = nil
+
+	self.Root = make("Frame", {
+		Name = "VoteScreen",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Theme.Colors.Overlay,
+		BackgroundTransparency = 0.25,
+		Visible = false,
+		Parent = screen,
+	})
+	self.Title = Theme.label({
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.06),
+		Size = UDim2.fromScale(0.9, 0.1),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		TextStrokeTransparency = 0.4,
+		Text = "VOTE FOR THE NEXT MINIGAME!",
+		Parent = self.Root,
+	}, 56)
+	self.Clock = Theme.label({
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.16),
+		Size = UDim2.fromScale(0.5, 0.06),
+		Font = Theme.TitleFont,
+		Parent = self.Root,
+	}, 32)
+	self.Row = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.58),
+		Size = UDim2.fromScale(0.92, 0.6),
+		BackgroundTransparency = 1,
+		Parent = self.Root,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0.02, 0),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+		make("UISizeConstraint", { MaxSize = Vector2.new(1100, 460) }),
+	})
+	return self
+end
+
+local function buildCard(self, index: number, choice)
+	local card = make("TextButton", {
+		Name = "Card" .. index,
+		LayoutOrder = index,
+		Size = UDim2.fromScale(0.31, 1),
+		BackgroundColor3 = Theme.Colors.Card,
+		AutoButtonColor = true,
+		Text = "",
+		Parent = self.Row,
+	}, { Theme.corner(18), Theme.padding(12) })
+	local stroke = Theme.stroke(Theme.Colors.CardLight, 4)
+	stroke.Parent = card
+
+	Theme.label({
+		Size = UDim2.fromScale(1, 0.2),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Text = choice.Name,
+		Parent = card,
+	}, 36)
+	Theme.label({
+		Position = UDim2.fromScale(0, 0.21),
+		Size = UDim2.fromScale(1, 0.09),
+		TextColor3 = Theme.Colors.Cool,
+		Text = ("%s%s"):format(choice.Layout, if choice.Duration then ("  •  %ds"):format(choice.Duration) else ""),
+		Parent = card,
+	}, 20)
+	Theme.label({
+		Position = UDim2.fromScale(0, 0.33),
+		Size = UDim2.fromScale(1, 0.37),
+		TextColor3 = Theme.Colors.Muted,
+		Font = Theme.BodyFont,
+		Text = choice.Description,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Parent = card,
+	}, 20)
+	local voters = Theme.label({
+		Position = UDim2.fromScale(0, 0.72),
+		Size = UDim2.fromScale(1, 0.12),
+		TextColor3 = Theme.Colors.Text,
+		Text = "",
+		Parent = card,
+	}, 18)
+	local count = Theme.label({
+		Position = UDim2.fromScale(0, 0.86),
+		Size = UDim2.fromScale(1, 0.14),
+		Font = Theme.TitleFont,
+		Text = "0 votes",
+		Parent = card,
+	}, 28)
+
+	card.Activated:Connect(function()
+		self.Selected = index
+		self:_refreshSelection()
+		self.OnVote(index)
+	end)
+
+	return { Button = card, Stroke = stroke, Count = count, Voters = voters }
+end
+
+function VoteScreen:_refreshSelection()
+	for index, card in self.Cards do
+		local selected = index == self.Selected
+		card.Stroke.Color = if selected then Theme.Colors.Accent else Theme.Colors.CardLight
+		card.Button.BackgroundColor3 = if selected then Theme.Colors.CardLight else Theme.Colors.Card
+	end
+end
+
+function VoteScreen:show(choices, endsAt: number)
+	for _, card in self.Cards do
+		card.Button:Destroy()
+	end
+	self.Cards = {}
+	self.Selected = nil
+	self.EndsAt = endsAt
+	for index, choice in choices do
+		self.Cards[index] = buildCard(self, index, choice)
+	end
+	self.Root.Visible = true
+	Theme.pop(self.Row)
+end
+
+function VoteScreen:updateCounts(counts, voters)
+	for index, card in self.Cards do
+		local count = counts[index] or 0
+		card.Count.Text = if count == 1 then "1 vote" else ("%d votes"):format(count)
+		card.Voters.Text = table.concat(voters[index] or {}, ", ")
+	end
+end
+
+function VoteScreen:update()
+	if self.Root.Visible and self.EndsAt then
+		local remaining = math.max(0, math.ceil(self.EndsAt - Workspace:GetServerTimeNow()))
+		self.Clock.Text = ("⏱ %d"):format(remaining)
+	end
+end
+
+function VoteScreen:hide()
+	self.Root.Visible = false
+end
+
+return VoteScreen
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="29">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="FilteringEnabled">true</bool>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+    <Item class="Model" referent="30">
+      <Properties>
+        <string name="Name">PartyLobby</string>
+        <bool name="NeedsPivotMigration">false</bool>
+      </Properties>
+      <Item class="Part" referent="31">
+        <Properties>
+          <string name="Name">Floor</string>
+          <bool name="Anchored">true</bool>
+          <token name="BottomSurface">0</token>
+          <Color3uint8 name="Color3uint8">16755686</Color3uint8>
+          <token name="Material">272</token>
+          <Vector3 name="Position">
+            <X>0</X>
+            <Y>-1</Y>
+            <Z>0</Z>
+          </Vector3>
+          <Vector3 name="size">
+            <X>80</X>
+            <Y>2</Y>
+            <Z>80</Z>
+          </Vector3>
+          <token name="TopSurface">0</token>
+        </Properties>
+      </Item>
+      <Item class="SpawnLocation" referent="32">
+        <Properties>
+          <string name="Name">LobbySpawn</string>
+          <bool name="Anchored">true</bool>
+          <token name="BottomSurface">0</token>
+          <Color3uint8 name="Color3uint8">16767833</Color3uint8>
+          <int name="Duration">0</int>
+          <bool name="Neutral">true</bool>
+          <Vector3 name="Position">
+            <X>0</X>
+            <Y>0.5</Y>
+            <Z>0</Z>
+          </Vector3>
+          <Vector3 name="size">
+            <X>12</X>
+            <Y>1</Y>
+            <Z>12</Z>
+          </Vector3>
+          <token name="TopSurface">0</token>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
