@@ -31,6 +31,7 @@ local STEP_DELAY = 0.8 -- crumble time after being stepped on
 local RANDOM_DELAY = 1.4 -- crumble time for a randomly picked tile (longer warning)
 local RANDOM_INTERVAL = { 2.0, 0.5 } -- seconds between random drops, start -> end of round
 local CHECK_INTERVAL = 0.1
+local START_GRACE = 1.5 -- tiles ignore footsteps this long after GO, so nobody drops before they can react
 
 local SOLID_COLOR = Color3.fromRGB(110, 220, 255)
 local WARNING_COLOR = Color3.fromRGB(255, 200, 40)
@@ -152,7 +153,7 @@ function FallingPlatforms:Start()
 					round:Eliminate(participant, true)
 					round:Toast(("🪂 %s fell into the void"):format(participant.Name))
 					round:ReportProgress(participant, ("🪂 %ds"):format(clock - startedAt))
-				elseif position.Y < floorY + 8 then
+				elseif position.Y < floorY + 8 and clock - startedAt >= START_GRACE then
 					-- Standing (or nearly) on the grid: the tile underneath starts crumbling.
 					local tile = self:_tileAt(position)
 					if tile then
