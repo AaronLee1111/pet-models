@@ -47,6 +47,21 @@ Config.DefaultWalkSpeed = 16
 Config.DefaultJumpPower = 50
 Config.DefaultJumpHeight = 7.2
 
+-- Camera ---------------------------------------------------------------------------
+
+-- Camera modes a minigame can pick in Info.Camera.Mode. Each minigame can override any
+-- of these numbers in its own Info.Camera table.
+Config.CameraModes = {
+	AngledOverhead = { Height = 55, Distance = 42, Follow = 0.3, Smooth = 6 }, -- whole arena, nudged toward you
+	FollowBehind = { Height = 9, Distance = 16, Smooth = 10 }, -- over-the-shoulder chase cam
+	SideView = { Height = 6, Distance = 48, Smooth = 8 }, -- 2D side-scroller, looks along the arena's LookVector
+}
+Config.DefaultCameraMode = "AngledOverhead"
+Config.Spectator = { Height = 28, Distance = 30, OrbitSpeed = 0.25 }
+
+-- Player chips: how often progress updates are pushed to clients (seconds).
+Config.ChipFlushInterval = 0.15
+
 -- Bots ---------------------------------------------------------------------------
 
 Config.BotThinkInterval = 0.2 -- how often each bot's brain runs

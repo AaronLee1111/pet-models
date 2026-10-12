@@ -19,9 +19,15 @@ HotPotato.Info = {
 	Description = "Someone's holding a spicy potato 🥔🔥. Get close and pass it before it goes BOOM. Last one standing wins!",
 	Duration = 90,
 	Layout = Config.Layouts.FFA,
+	Camera = { Mode = "AngledOverhead", Height = 50, Distance = 38 },
 	Controls = {
-		{ Action = "Pass", Label = "Pass!", Key = "E" },
+		Move = true,
+		Jump = true,
+		Actions = {
+			{ Action = "Pass", Label = "Pass!", Key = "E", Gamepad = "ButtonX" },
+		},
 	},
+	ProgressLabel = "Potato",
 }
 
 local ARENA_RADIUS = 30
@@ -113,6 +119,17 @@ end
 
 -- Potato handling -----------------------------------------------------------------------
 
+-- Player chips: who's holding it, who's safe, who's toast.
+function HotPotato:_refreshChips()
+	for _, participant in self.Participants do
+		local value = if self.Round:IsEliminated(participant)
+			then "💥 cooked"
+			elseif participant == self.Holder then "🥔 HOT!"
+			else "😎 safe"
+		self.Round:ReportProgress(participant, value)
+	end
+end
+
 function HotPotato:_setHolder(participant)
 	local previous = self.Holder
 	if previous then
@@ -129,6 +146,7 @@ function HotPotato:_setHolder(participant)
 	if not participant then
 		self.Potato.Transparency = 1
 		self.Fire.Enabled = false
+		self:_refreshChips()
 		return
 	end
 
@@ -145,6 +163,7 @@ function HotPotato:_setHolder(participant)
 	self.Potato.Transparency = 0
 	self.Fire.Enabled = true
 	self.Round:SetStatus(("🥔 %s has the potato!"):format(participant.Name))
+	self:_refreshChips()
 end
 
 -- Hands a fresh potato (new fuse) to a random survivor.
@@ -182,6 +201,7 @@ function HotPotato:_explode(spawnNext: boolean)
 	end
 	self.Round:Toast(("💥 BOOM! %s got cooked"):format(holder.Name))
 	self.Round:Eliminate(holder, true)
+	self:_refreshChips()
 
 	if spawnNext then
 		if #self.Round:GetAlive() <= 1 then
@@ -230,6 +250,7 @@ end
 -- Interface -----------------------------------------------------------------------------
 
 function HotPotato:Start()
+	self:_refreshChips()
 	self:_newPotato()
 	table.insert(
 		self.Connections,

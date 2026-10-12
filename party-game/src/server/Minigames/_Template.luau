@@ -25,6 +25,8 @@
 	  OnRoundEnding(reason)                 optional - reason = "TimeUp" or whatever you passed to round:End()
 
 	Available on self: self.Round (RoundContext), self.Arena, self.Participants, self.Info.
+	Handy RoundContext calls: Eliminate(p) (they get a spectator camera), ReportProgress(p, value,
+	label?) (player chips), SetStatus(text), Toast(text), End(reason), GetAlive(), GetTeam(n).
 	Each participant has a .Team (1 or 2) in 1v3 / 2v2 layouts; team 1 is the solo side in 1v3.
 ]]
 
@@ -41,10 +43,24 @@ Template.Info = {
 	Description = "One or two sentences shown on the vote card and instructions screen.",
 	Duration = 60, -- seconds; the round ends automatically when this runs out
 	Layout = Config.Layouts.FFA, -- FFA | OneVsThree ("1v3") | TwoVsTwo ("2v2")
+
+	-- Each player's camera. Modes: "AngledOverhead", "FollowBehind", "SideView".
+	-- Any number from Config.CameraModes[Mode] (Height, Distance, ...) can be overridden here.
+	Camera = { Mode = "AngledOverhead" },
+
+	-- Movement locking + action buttons. Actions get a keyboard key, a gamepad button and
+	-- an on-screen button on phones/tablets automatically, and arrive in OnInput.
 	Controls = {
-		-- Each control becomes a key bind + mobile button on the client and an OnInput call here.
-		{ Action = "Smack", Label = "Smack!", Key = "E" },
+		Move = true, -- false = can't walk (enforced on the server)
+		Jump = true,
+		WalkSpeed = 16,
+		Actions = {
+			{ Action = "Smack", Label = "Smack!", Key = "E", Gamepad = "ButtonX" },
+		},
 	},
+
+	-- Caption under each player chip; values come from self.Round:ReportProgress(p, value).
+	ProgressLabel = "Score",
 }
 
 function Template:Setup(arena, participants, _round)
@@ -77,6 +93,7 @@ end
 function Template:OnInput(participant, action)
 	if action == "Smack" then
 		self.Score[participant] += 1
+		self.Round:ReportProgress(participant, self.Score[participant])
 	end
 end
 

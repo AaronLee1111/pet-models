@@ -18,6 +18,8 @@
 	  round:TimeLeft()
 	  round:Toast(text)         short feed message on every client
 	  round:SetStatus(text)     persistent HUD line on every client
+	  round:ReportProgress(p, value, label?)
+	                            update p's player chip (score / progress / lives / any short text)
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -38,6 +40,8 @@ function RoundContext.new(params)
 		_eliminated = {},
 		_broadcast = params.Broadcast,
 		_setStatus = params.SetStatus,
+		_onProgress = params.OnProgress,
+		_onEliminated = params.OnEliminated,
 	}, RoundContext)
 end
 
@@ -57,6 +61,7 @@ function RoundContext:Eliminate(participant, silent: boolean?)
 	if not silent then
 		self:Toast(("❌ %s is out!"):format(participant.Name))
 	end
+	self._onEliminated(participant)
 end
 
 function RoundContext:IsEliminated(participant): boolean
@@ -100,6 +105,15 @@ end
 
 function RoundContext:SetStatus(text: string?)
 	self._setStatus(text)
+end
+
+-- value: number or short string ("3 ❤️", "45%"). label: optional caption, defaults to
+-- Info.ProgressLabel. Cheap to call every frame; updates are batched.
+function RoundContext:ReportProgress(participant, value: number | string, label: string?)
+	if type(value) == "number" then
+		value = math.floor(value * 10 + 0.5) / 10 -- keep chips tidy
+	end
+	self._onProgress(participant, value, label)
 end
 
 return RoundContext

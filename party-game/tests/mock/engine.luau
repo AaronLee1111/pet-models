@@ -661,6 +661,7 @@ end
 
 local GRAVITY = 196.2
 local HIP = 3 -- root centre height above the floor
+local FOOT = 1 -- half the width of a character's footprint
 
 local function aabb(part)
 	local cf, size = part.CFrame, part.Size
@@ -710,7 +711,11 @@ local function stepPhysics(dt)
 		local groundTop = nil
 		for _, part in floors do
 			local center, extents = aabb(part)
-			if math.abs(position.X - center.X) <= extents.X and math.abs(position.Z - center.Z) <= extents.Z then
+			-- Characters have a ~2 stud footprint, so they bridge small gaps like in Roblox.
+			if
+				math.abs(position.X - center.X) <= extents.X + FOOT
+				and math.abs(position.Z - center.Z) <= extents.Z + FOOT
+			then
 				local top = center.Y + extents.Y
 				if top <= feet + 0.6 and (groundTop == nil or top > groundTop) then
 					groundTop = top
@@ -768,6 +773,10 @@ Engine.RunService = service("RunService")
 Engine.TweenService = service("TweenService")
 Engine.ContextActionService = service("ContextActionService")
 Engine.UserInputService = service("UserInputService")
+local camera = newInstance("Camera", Engine.Workspace)
+camera.Name = "Camera"
+camera.CameraType = Enum.CameraType.Custom
+Engine.Workspace.CurrentCamera = camera
 local starterPlayerScripts = newInstance("StarterPlayerScripts", Engine.StarterPlayer)
 starterPlayerScripts.Name = "StarterPlayerScripts"
 
@@ -801,6 +810,10 @@ function Methods.BindAction(_self, name, handler, _createTouchButton, ...)
 		assert(typeof(input) == "EnumItem", "BindAction inputs must be EnumItems")
 	end
 	Engine.boundActions[name] = handler
+end
+function Methods.BindActionAtPriority(self, name, handler, createTouchButton, priority, ...)
+	assert(type(priority) == "number", "BindActionAtPriority needs a numeric priority")
+	Methods.BindAction(self, name, handler, createTouchButton, ...)
 end
 function Methods.UnbindAction(_self, name)
 	Engine.boundActions[name] = nil

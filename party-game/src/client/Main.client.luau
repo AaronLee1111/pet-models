@@ -2,6 +2,7 @@
 	Main (client entry point)
 	Renders whatever state the server sends and forwards inputs. No game logic lives here:
 	the client never decides who won, who has the potato, or when a round ends.
+	It does own purely local presentation: this player's camera, UI and control bindings.
 ]]
 
 local Players = game:GetService("Players")
@@ -9,13 +10,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Net = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Net"))
+local CameraController = require(script.Parent:WaitForChild("CameraController"))
 local Controls = require(script.Parent:WaitForChild("Controls"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
+local ActionBar = require(UI:WaitForChild("ActionBar"))
 local Hud = require(UI:WaitForChild("Hud"))
-local VoteScreen = require(UI:WaitForChild("VoteScreen"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
+local PlayerChips = require(UI:WaitForChild("PlayerChips"))
 local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
+local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
+local VoteScreen = require(UI:WaitForChild("VoteScreen"))
 
 local player = Players.LocalPlayer
 local myId = "player_" .. player.UserId
@@ -24,6 +29,10 @@ local inputRemote = Net.inputRemote()
 
 local function sendInput(payload)
 	inputRemote:FireServer(payload)
+end
+
+local function sendAction(action: string)
+	sendInput({ Kind = Net.Input.Action, Action = action })
 end
 
 -- Screens ---------------------------------------------------------------------------------
@@ -42,6 +51,13 @@ local voteScreen = VoteScreen.new(screen, function(choice)
 end)
 local instructions = InstructionsCard.new(screen)
 local results = ResultsScreen.new(screen)
+local chips = PlayerChips.new(screen)
+local spectatorBar
+spectatorBar = SpectatorBar.new(screen, function(direction)
+	CameraController.cycle(direction)
+	spectatorBar:show(CameraController.getTargetName())
+end)
+Controls.setActionBar(ActionBar.new(screen))
 
 local function hideOverlays()
 	voteScreen:hide()
@@ -58,6 +74,55 @@ local function isParticipant(participants): boolean
 	return false
 end
 
+-- Round presentation state -----------------------------------------------------------------
+
+local inRound = false -- true from Instructions until Results/Lobby
+local amParticipant = false
+
+local function beginRound(message)
+	if inRound then
+		return
+	end
+	inRound = true
+	amParticipant = isParticipant(message.Participants)
+	CameraController.start(message.Minigame.Camera, message.ArenaOrigin)
+	CameraController.setSpectating(not amParticipant)
+	chips:show()
+end
+
+local function endRound()
+	inRound = false
+	Controls.unbind()
+	CameraController.stop()
+	spectatorBar:hide()
+	chips:hide()
+end
+
+local function refreshSpectator()
+	if CameraController.isActive() and CameraController.isSpectating() then
+		spectatorBar:show(CameraController.getTargetName())
+	else
+		spectatorBar:hide()
+	end
+end
+
+local function onChips(list)
+	if not inRound then
+		return
+	end
+	chips:update(list, myId)
+	CameraController.setTargets(list)
+	for _, chip in list do
+		if chip.Id == myId and chip.Eliminated and not CameraController.isSpectating() then
+			-- Knocked out: lose the controls, switch to the spectator camera.
+			Controls.unbind()
+			CameraController.setSpectating(true)
+			hud:showBanner("ELIMINATED", Theme.Colors.Hot, 1.2)
+		end
+	end
+	refreshSpectator()
+end
+
 -- Phase handlers ------------------------------------------------------------------------------
 
 local Phase = Net.Phase
@@ -65,7 +130,7 @@ local phaseHandlers = {}
 
 phaseHandlers[Phase.Lobby] = function(message)
 	hideOverlays()
-	Controls.unbind()
+	endRound()
 	hud:setTimer(nil)
 	hud:setStatus(nil)
 	hud:setLobby(message.Text or "Lobby", message.EndsAt)
@@ -81,9 +146,11 @@ phaseHandlers[Phase.Instructions] = function(message)
 	hideOverlays()
 	hud:setLobby(nil)
 	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
-	if not isParticipant(message.Participants) then
+	beginRound(message)
+	if not amParticipant then
 		hud:setStatus("👀 Spectating this round")
 	end
+	refreshSpectator()
 end
 
 phaseHandlers[Phase.Countdown] = function(message)
@@ -93,12 +160,11 @@ end
 
 phaseHandlers[Phase.Playing] = function(message)
 	hideOverlays()
+	beginRound(message) -- no-op normally; covers joining mid-round
 	hud:showBanner("GO!", Theme.Colors.Good, 0.8)
 	hud:setTimer(message.EndsAt)
-	if isParticipant(message.Participants) then
-		Controls.bind(message.Minigame.Controls, function(action)
-			sendInput({ Kind = Net.Input.Action, Action = action })
-		end)
+	if amParticipant and not CameraController.isSpectating() then
+		Controls.bind(message.Minigame.Controls, sendAction)
 	end
 end
 
@@ -110,6 +176,7 @@ end
 
 phaseHandlers[Phase.Results] = function(message)
 	hideOverlays()
+	endRound() -- everyone is back in the lobby: normal camera + controls
 	hud:setStatus(nil)
 	results:show(message.Minigame, message.Results, myId)
 end
@@ -131,6 +198,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 		hud:setStatus(message.Text)
 	elseif message.Type == Net.Message.Toast then
 		hud:toast(message.Text)
+	elseif message.Type == Net.Message.Chips then
+		onChips(message.Chips)
 	end
 end)
 

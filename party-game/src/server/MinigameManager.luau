@@ -20,6 +20,7 @@ local Net = require(ReplicatedStorage.PartyShared.Net)
 local Arena = require(script.Parent.Arena)
 local BotService = require(script.Parent.BotService)
 local CoinService = require(script.Parent.CoinService)
+local MinigameInfo = require(script.Parent.MinigameInfo)
 local ResultsUtil = require(script.Parent.ResultsUtil)
 local RoundContext = require(script.Parent.RoundContext)
 
@@ -74,6 +75,38 @@ local function describeParticipants(participants)
 	return list
 end
 
+-- Player chips ----------------------------------------------------------------------------
+-- One chip per participant: name, team, live value reported by the minigame, eliminated flag.
+-- Updates are batched and sent at most every Config.ChipFlushInterval seconds.
+
+local chipFlushQueued = false
+
+local function chipsMessage()
+	local active = state.Active
+	local chips = {}
+	for _, participant in state.Participants do
+		local chip = participant:Describe()
+		local progress = active and active.Progress[participant]
+		chip.Value = progress and progress.Value
+		chip.Label = progress and progress.Label or (active and active.Described.ProgressLabel)
+		chip.Eliminated = active ~= nil and active.Round:IsEliminated(participant)
+		chip.Character = participant:GetCharacter() -- lets clients spectate this participant
+		table.insert(chips, chip)
+	end
+	return { Type = Net.Message.Chips, Chips = chips }
+end
+
+local function queueChipFlush()
+	if chipFlushQueued then
+		return
+	end
+	chipFlushQueued = true
+	task.delay(Config.ChipFlushInterval, function()
+		chipFlushQueued = false
+		broadcast(chipsMessage())
+	end)
+end
+
 -- Counts votes per card; also returns who voted for what (shown under each card).
 local function tallyVotes(vote)
 	local counts, voters = {}, {}
@@ -102,36 +135,12 @@ local function sendSnapshot(player: Player)
 	if state.Status then
 		stateRemote:FireClient(player, { Type = Net.Message.Status, Text = state.Status })
 	end
+	if state.Active then
+		stateRemote:FireClient(player, chipsMessage())
+	end
 end
 
 -- Registry ----------------------------------------------------------------------------
-
-local REQUIRED_FUNCTIONS = { "Setup", "Start", "Cleanup", "GetResults" }
-
-local function validateDefinition(definition): string?
-	if type(definition) ~= "table" then
-		return "module must return a table"
-	end
-	local info = definition.Info
-	if type(info) ~= "table" then
-		return "missing Info table"
-	end
-	if type(info.Name) ~= "string" or type(info.Description) ~= "string" then
-		return "Info.Name and Info.Description must be strings"
-	end
-	if type(info.Duration) ~= "number" or info.Duration <= 0 then
-		return "Info.Duration must be a positive number"
-	end
-	if not table.find({ "FFA", "1v3", "2v2" }, info.Layout) then
-		return "Info.Layout must be FFA, 1v3 or 2v2"
-	end
-	for _, name in REQUIRED_FUNCTIONS do
-		if type(definition[name]) ~= "function" then
-			return ("missing function %s"):format(name)
-		end
-	end
-	return nil
-end
 
 local function loadMinigames()
 	local folder = script.Parent:WaitForChild("Minigames")
@@ -140,12 +149,16 @@ local function loadMinigames()
 			continue
 		end
 		local ok, definition = pcall(require, module)
-		local problem = if ok then validateDefinition(definition) else tostring(definition)
+		local problem = if ok then MinigameInfo.validate(definition) else tostring(definition)
 		if problem then
 			warn(("[MinigameManager] Skipping minigame %s: %s"):format(module.Name, problem))
 			continue
 		end
-		table.insert(registry, { Id = module.Name, Definition = definition })
+		table.insert(registry, {
+			Id = module.Name,
+			Definition = definition,
+			Described = MinigameInfo.normalize(module.Name, definition.Info),
+		})
 	end
 	table.sort(registry, function(a, b)
 		return a.Id < b.Id
@@ -154,15 +167,7 @@ local function loadMinigames()
 end
 
 local function describeMinigame(entry)
-	local info = entry.Definition.Info
-	return {
-		Id = entry.Id,
-		Name = info.Name,
-		Description = info.Description,
-		Layout = info.Layout,
-		Duration = info.Duration,
-		Controls = info.Controls or {},
-	}
+	return table.clone(entry.Described)
 end
 
 local function findEntry(id: string)
@@ -396,16 +401,22 @@ function MinigameManager.runRound(participants)
 
 	-- 2. Build the arena + a fresh minigame instance (all per-round state lives on it)
 	local arena = Arena.create(entry.Id)
+	local progress = {}
 	local round = RoundContext.new({
 		Participants = participants,
 		Arena = arena,
 		Broadcast = broadcast,
 		SetStatus = setStatus,
+		OnProgress = function(participant, value, label)
+			progress[participant] = { Value = value, Label = label }
+			queueChipFlush()
+		end,
+		OnEliminated = queueChipFlush,
 	})
 	local instance = setmetatable({ Round = round, Arena = arena, Participants = participants }, { __index = definition })
 
 	local actions = {}
-	for _, control in info.Controls or {} do
+	for _, control in described.Controls.Actions do
 		actions[control.Action] = true
 	end
 	state.Active = {
@@ -414,6 +425,8 @@ function MinigameManager.runRound(participants)
 		Round = round,
 		Arena = arena,
 		Actions = actions,
+		Described = described,
+		Progress = progress,
 		Connections = {},
 	}
 
@@ -422,6 +435,7 @@ function MinigameManager.runRound(participants)
 	setPhase(Net.Phase.Instructions, {
 		Minigame = described,
 		Participants = describeParticipants(participants),
+		ArenaOrigin = arena.Origin,
 		EndsAt = instructionsEnd,
 	})
 
@@ -432,11 +446,12 @@ function MinigameManager.runRound(participants)
 		participant:Teleport(spawn)
 		participant:Freeze()
 	end
+	broadcast(chipsMessage()) -- characters exist now, so spectating works from the start
 	task.wait(math.max(0, instructionsEnd - now()))
 
 	-- 4. Countdown
 	for number = Config.CountdownFrom, 1, -1 do
-		setPhase(Net.Phase.Countdown, { Number = number, Minigame = described })
+		setPhase(Net.Phase.Countdown, { Number = number, Minigame = described, ArenaOrigin = arena.Origin })
 		task.wait(1)
 	end
 
@@ -452,7 +467,7 @@ function MinigameManager.runRound(participants)
 			)
 		end
 		if participant:IsAlive() then
-			participant:ResetMovement()
+			participant:ApplyControls(described.Controls) -- server-side movement locking
 		else
 			onParticipantLost(participant, "Died")
 		end
@@ -462,6 +477,7 @@ function MinigameManager.runRound(participants)
 	setPhase(Net.Phase.Playing, {
 		Minigame = described,
 		Participants = describeParticipants(participants),
+		ArenaOrigin = arena.Origin,
 		EndsAt = round.EndsAt,
 	})
 	BotService.setBrain(function(bot, dt)

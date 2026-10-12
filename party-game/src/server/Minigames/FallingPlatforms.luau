@@ -19,7 +19,9 @@ FallingPlatforms.Info = {
 	Description = "The floor is lava's lazy cousin: tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
 	Duration = 75,
 	Layout = Config.Layouts.FFA,
-	Controls = {}, -- movement + jump only
+	Camera = { Mode = "FollowBehind" },
+	Controls = { Move = true, Jump = true, WalkSpeed = 18 }, -- no actions, slightly zippier
+	ProgressLabel = "Survived",
 }
 
 local GRID = 7 -- GRID x GRID tiles
@@ -127,6 +129,7 @@ end
 function FallingPlatforms:Start()
 	local round = self.Round
 	local startedAt = os.clock()
+	local nextChipUpdate = 0
 	local nextCheck = 0
 	local nextRandomDrop = os.clock() + RANDOM_INTERVAL[1]
 	local floorY = self.Arena.Origin.Y
@@ -148,6 +151,7 @@ function FallingPlatforms:Start()
 				if position.Y < floorY - Config.FallOutDepth then
 					round:Eliminate(participant, true)
 					round:Toast(("🪂 %s fell into the void"):format(participant.Name))
+					round:ReportProgress(participant, ("🪂 %ds"):format(clock - startedAt))
 				elseif position.Y < floorY + 8 then
 					-- Standing (or nearly) on the grid: the tile underneath starts crumbling.
 					local tile = self:_tileAt(position)
@@ -165,6 +169,14 @@ function FallingPlatforms:Start()
 				local solid = self:_solidTiles()
 				if #solid > 0 then
 					self:_crumble(solid[round.Rng:NextInteger(1, #solid)], RANDOM_DELAY)
+				end
+			end
+
+			-- Chips: seconds survived for anyone still standing.
+			if clock >= nextChipUpdate then
+				nextChipUpdate = clock + 1
+				for _, participant in round:GetAlive() do
+					round:ReportProgress(participant, ("%ds"):format(clock - startedAt))
 				end
 			end
 

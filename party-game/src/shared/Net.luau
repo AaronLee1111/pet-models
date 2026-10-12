@@ -33,6 +33,7 @@ Net.Message = {
 	VoteUpdate = "VoteUpdate", -- live vote counts during the Vote phase
 	Status = "Status", -- persistent HUD line set by the minigame ("Doge has the potato!")
 	Toast = "Toast", -- short-lived feed message ("BOOM!")
+	Chips = "Chips", -- player-chip strip: every participant's live value + eliminated flag
 }
 
 -- Client -> server input kinds (payload.Kind).

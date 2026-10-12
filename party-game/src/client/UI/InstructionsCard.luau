@@ -72,13 +72,20 @@ function InstructionsCard.new(screen: ScreenGui)
 end
 
 local function controlsText(controls): string
-	local parts = { "🕹 Move + Jump" }
+	local parts = {}
+	if controls.Move and controls.Jump then
+		table.insert(parts, "🕹 Move + Jump")
+	elseif controls.Move then
+		table.insert(parts, "🕹 Move (no jumping)")
+	else
+		table.insert(parts, "🔒 You can't walk this round")
+	end
 	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	for _, control in controls do
-		if touch then
-			table.insert(parts, ("👆 %s button"):format(control.Label))
+	for _, action in controls.Actions do
+		if touch or not action.Key then
+			table.insert(parts, ("👆 %s button"):format(action.Label))
 		else
-			table.insert(parts, ("[%s] %s"):format(control.Key, control.Label))
+			table.insert(parts, ("[%s] %s"):format(action.Key, action.Label))
 		end
 	end
 	return table.concat(parts, "    ")

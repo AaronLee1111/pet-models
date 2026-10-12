@@ -119,6 +119,12 @@ function Participant:ResetMovement()
 	self:SetMovement(Config.DefaultWalkSpeed, true)
 end
 
+-- Applies a minigame's normalized Info.Controls (see MinigameInfo). Done on the server so
+-- movement locks hold even if a client ignores them.
+function Participant:ApplyControls(controls)
+	self:SetMovement(if controls.Move then controls.WalkSpeed else 0, controls.Jump)
+end
+
 -- Data the client needs to draw this participant (names, bot icon, team colour).
 function Participant:Describe()
 	return {

@@ -12,7 +12,9 @@ local Engine = require("./mock/engine")
 local roblox = require("@lune/roblox")
 local Vector3, Enum = roblox.Vector3, roblox.Enum
 
-local SEED = tonumber(require("@lune/process").args[1]) or 1234
+local args = require("@lune/process").args
+local SEED = tonumber(args[1]) or 1234
+local VERBOSE = args[2] == "-v"
 math.randomseed(SEED)
 
 local ROOT = "src"
@@ -46,7 +48,6 @@ Engine.run(0.2)
 Engine.runScript(client.Main, "client")
 
 -- Record everything the client receives.
-local Net = Engine.requireAs(shared.Net, "server")
 local stateRemote = Engine.ReplicatedStorage.PartyRemotes.PartyState
 local inputRemote = Engine.ReplicatedStorage.PartyRemotes.PartyInput
 
@@ -57,6 +58,14 @@ stateRemote.OnClientEvent:Connect(function(message)
 		if current then
 			current.Toasts = current.Toasts or {}
 			table.insert(current.Toasts, message.Text)
+		end
+	end
+	if message.Type == "Chips" and current then
+		current.ChipCount = #message.Chips
+		for _, chip in message.Chips do
+			if chip.Value ~= nil then
+				current.SawChipValue = true
+			end
 		end
 	end
 	if message.Type ~= "Phase" then
@@ -98,7 +107,8 @@ local function humanBrain()
 					end
 				end
 				-- Alternate preferences so both minigames get covered.
-				local wanted = if #rounds % 2 == 0 then "Hot Potato" else "Falling Platforms"
+				local cycle = { "Hot Potato", "Falling Platforms", "Mash Dash" }
+				local wanted = cycle[#rounds % #cycle + 1]
 				local pick = cards[1]
 				for i, choice in rounds[#rounds].Choices do
 					if choice.Name == wanted and cards[i] then
@@ -121,6 +131,15 @@ local function humanBrain()
 			end)
 		end
 	end
+	local round = rounds[#rounds]
+	if round and phase == "Playing" then
+		local camera = Engine.Workspace.CurrentCamera
+		round.SawScriptable = round.SawScriptable or camera.CameraType == Enum.CameraType.Scriptable
+		local bar = playerGui.PartyUI:FindFirstChild("SpectatorBar")
+		round.SawSpectator = round.SawSpectator or (bar and bar.Visible)
+		local actionBar = playerGui.PartyUI:FindFirstChild("ActionBar")
+		round.SawActionBar = round.SawActionBar or (actionBar and actionBar.Visible)
+	end
 	if phase == "Playing" and Engine.now() >= nextAct then
 		nextAct = Engine.now() + 0.4
 		local character = player.Character
@@ -129,8 +148,22 @@ local function humanBrain()
 			local origin = Config.ArenaOrigin
 			humanoid:MoveTo(origin + Vector3.new(math.random(-15, 15), 0, math.random(-15, 15)))
 		end
-		for _, handler in Engine.boundActions do
-			handler("x", Enum.UserInputState.Begin, nil)
+		for name, handler in Engine.boundActions do
+			if name ~= "Party_SpectateCycle" then
+				handler("x", Enum.UserInputState.Begin, nil)
+			end
+		end
+		-- also tap the on-screen buttons like a phone player would
+		local actionBar = playerGui.PartyUI:FindFirstChild("ActionBar")
+		for _, button in (actionBar and actionBar:GetChildren() or {}) do
+			if button.ClassName == "TextButton" then
+				button.Activated:Fire()
+			end
+		end
+		-- and poke the spectator arrows if they're up
+		local bar = playerGui.PartyUI:FindFirstChild("SpectatorBar")
+		if bar and bar.Visible then
+			bar.Next.Activated:Fire()
 		end
 		Engine.fireServerRaw(inputRemote, player, { Kind = "Action", Action = "DeleteServer" })
 		Engine.fireServerRaw(inputRemote, player, { Kind = "Action", Action = 5 })
@@ -166,6 +199,15 @@ local function checkRound(round, index)
 		last = row.Placement
 	end
 	check(results[1] and results[1].Placement == 1, label .. ": nobody placed 1st")
+	check(round.ChipCount == 4, label .. ": expected 4 player chips")
+	check(round.SawChipValue, label .. ": no ReportProgress values reached the chips")
+	check(round.SawScriptable, label .. ": camera never went Scriptable")
+	check(Engine.Workspace.CurrentCamera.CameraType == Enum.CameraType.Custom, label .. ": camera not restored")
+	check(not playerGui.PartyUI.ActionBar.Visible, label .. ": action bar left visible")
+	check(not playerGui.PartyUI.SpectatorBar.Visible, label .. ": spectator bar left visible")
+	if round.Minigame ~= "Falling Platforms" then
+		check(round.SawActionBar, label .. ": action buttons never shown")
+	end
 
 	-- World state back to normal
 	for _, child in Engine.Workspace:GetChildren() do
@@ -185,7 +227,7 @@ local function checkRound(round, index)
 	end
 end
 
-local ROUNDS = 6
+local ROUNDS = 9
 Engine.run(60 * 30, function()
 	humanBrain()
 	for index, round in rounds do
@@ -206,6 +248,12 @@ for _, round in rounds do
 end
 check(played["Hot Potato"], "Hot Potato never played")
 check(played["Falling Platforms"], "Falling Platforms never played")
+check(played["Mash Dash"], "Mash Dash never played")
+local sawSpectator = false
+for _, round in rounds do
+	sawSpectator = sawSpectator or round.SawSpectator
+end
+check(sawSpectator, "eliminated player never got the spectator camera/bar")
 local coins = player.leaderstats.Coins.Value
 check(coins > 0, "player never earned coins")
 
@@ -242,7 +290,6 @@ check(#rounds > roundsBefore, "server did not start a new round after a player r
 local _ = newcomer
 
 -- Report
-local _ = Net
 print(("Seed %d: %d rounds played"):format(SEED, checkedRounds))
 for _, round in rounds do
 	if round.Results then
@@ -251,7 +298,9 @@ for _, round in rounds do
 			table.insert(line, ("%s%s=%d(+%d)"):format(if row.IsBot then "🤖" else "", row.Name, row.Placement, row.Coins))
 		end
 		print(("  %-18s %s"):format(round.Minigame, table.concat(line, "  ")))
-		print("     " .. table.concat(round.Toasts or {}, " | "))
+		if VERBOSE then
+			print("     " .. table.concat(round.Toasts or {}, " | "))
+		end
 	end
 end
 for _, w in Engine.warnings do
