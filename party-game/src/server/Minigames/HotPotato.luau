@@ -32,11 +32,18 @@ HotPotato.Info = {
 
 local ARENA_RADIUS = 30
 local PASS_RANGE = 9 -- studs between root parts
-local PASS_COOLDOWN = 0.6 -- holder can't pass again this soon after receiving
-local NO_TAG_BACKS = 1.5 -- can't pass straight back to whoever just gave it to you
+local PASS_COOLDOWN = 1.0 -- holder can't pass again this soon after receiving
+local NO_TAG_BACKS = 3.0 -- can't pass straight back to whoever just gave it to you
+local RECEIVE_STUN = 0.9 -- "hot hands": a new holder is rooted this long, so everyone else can scatter
 local FUSE_RANGE = { 8, 14 } -- seconds, re-rolled for every new potato
 local HOLDER_SPEED = 21 -- holder is a bit faster so they can actually catch people
 local NEW_POTATO_DELAY = 2
+
+-- Bot feel. Reaction times are { sloppiest bot, sharpest bot } in seconds, plus random jitter.
+local BOT_PASS_REACTION = { 1.4, 0.25 } -- in range of a victim -> actually pressing Pass
+local BOT_FLEE_REACTION = { 0.55, 0.12 } -- potato changes hands -> noticing and changing direction
+local BOT_COMFORT_DISTANCE = { 16, 26 } -- each bot stops running once it is this far from the holder
+local BOT_PERSONAL_SPACE = 13 -- non-holders steer apart when closer than this to each other
 
 local function now()
 	return Workspace:GetServerTimeNow()
@@ -150,7 +157,14 @@ function HotPotato:_setHolder(participant)
 		return
 	end
 
-	participant:SetMovement(HOLDER_SPEED, true)
+	-- Rooted for a beat, then faster than everyone else.
+	participant:SetMovement(0, false)
+	local receivedAt = self.ReceivedAt
+	task.delay(RECEIVE_STUN, function()
+		if not self.Cleaned and not self.Round.Ended and self.Holder == participant and self.ReceivedAt == receivedAt then
+			participant:SetMovement(HOLDER_SPEED, true)
+		end
+	end)
 	local character = participant:GetCharacter()
 	if character then
 		local highlight = Instance.new("Highlight")
@@ -302,59 +316,153 @@ function HotPotato:OnRoundEnding(reason)
 end
 
 --[[
-	Bot behaviour: if I have the potato, chase the nearest player and pass when close.
-	Otherwise run away from the holder while staying inside the ring.
+	Bot behaviour: if I have the potato, chase the nearest player I'm allowed to pass to and
+	hand it over after a human-ish reaction delay. Otherwise keep my distance from the holder
+	and from the other runners, so the pack spreads around the ring instead of clumping.
 ]]
+local function reaction(range, skill: number): number
+	return (range[1] + (range[2] - range[1]) * skill) * (0.7 + math.random() * 0.6)
+end
+
 function HotPotato:UpdateBot(bot, _dt)
 	local me = bot.Participant
 	local myPosition = bot:GetPosition()
 	if not myPosition then
 		return
 	end
+	local memory = bot.Memory
+	local clock = now()
 	local center = self.Arena.Origin.Position
 
 	if self.Holder == me then
+		if clock - self.ReceivedAt < RECEIVE_STUN then
+			return
+		end
+		-- Chase whoever is closest, but not the player I can't tag back yet (unless nobody else is left).
 		local target, targetDistance = nil, math.huge
+		local fallback, fallbackDistance = nil, math.huge
 		for _, other in self.Round:GetAlive() do
 			local position = other:GetPosition()
 			if other ~= me and position then
 				local distance = (position - myPosition).Magnitude
-				if distance < targetDistance then
+				local blocked = other == self.PreviousHolder and clock - self.ReceivedAt < NO_TAG_BACKS
+				if blocked then
+					if distance < fallbackDistance then
+						fallback, fallbackDistance = other, distance
+					end
+				elseif distance < targetDistance then
 					target, targetDistance = other, distance
 				end
 			end
 		end
-		if target then
-			bot:MoveTo(target:GetPosition())
-			-- Sloppier bots sometimes hesitate before passing.
-			if targetDistance <= PASS_RANGE * 0.9 and math.random() < 0.4 + bot.Skill * 0.6 then
+		if not target then
+			target, targetDistance = fallback, fallbackDistance
+		end
+		if not target then
+			return
+		end
+		-- Each time it gets the potato a bot picks who to go after. Usually the closest
+		-- player, sometimes someone further away, so the chases aren't all the same length.
+		if memory.VictimFor ~= self.ReceivedAt then
+			memory.VictimFor = self.ReceivedAt
+			memory.Victim = target
+			if math.random() > 0.45 + bot.Skill * 0.35 then
+				local others = {}
+				for _, other in self.Round:GetAlive() do
+					if other ~= me and other ~= self.PreviousHolder and other:GetPosition() then
+						table.insert(others, other)
+					end
+				end
+				if #others > 0 then
+					memory.Victim = others[math.random(1, #others)]
+				end
+			end
+		end
+		local victim = memory.Victim
+		local victimPosition = victim and not self.Round:IsEliminated(victim) and victim:GetPosition()
+		bot:MoveTo(victimPosition or target:GetPosition())
+		-- Whoever wanders into reach gets it, victim or not.
+		if targetDistance <= PASS_RANGE * 0.9 then
+			memory.PassAt = memory.PassAt or (clock + reaction(BOT_PASS_REACTION, bot.Skill))
+			if clock >= memory.PassAt then
+				memory.PassAt = nil
 				bot:Input("Pass")
 			end
+		else
+			memory.PassAt = nil
 		end
 		return
 	end
+	memory.PassAt = nil
 
-	local holderPosition = self.Holder and self.Holder:GetPosition()
+	local holder = self.Holder
+	local holderPosition = holder and holder:GetPosition()
 	if not holderPosition then
-		-- Nobody has it right now: drift back towards the middle.
-		bot:MoveTo(center + Vector3.new(math.random(-6, 6), 0, math.random(-6, 6)))
+		-- Nobody has it right now: wander to my own spot instead of bunching up in the middle.
+		if not memory.IdleSpot or clock >= (memory.IdleUntil or 0) then
+			local angle = math.random() * math.pi * 2
+			local radius = 6 + math.random() * (ARENA_RADIUS - 14)
+			memory.IdleSpot = center + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+			memory.IdleUntil = clock + 1.5 + math.random() * 1.5
+		end
+		bot:MoveTo(Vector3.new(memory.IdleSpot.X, myPosition.Y, memory.IdleSpot.Z))
+		memory.SeenHolder = nil
 		return
 	end
+
+	-- It takes a moment to notice the potato changed hands.
+	if memory.SeenHolder ~= holder then
+		memory.SeenHolder = holder
+		memory.ReactAt = clock + reaction(BOT_FLEE_REACTION, bot.Skill)
+	end
+	if clock < (memory.ReactAt or 0) then
+		return
+	end
+	memory.Comfort = memory.Comfort
+		or (BOT_COMFORT_DISTANCE[1] + math.random() * (BOT_COMFORT_DISTANCE[2] - BOT_COMFORT_DISTANCE[1]))
 
 	local away = myPosition - holderPosition
 	away = Vector3.new(away.X, 0, away.Z)
 	if away.Magnitude < 0.1 then
 		away = Vector3.new(1, 0, 0)
 	end
-	if away.Magnitude > 22 and math.random() < 0.7 then
-		return -- far enough, catch a breath
+
+	-- Push away from the other runners too.
+	local spread = Vector3.zero
+	for _, other in self.Round:GetAlive() do
+		local position = other ~= me and other ~= holder and other:GetPosition()
+		if position then
+			local apart = Vector3.new(myPosition.X - position.X, 0, myPosition.Z - position.Z)
+			if apart.Magnitude < 0.1 then
+				apart = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5)
+			end
+			if apart.Magnitude < BOT_PERSONAL_SPACE then
+				spread += apart.Unit * (1 - apart.Magnitude / BOT_PERSONAL_SPACE)
+			end
+		end
 	end
-	-- Run away with a sideways wobble so bots don't all flee in straight lines.
-	local direction = away.Unit + Vector3.new(-away.Unit.Z, 0, away.Unit.X) * (math.random() - 0.5)
+
+	if away.Magnitude > memory.Comfort and spread.Magnitude < 0.15 then
+		bot:Stop() -- far enough and not crowded: catch a breath
+		return
+	end
+
+	-- Each bot leans to one side for a while, so they don't all flee in the same straight line.
+	if clock >= (memory.SwerveUntil or 0) then
+		memory.Swerve = (math.random() - 0.5) * 1.2
+		memory.SwerveUntil = clock + 0.8 + math.random() * 1.4
+	end
+	local urgency = math.clamp(1.6 - away.Magnitude / memory.Comfort, 0.2, 1.6)
+	local direction = away.Unit * urgency
+		+ Vector3.new(-away.Unit.Z, 0, away.Unit.X) * memory.Swerve
+		+ spread * 1.4
+	if direction.Magnitude < 0.05 then
+		direction = away.Unit
+	end
 	local goal = myPosition + direction.Unit * 12
 	local fromCenter = Vector3.new(goal.X - center.X, 0, goal.Z - center.Z)
 	if fromCenter.Magnitude > ARENA_RADIUS - 5 then
-		-- Cornered against the wall: slide around the ring instead.
+		-- Cornered against the wall: slide around the ring instead, away from the holder.
 		local tangent = Vector3.new(-fromCenter.Z, 0, fromCenter.X).Unit
 		if tangent:Dot(away) < 0 then
 			tangent = -tangent
