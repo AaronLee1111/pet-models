@@ -41,6 +41,7 @@ local screen = Theme.make("ScreenGui", {
 	Name = "PartyUI",
 	ResetOnSpawn = false,
 	IgnoreGuiInset = true,
+	DisplayOrder = 10, -- draw the vote / results cards over the mobile thumbstick and jump button
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = player:WaitForChild("PlayerGui"),
 })
@@ -58,6 +59,33 @@ spectatorBar = SpectatorBar.new(screen, function(direction)
 	spectatorBar:show(CameraController.getTargetName())
 end)
 Controls.setActionBar(ActionBar.new(screen))
+
+-- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
+-- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
+local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "SpectatorBar", "Lobby" }
+local HUD_DESIGN_HEIGHT = 720
+local hudBasePositions = {}
+
+local function fitHudToScreen()
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+	local scale = math.clamp(camera.ViewportSize.Y / HUD_DESIGN_HEIGHT, 0.55, 1)
+	for _, name in HUD_STRIPS do
+		local strip = screen:FindFirstChild(name)
+		if strip and strip:IsA("GuiObject") then
+			local base = hudBasePositions[name] or strip.Position
+			hudBasePositions[name] = base
+			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
+			uiScale.Scale = scale
+			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
+		end
+	end
+end
+
+fitHudToScreen()
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHudToScreen)
 
 local function hideOverlays()
 	voteScreen:hide()
@@ -87,7 +115,6 @@ local function beginRound(message)
 	amParticipant = isParticipant(message.Participants)
 	CameraController.start(message.Minigame.Camera, message.ArenaOrigin)
 	CameraController.setSpectating(not amParticipant)
-	chips:show()
 end
 
 local function endRound()
@@ -155,12 +182,14 @@ end
 
 phaseHandlers[Phase.Countdown] = function(message)
 	hideOverlays()
+	chips:show() -- not during Instructions: the strip would sit on top of the card
 	hud:showBanner(tostring(message.Number), nil, 0.7)
 end
 
 phaseHandlers[Phase.Playing] = function(message)
 	hideOverlays()
 	beginRound(message) -- no-op normally; covers joining mid-round
+	chips:show()
 	hud:showBanner("GO!", Theme.Colors.Good, 0.8)
 	hud:setTimer(message.EndsAt)
 	if amParticipant and not CameraController.isSpectating() then
