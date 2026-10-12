@@ -24,14 +24,20 @@ FallingPlatforms.Info = {
 	ProgressLabel = "Survived",
 }
 
-local GRID = 7 -- GRID x GRID tiles
+-- Tuning ----------------------------------------------------------------------------------
+-- These decide how long a round lasts. Aim: 30-45 seconds with four players.
+
+local GRID_SIZE = 10 -- GRID_SIZE x GRID_SIZE tiles
 local TILE_SIZE = 8
 local GAP = 1
-local STEP_DELAY = 0.8 -- crumble time after being stepped on
-local RANDOM_DELAY = 1.4 -- crumble time for a randomly picked tile (longer warning)
-local RANDOM_INTERVAL = { 2.0, 0.5 } -- seconds between random drops, start -> end of round
-local CHECK_INTERVAL = 0.1
+-- Seconds a tile survives after being stepped on: { at GO, once the round is fully sped up }.
+local CRUMBLE_DELAY = { 3.0, 1.2 }
+-- Random drops: warning time for the tile, and seconds between drops { at GO, sped up }.
+local RANDOM_DELAY = 2.0
+local RANDOM_INTERVAL = { 3.0, 0.8 }
+local RAMP_TIME = 45 -- seconds after GO until both of the above reach their fastest value
 local START_GRACE = 1.5 -- tiles ignore footsteps this long after GO, so nobody drops before they can react
+local CHECK_INTERVAL = 0.1
 
 local SOLID_COLOR = Color3.fromRGB(110, 220, 255)
 local WARNING_COLOR = Color3.fromRGB(255, 200, 40)
@@ -44,10 +50,10 @@ function FallingPlatforms:Setup(arena, participants, _round)
 	self.Connections = {}
 
 	local pitch = TILE_SIZE + GAP
-	local half = (GRID - 1) / 2
-	for row = 1, GRID do
+	local half = (GRID_SIZE - 1) / 2
+	for row = 1, GRID_SIZE do
 		self.Tiles[row] = {}
-		for col = 1, GRID do
+		for col = 1, GRID_SIZE do
 			local part = Instance.new("Part")
 			part.Name = ("Tile_%d_%d"):format(row, col)
 			part.Anchored = true
@@ -62,7 +68,7 @@ function FallingPlatforms:Setup(arena, participants, _round)
 	end
 
 	-- One player per corner-ish tile.
-	local spawnTiles = { { 2, 2 }, { 2, GRID - 1 }, { GRID - 1, 2 }, { GRID - 1, GRID - 1 } }
+	local spawnTiles = { { 2, 2 }, { 2, GRID_SIZE - 1 }, { GRID_SIZE - 1, 2 }, { GRID_SIZE - 1, GRID_SIZE - 1 } }
 	local spawns = {}
 	for index = 1, #participants do
 		local cell = spawnTiles[(index - 1) % #spawnTiles + 1]
@@ -79,7 +85,7 @@ end
 function FallingPlatforms:_tileAt(position: Vector3)
 	local localPosition = self.Arena.Origin:PointToObjectSpace(position)
 	local pitch = TILE_SIZE + GAP
-	local half = (GRID - 1) / 2
+	local half = (GRID_SIZE - 1) / 2
 	local col = math.floor(localPosition.X / pitch + half + 0.5) + 1
 	local row = math.floor(localPosition.Z / pitch + half + 0.5) + 1
 	local tileRow = self.Tiles[row]
@@ -91,6 +97,7 @@ function FallingPlatforms:_crumble(tile, delay: number)
 		return
 	end
 	tile.State = "Warning"
+	tile.FallsAt = os.clock() + delay
 	tile.Part.Color = WARNING_COLOR
 	tile.Part.Material = Enum.Material.Neon
 
@@ -113,6 +120,15 @@ function FallingPlatforms:_crumble(tile, delay: number)
 	end)
 end
 
+-- 0 at GO, 1 once the round has fully sped up.
+function FallingPlatforms:_ramp(): number
+	return math.clamp((os.clock() - (self.StartedAt or os.clock())) / RAMP_TIME, 0, 1)
+end
+
+function FallingPlatforms:_crumbleDelay(): number
+	return CRUMBLE_DELAY[1] + (CRUMBLE_DELAY[2] - CRUMBLE_DELAY[1]) * self:_ramp()
+end
+
 function FallingPlatforms:_solidTiles()
 	local list = {}
 	for _, row in self.Tiles do
@@ -130,6 +146,7 @@ end
 function FallingPlatforms:Start()
 	local round = self.Round
 	local startedAt = os.clock()
+	self.StartedAt = startedAt
 	local nextChipUpdate = 0
 	local nextCheck = 0
 	local nextRandomDrop = os.clock() + RANDOM_INTERVAL[1]
@@ -157,7 +174,7 @@ function FallingPlatforms:Start()
 					-- Standing (or nearly) on the grid: the tile underneath starts crumbling.
 					local tile = self:_tileAt(position)
 					if tile then
-						self:_crumble(tile, STEP_DELAY)
+						self:_crumble(tile, self:_crumbleDelay())
 					end
 				end
 			end
@@ -190,44 +207,66 @@ function FallingPlatforms:Start()
 end
 
 --[[
-	Bot behaviour: hop to a neighbouring solid tile whenever the current one starts to go
-	(or every so often anyway). Low-skill bots occasionally make a bad call, which is funny.
+	Bot behaviour: stand on a tile until it is about to drop, then step to a neighbour.
+	(Leaving a tile the moment it starts to crumble would burn through the whole floor in
+	seconds.) Sloppier bots cut it closer and pick worse tiles, which is funny.
 ]]
+function FallingPlatforms:_solidNeighbours(tile)
+	local list = {}
+	for _, offset in { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } } do
+		local row = self.Tiles[tile.Row + offset[1]]
+		local neighbour = row and row[tile.Col + offset[2]]
+		if neighbour and neighbour.State == "Solid" then
+			table.insert(list, neighbour)
+		end
+	end
+	return list
+end
+
 function FallingPlatforms:UpdateBot(bot, _dt)
 	local position = bot:GetPosition()
 	if not position then
 		return
 	end
 	local memory = bot.Memory
+	local clock = os.clock()
 	local current = self:_tileAt(position)
+	if current and current.State == "Fallen" then
+		current = nil
+	end
+	if not memory.Target then
+		memory.Target = current
+		memory.Margin = 0.6
+	end
 	local target = memory.Target
 
-	local targetBad = not target or target.State ~= "Solid"
-	local currentBad = not current or current.State ~= "Solid"
-	local bored = os.clock() >= (memory.NextHop or 0)
-	if not targetBad and not (current == target and (currentBad or bored)) then
+	if target and target ~= current and target.State == "Solid" then
+		-- On the way. Hop if the floor ahead is already gone.
+		local toTarget = target.Part.Position - position
+		local flat = Vector3.new(toTarget.X, 0, toTarget.Z)
+		if flat.Magnitude > 1 then
+			local ahead = self:_tileAt(position + flat.Unit * 4)
+			if not ahead or ahead.State == "Fallen" then
+				bot:Jump()
+			end
+		end
 		bot:MoveTo(target.Part.Position + Vector3.new(0, 3, 0))
 		return
 	end
-
-	-- Pick the next tile: a solid 4-neighbour, preferring tiles nearer the middle.
-	local from = current or target
-	local options = {}
-	if from then
-		for _, offset in { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } } do
-			local row = self.Tiles[from.Row + offset[1]]
-			local tile = row and row[from.Col + offset[2]]
-			if tile and tile.State == "Solid" then
-				table.insert(options, tile)
-			end
-		end
+	if target and target == current and (current.State == "Solid" or current.FallsAt - clock > memory.Margin) then
+		bot:MoveTo(current.Part.Position + Vector3.new(0, 3, 0))
+		return -- this tile still has time left: stay put
 	end
-	if #options == 0 or math.random() > 0.85 + bot.Skill * 0.15 then
-		-- Stuck (or just dumb): head for the nearest solid tile anywhere.
+
+	-- Pick the next tile: a solid 4-neighbour, preferring ones that aren't dead ends.
+	local from = current or target
+	local options = if from then self:_solidNeighbours(from) else {}
+	if #options == 0 then
+		-- Stranded: make a run (and a jump) for the nearest solid tile anywhere.
 		local best, bestDistance = nil, math.huge
 		for _, tile in self:_solidTiles() do
 			local distance = (tile.Part.Position - position).Magnitude
-			if distance < bestDistance and tile ~= current then
+			if distance < bestDistance then
 				best, bestDistance = tile, distance
 			end
 		end
@@ -238,15 +277,20 @@ function FallingPlatforms:UpdateBot(bot, _dt)
 		return
 	end
 
-	local center = self.Arena.Origin.Position
-	table.sort(options, function(a, b)
-		return (a.Part.Position - center).Magnitude < (b.Part.Position - center).Magnitude
-	end)
-	-- Skilled bots usually take the most central option; others pick at random.
-	local choice = if math.random() < bot.Skill then options[1] else options[math.random(1, #options)]
+	local choice = options[math.random(1, #options)]
+	if math.random() < bot.Skill then
+		local bestExits = -1
+		for _, tile in options do
+			local exits = #self:_solidNeighbours(tile) + math.random() * 0.5
+			if exits > bestExits then
+				choice, bestExits = tile, exits
+			end
+		end
+	end
 
 	memory.Target = choice
-	memory.NextHop = os.clock() + 1 + math.random() * 1.5
+	-- How late this bot dares to leave its next tile (seconds before it drops).
+	memory.Margin = 0.35 + bot.Skill * 0.25 + math.random() * 0.45
 	bot:MoveTo(choice.Part.Position + Vector3.new(0, 3, 0))
 end
 
