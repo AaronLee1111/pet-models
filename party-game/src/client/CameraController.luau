@@ -18,6 +18,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Config"))
@@ -50,7 +51,13 @@ local function currentTarget()
 end
 
 function CameraController.start(cameraConfig, origin: CFrame)
-	params = cameraConfig
+	params = table.clone(cameraConfig)
+	local touch = UserInputService.TouchEnabled and Config.TouchCamera[params.Mode]
+	if touch then
+		params.Height *= touch.Zoom
+		params.Distance *= touch.Zoom
+		params.LookAhead = touch.LookAhead
+	end
 	arenaOrigin = origin
 	active = true
 	focus = nil
@@ -151,7 +158,8 @@ local function angledOverhead(dt: number): CFrame
 	local goal = if root then center:Lerp(root.Position, params.Follow) else center
 	local point = smoothTowards(goal, params.Smooth, dt)
 	local offset = arenaOrigin:VectorToWorldSpace(Vector3.new(0, params.Height, params.Distance))
-	return CFrame.lookAt(point + offset, point)
+	local aim = point + arenaOrigin:VectorToWorldSpace(Vector3.new(0, 0, -(params.LookAhead or 0)))
+	return CFrame.lookAt(point + offset, aim)
 end
 
 local function followBehind(dt: number): CFrame

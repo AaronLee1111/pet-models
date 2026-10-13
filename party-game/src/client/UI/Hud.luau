@@ -13,8 +13,14 @@ local make = Theme.make
 local Hud = {}
 Hud.__index = Hud
 
-local MAX_TOASTS = 4
-local TOAST_LIFETIME = 3.5
+-- Phones get a smaller, shorter-lived feed so it doesn't cover the left side of the arena.
+local TOUCH = game:GetService("UserInputService").TouchEnabled
+local MAX_TOASTS = if TOUCH then 2 else 4
+local TOAST_LIFETIME = if TOUCH then 2.5 else 3.5
+local TOAST_HEIGHT = if TOUCH then 26 else 36
+local TOAST_TEXT_SIZE = if TOUCH then 14 else 20
+local TOAST_WIDTH = if TOUCH then 0.24 else 0.3
+local TOAST_MIN_WIDTH = if TOUCH then 170 else 220
 
 function Hud.new(screen: ScreenGui)
 	local self = setmetatable({}, Hud)
@@ -68,7 +74,7 @@ function Hud.new(screen: ScreenGui)
 		Name = "Toasts",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromScale(0.3, 0.4),
+		Size = UDim2.fromScale(TOAST_WIDTH, 0.4),
 		BackgroundTransparency = 1,
 		Parent = screen,
 	}, {
@@ -77,7 +83,7 @@ function Hud.new(screen: ScreenGui)
 			VerticalAlignment = Enum.VerticalAlignment.Bottom,
 			SortOrder = Enum.SortOrder.LayoutOrder,
 		}),
-		make("UISizeConstraint", { MinSize = Vector2.new(220, 0) }),
+		make("UISizeConstraint", { MinSize = Vector2.new(TOAST_MIN_WIDTH, 0) }),
 	})
 	self.ToastCount = 0
 
@@ -165,7 +171,7 @@ function Hud:toast(text: string)
 	self.ToastCount += 1
 	local toast = make("Frame", {
 		LayoutOrder = self.ToastCount,
-		Size = UDim2.new(1, 0, 0, 36),
+		Size = UDim2.new(1, 0, 0, TOAST_HEIGHT),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.2,
 		Parent = self.ToastList,
@@ -175,7 +181,7 @@ function Hud:toast(text: string)
 		Text = text,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = toast,
-	}, 20)
+	}, TOAST_TEXT_SIZE)
 
 	-- Keep the feed short.
 	local toasts = {}

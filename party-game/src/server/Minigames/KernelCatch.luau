@@ -35,6 +35,9 @@ local STUN_IMMUNITY = 0.6 -- extra seconds after a stun before another rock can 
 local CATCH_RADIUS = 3.2 -- how close (flat distance) your bucket must be to a landing kernel
 local ROCK_RADIUS = 3.6 -- how close a landing rock must be to hit you
 local ARENA_RADIUS = 26
+-- Nothing lands in this strip along the edge nearest the camera, where a falling drop would
+-- fill the screen and cross the HUD.
+local NEAR_EDGE_MARGIN = 9
 local DROP_HEIGHT = 30
 local WALK_SPEED = 18
 
@@ -65,8 +68,9 @@ end
 
 -- Setup ---------------------------------------------------------------------------------
 
--- A striped popcorn bucket welded on top of the head.
-local function makeBucket(character: Model): Model?
+-- A striped popcorn bucket welded on top of the head. It lives in `parent` (the arena folder),
+-- not in the character, so Highlights on the character (the stun flash) don't tint it.
+local function makeBucket(character: Model, parent: Instance): Model?
 	local head = character:FindFirstChild("Head")
 	if not head or not head:IsA("BasePart") then
 		return nil
@@ -102,7 +106,7 @@ local function makeBucket(character: Model): Model?
 	local kernels = piece("Kernels", Vector3.new(2.2, 2.2, 2.2), CFrame.new(0, 1.5, 0), POPCORN_COLOR, Enum.PartType.Ball)
 	kernels.Transparency = 1 -- shown once there is popcorn in the bucket
 
-	bucket.Parent = character
+	bucket.Parent = parent
 	return bucket
 end
 
@@ -151,7 +155,7 @@ function KernelCatch:Setup(arena, participants, _round)
 
 		local character = participant:GetCharacter()
 		if character then
-			self.Buckets[participant] = makeBucket(character)
+			self.Buckets[participant] = makeBucket(character, arena.Folder)
 		end
 	end
 	return spawns
@@ -214,11 +218,10 @@ end
 function KernelCatch:_spawnDrop(progress: number)
 	local round = self.Round
 	local origin = self.Arena.Origin
-	local floorY = origin.Position.Y + 1
 
 	local isRock = round.Rng:NextNumber() < lerp(ROCK_RATIO, progress)
 
-	-- Where it lands: near a random player, or anywhere on the floor.
+	-- Where it lands (arena-local X/Z): near a random player, or anywhere on the floor.
 	local offset
 	local alive = round:GetAlive()
 	local aimedChance = if isRock then AIMED_ROCK_CHANCE else AIMED_POPCORN_CHANCE
@@ -227,7 +230,7 @@ function KernelCatch:_spawnDrop(progress: number)
 		local position = target:GetPosition()
 		if position then
 			local angle = round.Rng:NextNumber() * math.pi * 2
-			offset = flat(position - origin.Position)
+			offset = flat(origin:PointToObjectSpace(position))
 				+ Vector3.new(math.cos(angle), 0, math.sin(angle)) * round.Rng:NextNumber() * AIM_SPREAD
 		end
 	end
@@ -239,7 +242,12 @@ function KernelCatch:_spawnDrop(progress: number)
 	if offset.Magnitude > ARENA_RADIUS - 3 then
 		offset = offset.Unit * (ARENA_RADIUS - 3)
 	end
-	local landing = Vector3.new(origin.Position.X + offset.X, floorY, origin.Position.Z + offset.Z)
+	-- The overhead camera sits on the arena's +Z side: keep drops out of the strip closest to it.
+	local nearLimit = ARENA_RADIUS - 3 - NEAR_EDGE_MARGIN
+	if offset.Z > nearLimit then
+		offset = Vector3.new(offset.X, 0, nearLimit)
+	end
+	local landing = origin:PointToWorldSpace(Vector3.new(offset.X, 1, offset.Z))
 
 	local size = if isRock then 3.4 else 1.8
 

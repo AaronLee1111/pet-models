@@ -57,6 +57,10 @@ Config.CameraModes = {
 	SideView = { Height = 6, Distance = 48, Smooth = 8 }, -- 2D side-scroller, looks along the arena's LookVector
 }
 Config.DefaultCameraMode = "AngledOverhead"
+-- Touch devices only (desktop and console are not affected). Zoom multiplies the mode's
+-- Height and Distance so characters are bigger on a small screen; LookAhead aims the camera
+-- that many studs past the arena centre, which slides the arena down out from under the HUD.
+Config.TouchCamera = { AngledOverhead = { Zoom = 0.8, LookAhead = 6 } }
 Config.Spectator = { Height = 28, Distance = 30, OrbitSpeed = 0.25 }
 
 -- Player chips: how often progress updates are pushed to clients (seconds).
