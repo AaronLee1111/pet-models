@@ -16,8 +16,14 @@
 	      Jump = true,             false = can't jump
 	      WalkSpeed = 16,
 	      Actions = { { Action = "Pass", Label = "Pass!", Key = "E" } },
+	        per action, optional:  Keys = { "A", "Left" }  several keys instead of one Key
+	                               Hold = true             OnInput gets "<Action>" on press and
+	                                                       "<Action>Stop" on release
+	                               Side = "Left"           on-screen button goes bottom-left
 	    },
 	    ProgressLabel = "Score",   optional default label for the player chips
+	    ProgressBar = true,        optional: show a race bar along the top instead of the chips;
+	                               report values like "37%" (anything with 🏁 counts as 100%)
 	  }
 ]]
 
@@ -86,8 +92,11 @@ function MinigameInfo.normalize(id: string, info)
 		table.insert(actions, {
 			Action = action.Action,
 			Label = action.Label,
-			Key = action.Key, -- Enum.KeyCode name, e.g. "E"
+			Key = action.Key or (action.Keys and action.Keys[1]), -- Enum.KeyCode name, e.g. "E"
+			Keys = action.Keys, -- optional list of Enum.KeyCode names (overrides Key for binding)
 			Gamepad = action.Gamepad, -- optional Enum.KeyCode name, e.g. "ButtonX"
+			Hold = action.Hold == true, -- also sends "<Action>Stop" when released
+			Side = action.Side, -- "Left" puts the on-screen button in the bottom-left corner
 		})
 	end
 	local controls = {
@@ -106,6 +115,7 @@ function MinigameInfo.normalize(id: string, info)
 		Camera = camera,
 		Controls = controls,
 		ProgressLabel = info.ProgressLabel,
+		ProgressBar = info.ProgressBar == true,
 	}
 end
 

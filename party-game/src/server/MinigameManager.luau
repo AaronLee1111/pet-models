@@ -418,6 +418,9 @@ function MinigameManager.runRound(participants)
 	local actions = {}
 	for _, control in described.Controls.Actions do
 		actions[control.Action] = true
+		if control.Hold then
+			actions[control.Action .. "Stop"] = true
+		end
 	end
 	state.Active = {
 		Entry = entry,

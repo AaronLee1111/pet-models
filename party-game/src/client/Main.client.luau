@@ -5,6 +5,7 @@
 	It does own purely local presentation: this player's camera, UI and control bindings.
 ]]
 
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -18,6 +19,7 @@ local ActionBar = require(UI:WaitForChild("ActionBar"))
 local Hud = require(UI:WaitForChild("Hud"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
 local PlayerChips = require(UI:WaitForChild("PlayerChips"))
+local ProgressBar = require(UI:WaitForChild("ProgressBar"))
 local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
@@ -53,6 +55,7 @@ end)
 local instructions = InstructionsCard.new(screen)
 local results = ResultsScreen.new(screen)
 local chips = PlayerChips.new(screen)
+local progressBar = ProgressBar.new(screen)
 local spectatorBar
 spectatorBar = SpectatorBar.new(screen, function(direction)
 	CameraController.cycle(direction)
@@ -62,7 +65,7 @@ Controls.setActionBar(ActionBar.new(screen))
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
 -- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
-local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "SpectatorBar", "Lobby" }
+local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "ProgressBar", "SpectatorBar", "Lobby" }
 local HUD_DESIGN_HEIGHT = 720
 local hudBasePositions = {}
 
@@ -87,10 +90,19 @@ end
 fitHudToScreen()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHudToScreen)
 
+-- While a full-screen card (vote, instructions, results) is up, the mobile thumbstick and
+-- jump button are switched off entirely, so they can never sit on top of the card.
+local function setCardOpen(open: boolean)
+	pcall(function()
+		GuiService.TouchControlsEnabled = not open
+	end)
+end
+
 local function hideOverlays()
 	voteScreen:hide()
 	instructions:hide()
 	results:hide()
+	setCardOpen(false)
 end
 
 local function isParticipant(participants): boolean
@@ -106,6 +118,15 @@ end
 
 local inRound = false -- true from Instructions until Results/Lobby
 local amParticipant = false
+local useProgressBar = false -- this minigame shows a race bar instead of the chip strip
+
+local function showRoundHud()
+	if useProgressBar then
+		progressBar:show()
+	else
+		chips:show()
+	end
+end
 
 local function beginRound(message)
 	if inRound then
@@ -113,6 +134,7 @@ local function beginRound(message)
 	end
 	inRound = true
 	amParticipant = isParticipant(message.Participants)
+	useProgressBar = message.Minigame.ProgressBar == true
 	CameraController.start(message.Minigame.Camera, message.ArenaOrigin)
 	CameraController.setSpectating(not amParticipant)
 end
@@ -123,6 +145,7 @@ local function endRound()
 	CameraController.stop()
 	spectatorBar:hide()
 	chips:hide()
+	progressBar:hide()
 end
 
 local function refreshSpectator()
@@ -138,6 +161,7 @@ local function onChips(list)
 		return
 	end
 	chips:update(list, myId)
+	progressBar:update(list, myId)
 	CameraController.setTargets(list)
 	for _, chip in list do
 		if chip.Id == myId and chip.Eliminated and not CameraController.isSpectating() then
@@ -166,12 +190,14 @@ end
 phaseHandlers[Phase.Vote] = function(message)
 	hideOverlays()
 	hud:setLobby(nil)
+	setCardOpen(true)
 	voteScreen:show(message.Choices, message.EndsAt)
 end
 
 phaseHandlers[Phase.Instructions] = function(message)
 	hideOverlays()
 	hud:setLobby(nil)
+	setCardOpen(true)
 	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
 	beginRound(message)
 	if not amParticipant then
@@ -182,14 +208,14 @@ end
 
 phaseHandlers[Phase.Countdown] = function(message)
 	hideOverlays()
-	chips:show() -- not during Instructions: the strip would sit on top of the card
+	showRoundHud() -- not during Instructions: the strip would sit on top of the card
 	hud:showBanner(tostring(message.Number), nil, 0.7)
 end
 
 phaseHandlers[Phase.Playing] = function(message)
 	hideOverlays()
 	beginRound(message) -- no-op normally; covers joining mid-round
-	chips:show()
+	showRoundHud()
 	hud:showBanner("GO!", Theme.Colors.Good, 0.8)
 	hud:setTimer(message.EndsAt)
 	if amParticipant and not CameraController.isSpectating() then
@@ -207,6 +233,7 @@ phaseHandlers[Phase.Results] = function(message)
 	hideOverlays()
 	endRound() -- everyone is back in the lobby: normal camera + controls
 	hud:setStatus(nil)
+	setCardOpen(true)
 	results:show(message.Minigame, message.Results, myId)
 end
 

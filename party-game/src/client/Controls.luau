@@ -51,9 +51,11 @@ function Controls.bind(controls, send: (string) -> ())
 	for index, action in controls.Actions do
 		local bindName = "Party_" .. action.Action
 		local inputs = {}
-		local key = keyCode(action.Key)
-		if key then
-			table.insert(inputs, key)
+		for _, name in action.Keys or { action.Key } do
+			local key = keyCode(name)
+			if key then
+				table.insert(inputs, key)
+			end
 		end
 		local pad = keyCode(action.Gamepad or DEFAULT_GAMEPAD[index])
 		if pad then
@@ -62,6 +64,8 @@ function Controls.bind(controls, send: (string) -> ())
 		ContextActionService:BindActionAtPriority(bindName, function(_, inputState)
 			if inputState == Enum.UserInputState.Begin then
 				send(action.Action)
+			elseif inputState == Enum.UserInputState.End and action.Hold then
+				send(action.Action .. "Stop")
 			end
 			return Enum.ContextActionResult.Sink
 		end, false, Enum.ContextActionPriority.High.Value, table.unpack(inputs))
@@ -69,7 +73,7 @@ function Controls.bind(controls, send: (string) -> ())
 	end
 
 	if actionBar then
-		actionBar:show(controls.Actions, send)
+		actionBar:show(controls.Actions, send, not controls.Move)
 	end
 
 	if not controls.Move or not controls.Jump then
