@@ -69,6 +69,10 @@ Config.CameraModes = {
 	SideView = { Height = 6, Distance = 48, Smooth = 8 }, -- 2D side-scroller, looks along the arena's LookVector
 }
 Config.DefaultCameraMode = "AngledOverhead"
+-- Touch devices only (desktop and console are not affected). Zoom multiplies the mode's
+-- Height and Distance so characters are bigger on a small screen; LookAhead aims the camera
+-- that many studs past the arena centre, which slides the arena down out from under the HUD.
+Config.TouchCamera = { AngledOverhead = { Zoom = 0.8, LookAhead = 6 } }
 Config.Spectator = { Height = 28, Distance = 30, OrbitSpeed = 0.25 }
 
 -- Player chips: how often progress updates are pushed to clients (seconds).
@@ -765,8 +769,14 @@ end
 	      Jump = true,             false = can't jump
 	      WalkSpeed = 16,
 	      Actions = { { Action = "Pass", Label = "Pass!", Key = "E" } },
+	        per action, optional:  Keys = { "A", "Left" }  several keys instead of one Key
+	                               Hold = true             OnInput gets "<Action>" on press and
+	                                                       "<Action>Stop" on release
+	                               Side = "Left"           on-screen button goes bottom-left
 	    },
 	    ProgressLabel = "Score",   optional default label for the player chips
+	    ProgressBar = true,        optional: show a race bar along the top instead of the chips;
+	                               report values like "37%" (anything with 🏁 counts as 100%)
 	  }
 ]]
 
@@ -835,8 +845,11 @@ function MinigameInfo.normalize(id: string, info)
 		table.insert(actions, {
 			Action = action.Action,
 			Label = action.Label,
-			Key = action.Key, -- Enum.KeyCode name, e.g. "E"
+			Key = action.Key or (action.Keys and action.Keys[1]), -- Enum.KeyCode name, e.g. "E"
+			Keys = action.Keys, -- optional list of Enum.KeyCode names (overrides Key for binding)
 			Gamepad = action.Gamepad, -- optional Enum.KeyCode name, e.g. "ButtonX"
+			Hold = action.Hold == true, -- also sends "<Action>Stop" when released
+			Side = action.Side, -- "Left" puts the on-screen button in the bottom-left corner
 		})
 	end
 	local controls = {
@@ -855,6 +868,7 @@ function MinigameInfo.normalize(id: string, info)
 		Camera = camera,
 		Controls = controls,
 		ProgressLabel = info.ProgressLabel,
+		ProgressBar = info.ProgressBar == true,
 	}
 end
 
@@ -1285,6 +1299,9 @@ function MinigameManager.runRound(participants)
 	local actions = {}
 	for _, control in described.Controls.Actions do
 		actions[control.Action] = true
+		if control.Hold then
+			actions[control.Action .. "Stop"] = true
+		end
 	end
 	state.Active = {
 		Entry = entry,
@@ -2283,6 +2300,692 @@ return HotPotato
         </Item>
         <Item class="ModuleScript" referent="15">
           <Properties>
+            <string name="Name">IceDash</string>
+            <string name="Source"><![CDATA[--[[
+	Ice Dash (FFA, race)
+	Everyone slides forward down a frozen track on their own; you only steer left and right.
+	It's ice, so you drift: momentum carries you sideways after you let go. Snow drifts and
+	puddles slow you, bumpers and walls bounce you, and some stretches have no side walls -
+	slide off and you restart from the last checkpoint.
+	First over the finish line wins. Everyone else is ranked by how far they got.
+
+	The server runs the sliding itself (position + velocity per racer) and places the
+	characters every frame, so players and bots go through exactly the same physics.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local IceDash = {}
+
+-- Tuning ----------------------------------------------------------------------------------
+
+local ROUND_DURATION = 40
+
+-- Ice physics
+local MAX_SPEED = 34 -- forward speed cap (studs/s)
+local FORWARD_ACCEL = 16 -- how quickly you get back up to speed
+local STEER_ACCEL = 42 -- sideways push while a steer button is held (studs/s^2)
+local ICE_FRICTION = 1.3 -- sideways speed lost per second (fraction); lower = more drift
+local MAX_SIDE_SPEED = 18
+local SLOW_DRAG = 4 -- how hard a snow drift / puddle pulls you down to its speed cap
+
+-- Obstacles
+local SNOW_SLOW = 0.45 -- speed cap multiplier inside a snow drift
+local PUDDLE_SLOW = 0.65 -- speed cap multiplier inside a puddle
+local PUDDLE_STEER = 0.3 -- steering multiplier inside a puddle (you aquaplane)
+local BUMPER_BOUNCE = 0.9 -- bounciness of a bumper hit (0 = dead stop, 1 = perfect bounce)
+local BUMPER_KICK = 14 -- extra speed a bumper adds along the bounce direction
+local WALL_BOUNCE = 0.6 -- bounciness of side walls and barrier blocks
+local RACER_BOUNCE = 0.7 -- bounciness when two racers slide into each other
+
+-- Track layout
+local TRACK_LENGTH = 800
+local TRACK_WIDTH = 36
+local OBSTACLE_SPACING = 30 -- studs between obstacle rows
+local FIRST_OBSTACLE = 55 -- clear run-up after the start line
+local CHECKPOINT_SPACING = 160
+local RESPAWN_DELAY = 1.1 -- seconds between sliding off and reappearing at the checkpoint
+
+local RACER_RADIUS = 1.6
+local BUMPER_RADIUS = 2.6
+local SNOW_SIZE = Vector2.new(13, 11) -- width, length
+local PUDDLE_RADIUS = 5.5
+local START_LANES = { -9, -3, 3, 9 }
+
+IceDash.Info = {
+	Name = "Ice Dash",
+	Description = "Slide down the ice ❄! You move on your own, so just steer. Dodge bumpers and snow, don't slip off the edge. First to the flag wins!",
+	Duration = ROUND_DURATION,
+	Layout = Config.Layouts.FFA,
+	Camera = { Mode = "FollowBehind", Height = 12, Distance = 22, Smooth = 12 },
+	Controls = {
+		Move = false, -- the server slides you; you only steer
+		Jump = false,
+		Actions = {
+			{ Action = "Left", Label = "◀", Keys = { "A", "Left" }, Gamepad = "DPadLeft", Hold = true, Side = "Left" },
+			{ Action = "Right", Label = "▶", Keys = { "D", "Right" }, Gamepad = "DPadRight", Hold = true },
+		},
+	},
+	ProgressLabel = "Progress",
+	ProgressBar = true,
+}
+
+local HALF_WIDTH = TRACK_WIDTH / 2
+
+-- Track building ----------------------------------------------------------------------------
+
+function IceDash:_part(properties)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Material = Enum.Material.SmoothPlastic
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	for key, value in properties do
+		part[key] = value
+	end
+	part.Parent = self.Arena.Folder
+	return part
+end
+
+-- Track space: x = sideways (+ is the racer's right), s = distance from the start line.
+function IceDash:_at(x: number, y: number, s: number): CFrame
+	return self.Frame * CFrame.new(x, y, -s)
+end
+
+function IceDash:_buildTrack(rng)
+	self.Snow = {} -- { X, S } centres of slow rectangles
+	self.Puddles = {} -- { X, S }
+	self.Bumpers = {} -- { X, S }
+	self.Barriers = {} -- { X0, X1, S0, S1 }
+	self.Open = {} -- { S0, S1 } stretches with no side walls
+	self.Checkpoints = {}
+
+	-- Ice sheet, with a run-off area past the finish.
+	local total = TRACK_LENGTH + 60
+	self:_part({
+		Name = "Ice",
+		Size = Vector3.new(TRACK_WIDTH, 1, total),
+		CFrame = self:_at(0, 0, total / 2 - 10),
+		Material = Enum.Material.Ice,
+		Color = Color3.fromRGB(190, 235, 255),
+		CanCollide = true,
+	})
+
+	local lanes = { -13, -8, -3, 3, 8, 13 }
+	local s = FIRST_OBSTACLE
+	while s < TRACK_LENGTH - 30 do
+		local roll = rng:NextNumber()
+		if roll < 0.24 then
+			local x = rng:NextNumber(-HALF_WIDTH + 7, HALF_WIDTH - 7)
+			table.insert(self.Snow, { X = x, S = s })
+			self:_part({
+				Name = "SnowDrift",
+				Size = Vector3.new(SNOW_SIZE.X, 0.8, SNOW_SIZE.Y),
+				CFrame = self:_at(x, 0.7, s),
+				Material = Enum.Material.SmoothPlastic,
+				Color = Color3.fromRGB(255, 255, 255),
+			})
+		elseif roll < 0.42 then
+			local x = rng:NextNumber(-HALF_WIDTH + 6, HALF_WIDTH - 6)
+			table.insert(self.Puddles, { X = x, S = s })
+			self:_part({
+				Name = "Puddle",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(0.2, PUDDLE_RADIUS * 2, PUDDLE_RADIUS * 2),
+				CFrame = self:_at(x, 0.56, s) * CFrame.Angles(0, 0, math.rad(90)),
+				Material = Enum.Material.Glass,
+				Color = Color3.fromRGB(40, 110, 220),
+				Transparency = 0.25,
+			})
+		elseif roll < 0.68 then
+			-- Two bumpers in different lanes.
+			local first = rng:NextInteger(1, #lanes)
+			local second = (first + rng:NextInteger(2, 4) - 1) % #lanes + 1
+			for _, lane in { first, second } do
+				local x = lanes[lane]
+				table.insert(self.Bumpers, { X = x, S = s })
+				self:_part({
+					Name = "Bumper",
+					Shape = Enum.PartType.Cylinder,
+					Size = Vector3.new(3, BUMPER_RADIUS * 2, BUMPER_RADIUS * 2),
+					CFrame = self:_at(x, 2, s) * CFrame.Angles(0, 0, math.rad(90)),
+					Material = Enum.Material.Neon,
+					Color = Color3.fromRGB(255, 80, 140),
+				})
+			end
+		elseif roll < 0.84 then
+			-- A wall block sticking out from one side, or sitting in the middle.
+			local width = TRACK_WIDTH * rng:NextNumber(0.3, 0.42)
+			local kind = rng:NextInteger(1, 3)
+			local x0 = if kind == 1 then -HALF_WIDTH elseif kind == 2 then HALF_WIDTH - width else -width / 2
+			table.insert(self.Barriers, { X0 = x0, X1 = x0 + width, S0 = s - 1.5, S1 = s + 1.5 })
+			self:_part({
+				Name = "Barrier",
+				Size = Vector3.new(width, 4, 3),
+				CFrame = self:_at(x0 + width / 2, 2.5, s),
+				Material = Enum.Material.Brick,
+				Color = Color3.fromRGB(255, 170, 60),
+			})
+		else
+			-- No side walls here, and a bumper in the middle to make it interesting.
+			table.insert(self.Open, { S0 = s - OBSTACLE_SPACING / 2, S1 = s + OBSTACLE_SPACING / 2 })
+			table.insert(self.Bumpers, { X = 0, S = s })
+			self:_part({
+				Name = "Bumper",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(3, BUMPER_RADIUS * 2, BUMPER_RADIUS * 2),
+				CFrame = self:_at(0, 2, s) * CFrame.Angles(0, 0, math.rad(90)),
+				Material = Enum.Material.Neon,
+				Color = Color3.fromRGB(255, 80, 140),
+			})
+			for _, side in { -1, 1 } do
+				self:_part({
+					Name = "EdgeWarning",
+					Size = Vector3.new(2, 0.2, OBSTACLE_SPACING),
+					CFrame = self:_at(side * (HALF_WIDTH - 1), 0.56, s),
+					Material = Enum.Material.Neon,
+					Color = Color3.fromRGB(255, 60, 60),
+				})
+			end
+		end
+		s += OBSTACLE_SPACING
+	end
+
+	-- Side walls everywhere except the open stretches.
+	local wallStart = -10
+	local function wall(s0: number, s1: number)
+		if s1 - s0 < 1 then
+			return
+		end
+		for _, side in { -1, 1 } do
+			self:_part({
+				Name = "SideWall",
+				Size = Vector3.new(1.5, 4, s1 - s0),
+				CFrame = self:_at(side * (HALF_WIDTH + 0.75), 2.5, (s0 + s1) / 2),
+				Material = Enum.Material.Glass,
+				Color = Color3.fromRGB(120, 200, 255),
+				Transparency = 0.45,
+			})
+		end
+	end
+	for _, open in self.Open do
+		wall(wallStart, open.S0)
+		wallStart = open.S1
+	end
+	wall(wallStart, TRACK_LENGTH + 50)
+
+	-- Start line, checkpoints and the finish arch.
+	local function gate(at: number, color: Color3, name: string)
+		self:_part({
+			Name = name,
+			Size = Vector3.new(TRACK_WIDTH, 0.2, 2),
+			CFrame = self:_at(0, 0.58, at),
+			Material = Enum.Material.Neon,
+			Color = color,
+		})
+		for _, side in { -1, 1 } do
+			self:_part({
+				Name = name .. "Post",
+				Size = Vector3.new(1.5, 14, 1.5),
+				CFrame = self:_at(side * (HALF_WIDTH + 0.75), 7.5, at),
+				Material = Enum.Material.Neon,
+				Color = color,
+			})
+		end
+		self:_part({
+			Name = name .. "Beam",
+			Size = Vector3.new(TRACK_WIDTH + 3, 1.5, 1.5),
+			CFrame = self:_at(0, 14.5, at),
+			Material = Enum.Material.Neon,
+			Color = color,
+		})
+	end
+	gate(0, Color3.fromRGB(255, 255, 255), "StartLine")
+	local checkpoint = CHECKPOINT_SPACING
+	while checkpoint < TRACK_LENGTH - 40 do
+		table.insert(self.Checkpoints, checkpoint)
+		gate(checkpoint, Color3.fromRGB(90, 255, 140), "Checkpoint")
+		checkpoint += CHECKPOINT_SPACING
+	end
+	gate(TRACK_LENGTH, Color3.fromRGB(255, 220, 60), "FinishLine")
+end
+
+function IceDash:Setup(arena, participants, round)
+	-- The track runs along the arena's +Z (away from the lobby); racers face down it.
+	self.Frame = arena.Origin * CFrame.Angles(0, math.pi, 0)
+	self.Connections = {}
+	self.Racers = {}
+	self.Anchored = {}
+	self.FinishCount = 0
+	self:_buildTrack(round.Rng)
+
+	local spawns = {}
+	for index, participant in participants do
+		local lane = START_LANES[(index - 1) % #START_LANES + 1]
+		self.Racers[participant] = {
+			X = lane,
+			S = 3,
+			VX = 0,
+			VS = 0,
+			Left = false,
+			Right = false,
+			Lane = lane,
+			Checkpoint = 3,
+			State = "Racing", -- "Racing" | "Falling" | "Finished"
+			FallTime = 0,
+			RideHeight = 3.5,
+			FinishTime = nil,
+		}
+		spawns[index] = self:_at(lane, 4, 3)
+	end
+	return spawns
+end
+
+-- Physics -----------------------------------------------------------------------------------
+
+function IceDash:_hasWall(s: number): boolean
+	for _, open in self.Open do
+		if s >= open.S0 and s <= open.S1 then
+			return false
+		end
+	end
+	return true
+end
+
+-- Speed-cap and steering multipliers for whatever the racer is sliding over.
+function IceDash:_surface(x: number, s: number): (number, number)
+	local slow, steer = 1, 1
+	for _, snow in self.Snow do
+		if math.abs(x - snow.X) <= SNOW_SIZE.X / 2 and math.abs(s - snow.S) <= SNOW_SIZE.Y / 2 then
+			slow = math.min(slow, SNOW_SLOW)
+		end
+	end
+	for _, puddle in self.Puddles do
+		local dx, ds = x - puddle.X, s - puddle.S
+		if dx * dx + ds * ds <= PUDDLE_RADIUS * PUDDLE_RADIUS then
+			slow = math.min(slow, PUDDLE_SLOW)
+			steer = math.min(steer, PUDDLE_STEER)
+		end
+	end
+	return slow, steer
+end
+
+-- Bounces the racer's velocity off a surface with normal (nx, ns).
+local function bounce(racer, nx: number, ns: number, bounciness: number, kick: number)
+	local into = racer.VX * nx + racer.VS * ns
+	if into < 0 then
+		racer.VX -= (1 + bounciness) * into * nx
+		racer.VS -= (1 + bounciness) * into * ns
+	end
+	racer.VX += nx * kick
+	racer.VS += ns * kick
+end
+
+function IceDash:_respawn(racer)
+	racer.State = "Racing"
+	racer.X = racer.Lane
+	racer.S = racer.Checkpoint
+	racer.VX = 0
+	racer.VS = 0
+	racer.FallTime = 0
+end
+
+function IceDash:_step(participant, racer, dt: number, elapsed: number)
+	if racer.State == "Falling" then
+		racer.FallTime += dt
+		racer.X += racer.VX * dt
+		racer.S += racer.VS * dt * 0.5
+		if racer.FallTime >= RESPAWN_DELAY then
+			self:_respawn(racer)
+		end
+		return
+	end
+	if racer.State == "Finished" then
+		-- Glide to a stop in the run-off area.
+		racer.VS *= math.exp(-2.5 * dt)
+		racer.VX *= math.exp(-3 * dt)
+		racer.X = math.clamp(racer.X + racer.VX * dt, -HALF_WIDTH + RACER_RADIUS, HALF_WIDTH - RACER_RADIUS)
+		racer.S = math.min(racer.S + racer.VS * dt, TRACK_LENGTH + 40)
+		return
+	end
+
+	local slow, steerGrip = self:_surface(racer.X, racer.S)
+	local steer = (if racer.Right then 1 else 0) - (if racer.Left then 1 else 0)
+
+	-- Sideways: push from steering, a little friction, lots of drift.
+	racer.VX += steer * STEER_ACCEL * steerGrip * dt
+	racer.VX *= math.exp(-ICE_FRICTION * dt)
+	racer.VX = math.clamp(racer.VX, -MAX_SIDE_SPEED, MAX_SIDE_SPEED)
+
+	-- Forward: always accelerating up to the cap of the surface you're on.
+	local cap = MAX_SPEED * slow
+	if racer.VS < cap then
+		racer.VS = math.min(cap, racer.VS + FORWARD_ACCEL * dt)
+	else
+		racer.VS = cap + (racer.VS - cap) * math.exp(-SLOW_DRAG * dt)
+	end
+
+	racer.X += racer.VX * dt
+	racer.S += racer.VS * dt
+
+	-- Bumpers: round, bouncy, and they kick.
+	for _, bumper in self.Bumpers do
+		local dx, ds = racer.X - bumper.X, racer.S - bumper.S
+		local reach = BUMPER_RADIUS + RACER_RADIUS
+		local distanceSquared = dx * dx + ds * ds
+		if distanceSquared < reach * reach then
+			local distance = math.sqrt(distanceSquared)
+			local nx, ns = 0, -1
+			if distance > 0.01 then
+				nx, ns = dx / distance, ds / distance
+			end
+			racer.X = bumper.X + nx * reach
+			racer.S = bumper.S + ns * reach
+			bounce(racer, nx, ns, BUMPER_BOUNCE, BUMPER_KICK)
+		end
+	end
+
+	-- Barrier blocks: bounce off whichever face you hit.
+	for _, barrier in self.Barriers do
+		local nearestX = math.clamp(racer.X, barrier.X0, barrier.X1)
+		local nearestS = math.clamp(racer.S, barrier.S0, barrier.S1)
+		local dx, ds = racer.X - nearestX, racer.S - nearestS
+		local distanceSquared = dx * dx + ds * ds
+		if distanceSquared < RACER_RADIUS * RACER_RADIUS then
+			local distance = math.sqrt(distanceSquared)
+			local nx, ns
+			if distance > 0.01 then
+				nx, ns = dx / distance, ds / distance
+			else
+				nx, ns = 0, -1 -- somehow inside: shove back the way you came
+			end
+			racer.X = nearestX + nx * RACER_RADIUS
+			racer.S = nearestS + ns * RACER_RADIUS
+			bounce(racer, nx, ns, WALL_BOUNCE, 0)
+		end
+	end
+	racer.VS = math.max(racer.VS, -MAX_SPEED * 0.6)
+	racer.S = math.max(racer.S, 1)
+
+	-- Edges: a wall bounces you back; no wall means a long drop.
+	local limit = HALF_WIDTH - RACER_RADIUS
+	if math.abs(racer.X) > limit then
+		if self:_hasWall(racer.S) then
+			local side = math.sign(racer.X)
+			racer.X = side * limit
+			if racer.VX * side > 0 then
+				racer.VX = -racer.VX * WALL_BOUNCE
+			end
+		elseif math.abs(racer.X) > HALF_WIDTH + 0.5 then
+			racer.State = "Falling"
+			racer.FallTime = 0
+			self.Round:Toast(("❄ %s slid off the edge"):format(participant.Name))
+			return
+		end
+	end
+
+	for _, checkpoint in self.Checkpoints do
+		if racer.S >= checkpoint and racer.Checkpoint < checkpoint then
+			racer.Checkpoint = checkpoint
+		end
+	end
+
+	if racer.S >= TRACK_LENGTH then
+		racer.State = "Finished"
+		racer.FinishTime = elapsed
+		self.FinishCount += 1
+		self.Round:Toast(("🏁 %s finished in %.1fs"):format(participant.Name, elapsed))
+		self.Round:ReportProgress(participant, self:_progressText(racer))
+	end
+end
+
+-- Racers are solid to each other: overlapping pairs are pushed apart and trade momentum.
+function IceDash:_collideRacers(alive)
+	local reach = RACER_RADIUS * 2
+	for i = 1, #alive do
+		local a = self.Racers[alive[i]]
+		for j = i + 1, #alive do
+			local b = self.Racers[alive[j]]
+			if a.State == "Racing" and b.State == "Racing" then
+				local dx, ds = b.X - a.X, b.S - a.S
+				local distanceSquared = dx * dx + ds * ds
+				if distanceSquared < reach * reach then
+					local distance = math.sqrt(distanceSquared)
+					local nx, ns = 1, 0
+					if distance > 0.01 then
+						nx, ns = dx / distance, ds / distance
+					end
+					local overlap = (reach - distance) / 2
+					a.X -= nx * overlap
+					a.S -= ns * overlap
+					b.X += nx * overlap
+					b.S += ns * overlap
+					-- Equal masses: swap (most of) the speed along the line between them.
+					local closing = (a.VX - b.VX) * nx + (a.VS - b.VS) * ns
+					if closing > 0 then
+						local impulse = closing * (1 + RACER_BOUNCE) / 2
+						a.VX -= impulse * nx
+						a.VS -= impulse * ns
+						b.VX += impulse * nx
+						b.VS += impulse * ns
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Puts the character where the simulation says it is, leaning into the slide.
+function IceDash:_place(participant, racer)
+	local character = participant:GetCharacter()
+	if not character then
+		return
+	end
+	local drop = if racer.State == "Falling" then math.min(18, 40 * racer.FallTime * racer.FallTime) else 0
+	-- Lean sideways into the slide. No turning: the chase camera follows the way the body
+	-- faces, and it should keep looking straight down the track.
+	local lean = math.clamp(racer.VX / MAX_SIDE_SPEED, -1, 1) * 0.3
+	character:PivotTo(self:_at(racer.X, racer.RideHeight - drop, racer.S) * CFrame.Angles(0, 0, -lean))
+end
+
+function IceDash:_progressText(racer): string
+	if racer.FinishTime then
+		return ("🏁 %.1fs"):format(racer.FinishTime)
+	end
+	return ("%d%%"):format(math.clamp(racer.S / TRACK_LENGTH, 0, 0.99) * 100)
+end
+
+-- Interface -----------------------------------------------------------------------------
+
+function IceDash:Start()
+	local round = self.Round
+	local startedAt = os.clock()
+	local nextReport = 0
+
+	-- Take over the bodies: anchored, and moved by the simulation from here on.
+	for _, participant in self.Participants do
+		local racer = self.Racers[participant]
+		local character = participant:GetCharacter()
+		local root = participant:GetRoot()
+		if character and root then
+			racer.RideHeight = self.Frame:PointToObjectSpace(character:GetPivot().Position).Y
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.Anchored = true
+			table.insert(self.Anchored, root)
+		end
+	end
+	round:SetStatus("Steer! ◀ ▶")
+
+	table.insert(
+		self.Connections,
+		RunService.Heartbeat:Connect(function(dt)
+			if round.Ended then
+				return
+			end
+			dt = math.min(dt, 0.05)
+			local clock = os.clock()
+			local elapsed = clock - startedAt
+			local alive = round:GetAlive()
+			for _, participant in alive do
+				self:_step(participant, self.Racers[participant], dt, elapsed)
+			end
+			self:_collideRacers(alive)
+			for _, participant in alive do
+				self:_place(participant, self.Racers[participant])
+			end
+
+			if clock >= nextReport then
+				nextReport = clock + 0.1
+				for _, participant in self.Participants do
+					round:ReportProgress(participant, self:_progressText(self.Racers[participant]))
+				end
+			end
+
+			if self.FinishCount >= #round:GetAlive() then
+				round:End("Finish")
+			end
+		end)
+	)
+end
+
+function IceDash:OnInput(participant, action)
+	local racer = self.Racers[participant]
+	if not racer then
+		return
+	end
+	if action == "Left" then
+		racer.Left = true
+	elseif action == "LeftStop" then
+		racer.Left = false
+	elseif action == "Right" then
+		racer.Right = true
+	elseif action == "RightStop" then
+		racer.Right = false
+	end
+end
+
+--[[
+	Bot behaviour: look a little way down the track, score a handful of lines across it
+	(bumpers and walls are terrible, snow and puddles are bad, the edge of an open stretch is
+	scary), pick the cheapest and steer for it, allowing for drift. Sloppier bots look less
+	far ahead, misjudge their drift, re-plan less often and sometimes just pick a bad line.
+]]
+function IceDash:_lineCost(me, x: number, fromS: number, toS: number): number
+	local cost = 0
+	local margin = RACER_RADIUS + 1.2
+	-- Don't tuck in right behind (or drive into) another racer.
+	for _, other in self.Racers do
+		if other ~= me and other.State == "Racing" and other.S > fromS - 3 and other.S < fromS + 14 then
+			if math.abs(x - other.X) < RACER_RADIUS * 2 + 0.5 then
+				cost += 45
+			end
+		end
+	end
+	for _, bumper in self.Bumpers do
+		if bumper.S > fromS and bumper.S < toS and math.abs(x - bumper.X) < BUMPER_RADIUS + margin then
+			cost += 120
+		end
+	end
+	for _, barrier in self.Barriers do
+		if barrier.S1 > fromS and barrier.S0 < toS and x > barrier.X0 - margin and x < barrier.X1 + margin then
+			cost += 150
+		end
+	end
+	for _, snow in self.Snow do
+		if snow.S > fromS - 4 and snow.S < toS and math.abs(x - snow.X) < SNOW_SIZE.X / 2 + 1 then
+			cost += 35
+		end
+	end
+	for _, puddle in self.Puddles do
+		if puddle.S > fromS - 4 and puddle.S < toS and math.abs(x - puddle.X) < PUDDLE_RADIUS + 1 then
+			cost += 28
+		end
+	end
+	for _, open in self.Open do
+		if open.S1 > fromS and open.S0 < toS and math.abs(x) > HALF_WIDTH - 6 then
+			cost += 70
+		end
+	end
+	return cost
+end
+
+function IceDash:UpdateBot(bot, _dt)
+	local racer = self.Racers[bot.Participant]
+	if not racer or racer.State ~= "Racing" then
+		return
+	end
+	local memory = bot.Memory
+	local clock = os.clock()
+
+	if clock >= (memory.PlanAt or 0) then
+		memory.PlanAt = clock + 0.2 + (1 - bot.Skill) * 0.45
+		local lookAhead = 24 + bot.Skill * 30
+		if math.random() < (1 - bot.Skill) * 0.07 then
+			-- Brain fart: commit to a random line for a moment.
+			memory.TargetX = (math.random() - 0.5) * (TRACK_WIDTH - 6)
+			memory.PlanAt = clock + 0.7
+		else
+			local best, bestCost = racer.X, math.huge
+			for x = -HALF_WIDTH + 3, HALF_WIDTH - 3, 3 do
+				local cost = self:_lineCost(racer, x, racer.S + 1, racer.S + lookAhead)
+					+ math.abs(x - racer.X) * 0.7 -- don't cross the whole track for nothing
+					+ math.abs(x) * 0.2 -- the middle leaves the most options
+					+ math.random() * (1 - bot.Skill) * 25 -- sloppy judgement
+				if cost < bestCost then
+					best, bestCost = x, cost
+				end
+			end
+			memory.TargetX = best
+		end
+	end
+
+	-- Steer for the line, allowing for how far the current drift will carry me.
+	local anticipation = 0.15 + bot.Skill * 0.45
+	local miss = (memory.TargetX or racer.X) - (racer.X + racer.VX * anticipation)
+	local wantLeft, wantRight = miss < -1.3, miss > 1.3
+	if wantLeft ~= memory.Left then
+		memory.Left = wantLeft
+		bot:Input(if wantLeft then "Left" else "LeftStop")
+	end
+	if wantRight ~= memory.Right then
+		memory.Right = wantRight
+		bot:Input(if wantRight then "Right" else "RightStop")
+	end
+end
+
+function IceDash:GetResults()
+	return ResultsUtil.fromScores(self.Participants, function(participant)
+		local racer = self.Racers[participant]
+		-- Finishers beat everyone still on the track; earlier finish = better.
+		return if racer.FinishTime then 1e6 - racer.FinishTime else racer.S
+	end)
+end
+
+function IceDash:Cleanup()
+	for _, connection in self.Connections do
+		connection:Disconnect()
+	end
+	for _, root in self.Anchored do
+		if root.Parent then
+			root.Anchored = false
+		end
+	end
+	-- The track lives in arena.Folder, which the framework destroys.
+end
+
+return IceDash
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="16">
+          <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
 	Kernel Catch (FFA, score)
@@ -2321,6 +3024,9 @@ local STUN_IMMUNITY = 0.6 -- extra seconds after a stun before another rock can 
 local CATCH_RADIUS = 3.2 -- how close (flat distance) your bucket must be to a landing kernel
 local ROCK_RADIUS = 3.6 -- how close a landing rock must be to hit you
 local ARENA_RADIUS = 26
+-- Nothing lands in this strip along the edge nearest the camera, where a falling drop would
+-- fill the screen and cross the HUD.
+local NEAR_EDGE_MARGIN = 9
 local DROP_HEIGHT = 30
 local WALK_SPEED = 18
 
@@ -2351,8 +3057,9 @@ end
 
 -- Setup ---------------------------------------------------------------------------------
 
--- A striped popcorn bucket welded on top of the head.
-local function makeBucket(character: Model): Model?
+-- A striped popcorn bucket welded on top of the head. It lives in `parent` (the arena folder),
+-- not in the character, so Highlights on the character (the stun flash) don't tint it.
+local function makeBucket(character: Model, parent: Instance): Model?
 	local head = character:FindFirstChild("Head")
 	if not head or not head:IsA("BasePart") then
 		return nil
@@ -2388,7 +3095,7 @@ local function makeBucket(character: Model): Model?
 	local kernels = piece("Kernels", Vector3.new(2.2, 2.2, 2.2), CFrame.new(0, 1.5, 0), POPCORN_COLOR, Enum.PartType.Ball)
 	kernels.Transparency = 1 -- shown once there is popcorn in the bucket
 
-	bucket.Parent = character
+	bucket.Parent = parent
 	return bucket
 end
 
@@ -2437,7 +3144,7 @@ function KernelCatch:Setup(arena, participants, _round)
 
 		local character = participant:GetCharacter()
 		if character then
-			self.Buckets[participant] = makeBucket(character)
+			self.Buckets[participant] = makeBucket(character, arena.Folder)
 		end
 	end
 	return spawns
@@ -2500,11 +3207,10 @@ end
 function KernelCatch:_spawnDrop(progress: number)
 	local round = self.Round
 	local origin = self.Arena.Origin
-	local floorY = origin.Position.Y + 1
 
 	local isRock = round.Rng:NextNumber() < lerp(ROCK_RATIO, progress)
 
-	-- Where it lands: near a random player, or anywhere on the floor.
+	-- Where it lands (arena-local X/Z): near a random player, or anywhere on the floor.
 	local offset
 	local alive = round:GetAlive()
 	local aimedChance = if isRock then AIMED_ROCK_CHANCE else AIMED_POPCORN_CHANCE
@@ -2513,7 +3219,7 @@ function KernelCatch:_spawnDrop(progress: number)
 		local position = target:GetPosition()
 		if position then
 			local angle = round.Rng:NextNumber() * math.pi * 2
-			offset = flat(position - origin.Position)
+			offset = flat(origin:PointToObjectSpace(position))
 				+ Vector3.new(math.cos(angle), 0, math.sin(angle)) * round.Rng:NextNumber() * AIM_SPREAD
 		end
 	end
@@ -2525,7 +3231,12 @@ function KernelCatch:_spawnDrop(progress: number)
 	if offset.Magnitude > ARENA_RADIUS - 3 then
 		offset = offset.Unit * (ARENA_RADIUS - 3)
 	end
-	local landing = Vector3.new(origin.Position.X + offset.X, floorY, origin.Position.Z + offset.Z)
+	-- The overhead camera sits on the arena's +Z side: keep drops out of the strip closest to it.
+	local nearLimit = ARENA_RADIUS - 3 - NEAR_EDGE_MARGIN
+	if offset.Z > nearLimit then
+		offset = Vector3.new(offset.X, 0, nearLimit)
+	end
+	local landing = origin:PointToWorldSpace(Vector3.new(offset.X, 1, offset.Z))
 
 	local size = if isRock then 3.4 else 1.8
 
@@ -2783,7 +3494,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -2940,7 +3651,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -3066,7 +3777,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="18">
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -3210,7 +3921,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="19">
+      <Item class="ModuleScript" referent="20">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -3326,7 +4037,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="20">
+      <Item class="ModuleScript" referent="21">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -3453,19 +4164,19 @@ return RoundContext
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="21">
+  <Item class="StarterPlayer" referent="22">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="22">
+    <Item class="StarterPlayerScripts" referent="23">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="23">
+      <Item class="Folder" referent="24">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -3488,6 +4199,7 @@ return RoundContext
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Config"))
@@ -3520,7 +4232,13 @@ local function currentTarget()
 end
 
 function CameraController.start(cameraConfig, origin: CFrame)
-	params = cameraConfig
+	params = table.clone(cameraConfig)
+	local touch = UserInputService.TouchEnabled and Config.TouchCamera[params.Mode]
+	if touch then
+		params.Height *= touch.Zoom
+		params.Distance *= touch.Zoom
+		params.LookAhead = touch.LookAhead
+	end
 	arenaOrigin = origin
 	active = true
 	focus = nil
@@ -3621,7 +4339,8 @@ local function angledOverhead(dt: number): CFrame
 	local goal = if root then center:Lerp(root.Position, params.Follow) else center
 	local point = smoothTowards(goal, params.Smooth, dt)
 	local offset = arenaOrigin:VectorToWorldSpace(Vector3.new(0, params.Height, params.Distance))
-	return CFrame.lookAt(point + offset, point)
+	local aim = point + arenaOrigin:VectorToWorldSpace(Vector3.new(0, 0, -(params.LookAhead or 0)))
+	return CFrame.lookAt(point + offset, aim)
 end
 
 local function followBehind(dt: number): CFrame
@@ -3677,7 +4396,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -3733,9 +4452,11 @@ function Controls.bind(controls, send: (string) -> ())
 	for index, action in controls.Actions do
 		local bindName = "Party_" .. action.Action
 		local inputs = {}
-		local key = keyCode(action.Key)
-		if key then
-			table.insert(inputs, key)
+		for _, name in action.Keys or { action.Key } do
+			local key = keyCode(name)
+			if key then
+				table.insert(inputs, key)
+			end
 		end
 		local pad = keyCode(action.Gamepad or DEFAULT_GAMEPAD[index])
 		if pad then
@@ -3744,6 +4465,8 @@ function Controls.bind(controls, send: (string) -> ())
 		ContextActionService:BindActionAtPriority(bindName, function(_, inputState)
 			if inputState == Enum.UserInputState.Begin then
 				send(action.Action)
+			elseif inputState == Enum.UserInputState.End and action.Hold then
+				send(action.Action .. "Stop")
 			end
 			return Enum.ContextActionResult.Sink
 		end, false, Enum.ContextActionPriority.High.Value, table.unpack(inputs))
@@ -3751,7 +4474,7 @@ function Controls.bind(controls, send: (string) -> ())
 	end
 
 	if actionBar then
-		actionBar:show(controls.Actions, send)
+		actionBar:show(controls.Actions, send, not controls.Move)
 	end
 
 	if not controls.Move or not controls.Jump then
@@ -3784,7 +4507,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="26">
+        <Item class="LocalScript" referent="27">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -3794,6 +4517,7 @@ return Controls
 	It does own purely local presentation: this player's camera, UI and control bindings.
 ]]
 
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -3807,6 +4531,7 @@ local ActionBar = require(UI:WaitForChild("ActionBar"))
 local Hud = require(UI:WaitForChild("Hud"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
 local PlayerChips = require(UI:WaitForChild("PlayerChips"))
+local ProgressBar = require(UI:WaitForChild("ProgressBar"))
 local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
@@ -3842,6 +4567,7 @@ end)
 local instructions = InstructionsCard.new(screen)
 local results = ResultsScreen.new(screen)
 local chips = PlayerChips.new(screen)
+local progressBar = ProgressBar.new(screen)
 local spectatorBar
 spectatorBar = SpectatorBar.new(screen, function(direction)
 	CameraController.cycle(direction)
@@ -3851,7 +4577,7 @@ Controls.setActionBar(ActionBar.new(screen))
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
 -- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
-local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "SpectatorBar", "Lobby" }
+local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "ProgressBar", "SpectatorBar", "Lobby" }
 local HUD_DESIGN_HEIGHT = 720
 local hudBasePositions = {}
 
@@ -3876,10 +4602,19 @@ end
 fitHudToScreen()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHudToScreen)
 
+-- While a full-screen card (vote, instructions, results) is up, the mobile thumbstick and
+-- jump button are switched off entirely, so they can never sit on top of the card.
+local function setCardOpen(open: boolean)
+	pcall(function()
+		GuiService.TouchControlsEnabled = not open
+	end)
+end
+
 local function hideOverlays()
 	voteScreen:hide()
 	instructions:hide()
 	results:hide()
+	setCardOpen(false)
 end
 
 local function isParticipant(participants): boolean
@@ -3895,6 +4630,15 @@ end
 
 local inRound = false -- true from Instructions until Results/Lobby
 local amParticipant = false
+local useProgressBar = false -- this minigame shows a race bar instead of the chip strip
+
+local function showRoundHud()
+	if useProgressBar then
+		progressBar:show()
+	else
+		chips:show()
+	end
+end
 
 local function beginRound(message)
 	if inRound then
@@ -3902,6 +4646,7 @@ local function beginRound(message)
 	end
 	inRound = true
 	amParticipant = isParticipant(message.Participants)
+	useProgressBar = message.Minigame.ProgressBar == true
 	CameraController.start(message.Minigame.Camera, message.ArenaOrigin)
 	CameraController.setSpectating(not amParticipant)
 end
@@ -3912,6 +4657,7 @@ local function endRound()
 	CameraController.stop()
 	spectatorBar:hide()
 	chips:hide()
+	progressBar:hide()
 end
 
 local function refreshSpectator()
@@ -3927,6 +4673,7 @@ local function onChips(list)
 		return
 	end
 	chips:update(list, myId)
+	progressBar:update(list, myId)
 	CameraController.setTargets(list)
 	for _, chip in list do
 		if chip.Id == myId and chip.Eliminated and not CameraController.isSpectating() then
@@ -3955,12 +4702,14 @@ end
 phaseHandlers[Phase.Vote] = function(message)
 	hideOverlays()
 	hud:setLobby(nil)
+	setCardOpen(true)
 	voteScreen:show(message.Choices, message.EndsAt)
 end
 
 phaseHandlers[Phase.Instructions] = function(message)
 	hideOverlays()
 	hud:setLobby(nil)
+	setCardOpen(true)
 	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
 	beginRound(message)
 	if not amParticipant then
@@ -3971,14 +4720,14 @@ end
 
 phaseHandlers[Phase.Countdown] = function(message)
 	hideOverlays()
-	chips:show() -- not during Instructions: the strip would sit on top of the card
+	showRoundHud() -- not during Instructions: the strip would sit on top of the card
 	hud:showBanner(tostring(message.Number), nil, 0.7)
 end
 
 phaseHandlers[Phase.Playing] = function(message)
 	hideOverlays()
 	beginRound(message) -- no-op normally; covers joining mid-round
-	chips:show()
+	showRoundHud()
 	hud:showBanner("GO!", Theme.Colors.Good, 0.8)
 	hud:setTimer(message.EndsAt)
 	if amParticipant and not CameraController.isSpectating() then
@@ -3996,6 +4745,7 @@ phaseHandlers[Phase.Results] = function(message)
 	hideOverlays()
 	endRound() -- everyone is back in the lobby: normal camera + controls
 	hud:setStatus(nil)
+	setCardOpen(true)
 	results:show(message.Minigame, message.Results, myId)
 end
 
@@ -4032,11 +4782,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="27">
+        <Item class="Folder" referent="28">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="28">
+          <Item class="ModuleScript" referent="29">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -4054,6 +4804,8 @@ local ActionBar = {}
 ActionBar.__index = ActionBar
 
 local BUTTON_SIZE = 96
+local ABOVE_JUMP_BUTTON = -170 -- bottom offset that clears Roblox's mobile jump button
+local BOTTOM_CORNER = -28 -- used when movement is locked, so there is no jump button to clear
 
 function ActionBar.new(screen: ScreenGui)
 	local self = setmetatable({}, ActionBar)
@@ -4072,12 +4824,32 @@ function ActionBar.new(screen: ScreenGui)
 			SortOrder = Enum.SortOrder.LayoutOrder,
 		}),
 	})
+	-- Second column in the bottom-left corner for actions with Side = "Left" (e.g. steer left).
+	self.LeftRoot = make("Frame", {
+		Name = "ActionBarLeft",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -170),
+		Size = UDim2.fromOffset(BUTTON_SIZE, BUTTON_SIZE * 3 + 24),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	}, {
+		make("UIListLayout", {
+			Padding = UDim.new(0, 12),
+			VerticalAlignment = Enum.VerticalAlignment.Bottom,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
 	self.Connections = {}
 	return self
 end
 
-function ActionBar:show(actions, send: (string) -> ())
+-- `low` = sit in the bottom corners (thumb reach) instead of above the jump button.
+function ActionBar:show(actions, send: (string) -> (), low: boolean?)
 	self:hide()
+	local offset = if low then BOTTOM_CORNER else ABOVE_JUMP_BUTTON
+	self.Root.Position = UDim2.new(1, -24, 1, offset)
+	self.LeftRoot.Position = UDim2.new(0, 24, 1, offset)
 	if #actions == 0 then
 		return
 	end
@@ -4091,7 +4863,7 @@ function ActionBar:show(actions, send: (string) -> ())
 			BackgroundTransparency = 0.1,
 			Text = "",
 			AutoButtonColor = true,
-			Parent = self.Root,
+			Parent = if action.Side == "Left" then self.LeftRoot else self.Root,
 		}, { Theme.corner(BUTTON_SIZE // 2), Theme.stroke(Color3.new(1, 1, 1), 3) })
 		Theme.label({
 			Size = UDim2.fromScale(1, if showKeys then 0.7 else 1),
@@ -4108,14 +4880,39 @@ function ActionBar:show(actions, send: (string) -> ())
 				Parent = button,
 			}, 16)
 		end
-		table.insert(
-			self.Connections,
-			button.Activated:Connect(function()
-				send(action.Action)
-			end)
-		)
+		if action.Hold then
+			-- Press and hold: send on finger/mouse down, "<Action>Stop" when that same input ends.
+			table.insert(
+				self.Connections,
+				button.InputBegan:Connect(function(input)
+					if
+						input.UserInputType ~= Enum.UserInputType.Touch
+						and input.UserInputType ~= Enum.UserInputType.MouseButton1
+					then
+						return
+					end
+					send(action.Action)
+					local released
+					released = input.Changed:Connect(function()
+						if input.UserInputState == Enum.UserInputState.End then
+							released:Disconnect()
+							send(action.Action .. "Stop")
+						end
+					end)
+					table.insert(self.Connections, released)
+				end)
+			)
+		else
+			table.insert(
+				self.Connections,
+				button.Activated:Connect(function()
+					send(action.Action)
+				end)
+			)
+		end
 	end
 	self.Root.Visible = true
+	self.LeftRoot.Visible = true
 end
 
 function ActionBar:hide()
@@ -4123,19 +4920,21 @@ function ActionBar:hide()
 		connection:Disconnect()
 	end
 	table.clear(self.Connections)
-	for _, child in self.Root:GetChildren() do
-		if child:IsA("TextButton") then
-			child:Destroy()
+	for _, root in { self.Root, self.LeftRoot } do
+		for _, child in root:GetChildren() do
+			if child:IsA("TextButton") then
+				child:Destroy()
+			end
 		end
+		root.Visible = false
 	end
-	self.Root.Visible = false
 end
 
 return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="29">
+          <Item class="ModuleScript" referent="30">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -4153,8 +4952,14 @@ local make = Theme.make
 local Hud = {}
 Hud.__index = Hud
 
-local MAX_TOASTS = 4
-local TOAST_LIFETIME = 3.5
+-- Phones get a smaller, shorter-lived feed so it doesn't cover the left side of the arena.
+local TOUCH = game:GetService("UserInputService").TouchEnabled
+local MAX_TOASTS = if TOUCH then 2 else 4
+local TOAST_LIFETIME = if TOUCH then 2.5 else 3.5
+local TOAST_HEIGHT = if TOUCH then 26 else 36
+local TOAST_TEXT_SIZE = if TOUCH then 14 else 20
+local TOAST_WIDTH = if TOUCH then 0.24 else 0.3
+local TOAST_MIN_WIDTH = if TOUCH then 170 else 220
 
 function Hud.new(screen: ScreenGui)
 	local self = setmetatable({}, Hud)
@@ -4208,7 +5013,7 @@ function Hud.new(screen: ScreenGui)
 		Name = "Toasts",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromScale(0.3, 0.4),
+		Size = UDim2.fromScale(TOAST_WIDTH, 0.4),
 		BackgroundTransparency = 1,
 		Parent = screen,
 	}, {
@@ -4217,7 +5022,7 @@ function Hud.new(screen: ScreenGui)
 			VerticalAlignment = Enum.VerticalAlignment.Bottom,
 			SortOrder = Enum.SortOrder.LayoutOrder,
 		}),
-		make("UISizeConstraint", { MinSize = Vector2.new(220, 0) }),
+		make("UISizeConstraint", { MinSize = Vector2.new(TOAST_MIN_WIDTH, 0) }),
 	})
 	self.ToastCount = 0
 
@@ -4305,7 +5110,7 @@ function Hud:toast(text: string)
 	self.ToastCount += 1
 	local toast = make("Frame", {
 		LayoutOrder = self.ToastCount,
-		Size = UDim2.new(1, 0, 0, 36),
+		Size = UDim2.new(1, 0, 0, TOAST_HEIGHT),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.2,
 		Parent = self.ToastList,
@@ -4315,7 +5120,7 @@ function Hud:toast(text: string)
 		Text = text,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = toast,
-	}, 20)
+	}, TOAST_TEXT_SIZE)
 
 	-- Keep the feed short.
 	local toasts = {}
@@ -4345,7 +5150,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="30">
+          <Item class="ModuleScript" referent="31">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -4492,7 +5297,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="31">
+          <Item class="ModuleScript" referent="32">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -4607,7 +5412,144 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="32">
+          <Item class="ModuleScript" referent="33">
+            <Properties>
+              <string name="Name">ProgressBar</string>
+              <string name="Source"><![CDATA[--[[
+	ProgressBar
+	Race bar along the top of the screen: one marker per participant sliding from the start
+	(left) to the finish flag (right). Used instead of the chip strip by minigames with
+	Info.ProgressBar = true. It is fed by the same chip list: a value like "37%" places the
+	marker, and any value containing 🏁 counts as finished.
+]]
+
+local TweenService = game:GetService("TweenService")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local ProgressBar = {}
+ProgressBar.__index = ProgressBar
+
+local MARKER_SIZE = 26
+local MARKER_COLORS = {
+	Theme.Colors.Accent,
+	Theme.Colors.Hot,
+	Theme.Colors.Cool,
+	Theme.Colors.Good,
+}
+
+function ProgressBar.new(screen: ScreenGui)
+	local self = setmetatable({}, ProgressBar)
+	self.Root = make("Frame", {
+		Name = "ProgressBar",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 112),
+		Size = UDim2.new(0.86, 0, 0, 44),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	})
+	-- The track the markers slide along (leaves room for the flag on the right).
+	self.Track = make("Frame", {
+		Name = "Track",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, MARKER_SIZE, 0.5, 0),
+		Size = UDim2.new(1, -MARKER_SIZE * 3, 0, 12),
+		BackgroundColor3 = Theme.Colors.Card,
+		BackgroundTransparency = 0.1,
+		Parent = self.Root,
+	}, { Theme.corner(6), Theme.stroke(Theme.Colors.CardLight, 2) })
+	Theme.label({
+		Name = "Flag",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(1, 0.5),
+		Size = UDim2.fromOffset(MARKER_SIZE + 6, MARKER_SIZE + 6),
+		Text = "🏁",
+		Parent = self.Root,
+	}, 26)
+	self.Markers = {}
+	return self
+end
+
+local function fractionOf(value): number
+	if type(value) == "number" then
+		return math.clamp(value / 100, 0, 1)
+	end
+	if type(value) ~= "string" then
+		return 0
+	end
+	if value:find("🏁", 1, true) then
+		return 1
+	end
+	local percent = tonumber(value:match("(%d+)%%"))
+	return if percent then math.clamp(percent / 100, 0, 1) else 0
+end
+
+local function buildMarker(track: Frame, order: number)
+	local color = MARKER_COLORS[(order - 1) % #MARKER_COLORS + 1]
+	local stroke = Theme.stroke(Color3.new(1, 1, 1), 2)
+	local frame = make("Frame", {
+		Name = "Marker",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(MARKER_SIZE, MARKER_SIZE),
+		BackgroundColor3 = color,
+		Parent = track,
+	}, { Theme.corner(MARKER_SIZE // 2), stroke })
+	local tag = Theme.label({
+		Size = UDim2.fromScale(1, 1),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Overlay,
+		Text = "",
+		Parent = frame,
+	}, 14)
+	return { Frame = frame, Stroke = stroke, Tag = tag }
+end
+
+function ProgressBar:update(chips, myId: string)
+	local seen = {}
+	for order, chip in chips do
+		seen[chip.Id] = true
+		local marker = self.Markers[chip.Id] or buildMarker(self.Track, order)
+		self.Markers[chip.Id] = marker
+
+		local isMe = chip.Id == myId
+		marker.Tag.Text = if isMe then "YOU" else string.sub(chip.Name, 1, 1)
+		marker.Stroke.Color = if isMe then Theme.Colors.Accent else Color3.new(1, 1, 1)
+		marker.Stroke.Thickness = if isMe then 3 else 2
+		marker.Frame.ZIndex = if isMe then 5 else 2
+		local size = if isMe then MARKER_SIZE + 8 else MARKER_SIZE
+		marker.Frame.Size = UDim2.fromOffset(size, size)
+
+		local goal = UDim2.fromScale(fractionOf(chip.Value), 0.5)
+		TweenService:Create(marker.Frame, TweenInfo.new(0.2, Enum.EasingStyle.Linear), { Position = goal }):Play()
+	end
+	for id, marker in self.Markers do
+		if not seen[id] then
+			marker.Frame:Destroy()
+			self.Markers[id] = nil
+		end
+	end
+end
+
+function ProgressBar:show()
+	self.Root.Visible = true
+end
+
+function ProgressBar:hide()
+	self.Root.Visible = false
+	for id, marker in self.Markers do
+		marker.Frame:Destroy()
+		self.Markers[id] = nil
+	end
+end
+
+return ProgressBar
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="34">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -4725,7 +5667,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="33">
+          <Item class="ModuleScript" referent="35">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -4814,7 +5756,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="34">
+          <Item class="ModuleScript" referent="36">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -4932,7 +5874,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="35">
+          <Item class="ModuleScript" referent="37">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -5109,18 +6051,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="36">
+  <Item class="Workspace" referent="38">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="37">
+    <Item class="Model" referent="39">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="38">
+      <Item class="Part" referent="40">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -5140,7 +6082,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="39">
+      <Item class="SpawnLocation" referent="41">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
