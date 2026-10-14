@@ -6,14 +6,25 @@
 	slide off and you restart from the last checkpoint.
 	First over the finish line wins. Everyone else is ranked by how far they got.
 
-	The server runs the sliding itself (position + velocity per racer) and places the
-	characters every frame, so players and bots go through exactly the same physics.
+	Who simulates what (so it stays smooth on a laggy connection):
+	  * Each player's client runs its own racer with the shared rules in PartyShared.IceDashSim
+	    (see client/Minigames/IceDash) and reports its state ~20 times a second.
+	  * The server checks every report (see _validateReport) and only then adopts it. It works
+	    out checkpoints, falls and the finish itself, so finish order can't be faked.
+	  * Bots are simulated here with the same rules.
+	  * The server broadcasts everyone's accepted state ~20 times a second; clients draw the
+	    other racers by interpolating between those snapshots.
+
+	Physics and track tuning live at the top of PartyShared.IceDashSim (shared with the
+	client). Network and anti-cheat tuning is below.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local Sim = require(ReplicatedStorage.PartyShared.IceDashSim)
 local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
 
 local IceDash = {}
@@ -22,36 +33,19 @@ local IceDash = {}
 
 local ROUND_DURATION = 40
 
--- Ice physics
-local MAX_SPEED = 34 -- forward speed cap (studs/s)
-local FORWARD_ACCEL = 16 -- how quickly you get back up to speed
-local STEER_ACCEL = 42 -- sideways push while a steer button is held (studs/s^2)
-local ICE_FRICTION = 1.3 -- sideways speed lost per second (fraction); lower = more drift
-local MAX_SIDE_SPEED = 18
-local SLOW_DRAG = 4 -- how hard a snow drift / puddle pulls you down to its speed cap
+-- Networking
+local SNAPSHOT_RATE = 20 -- snapshots of every racer sent to clients per second
+local FALLBACK_PLACE_RATE = 2 -- times per second the server itself moves the bodies (for late joiners)
+local MAX_REPORT_AGE = 0.25 -- seconds a player's last report is projected forward in snapshots
 
--- Obstacles
-local SNOW_SLOW = 0.45 -- speed cap multiplier inside a snow drift
-local PUDDLE_SLOW = 0.65 -- speed cap multiplier inside a puddle
-local PUDDLE_STEER = 0.3 -- steering multiplier inside a puddle (you aquaplane)
-local BUMPER_BOUNCE = 0.9 -- bounciness of a bumper hit (0 = dead stop, 1 = perfect bounce)
-local BUMPER_KICK = 14 -- extra speed a bumper adds along the bounce direction
-local WALL_BOUNCE = 0.6 -- bounciness of side walls and barrier blocks
-local RACER_BOUNCE = 0.7 -- bounciness when two racers slide into each other
-
--- Track layout
-local TRACK_LENGTH = 800
-local TRACK_WIDTH = 36
-local OBSTACLE_SPACING = 30 -- studs between obstacle rows
-local FIRST_OBSTACLE = 55 -- clear run-up after the start line
-local CHECKPOINT_SPACING = 160
-local RESPAWN_DELAY = 1.1 -- seconds between sliding off and reappearing at the checkpoint
-
-local RACER_RADIUS = 1.6
-local BUMPER_RADIUS = 2.6
-local SNOW_SIZE = Vector2.new(13, 11) -- width, length
-local PUDDLE_RADIUS = 5.5
-local START_LANES = { -9, -3, 3, 9 }
+-- Anti-cheat: how far a client's report may stray from what the rules allow before it is
+-- thrown away and the client is snapped back to the last accepted state.
+local CLOCK_SLACK = 0.35 -- seconds a client's race clock may run ahead of the server's
+local SPEED_TOLERANCE = 1.08 -- sustained forward speed allowed, as a multiple of MAX_SPEED
+local SPEED_BURST = 14 -- studs of extra forward travel allowed in a burst (bumper kicks, bounces)
+local STEP_SLACK = 3 -- studs of slack on any single report's movement
+local WALL_SLACK = 1 -- studs a report may poke past a wall or into a barrier
+local RESPAWN_GRACE = 1.5 -- extra seconds a client gets to reappear at its checkpoint after falling
 
 IceDash.Info = {
 	Name = "Ice Dash",
@@ -60,7 +54,7 @@ IceDash.Info = {
 	Layout = Config.Layouts.FFA,
 	Camera = { Mode = "FollowBehind", Height = 12, Distance = 22, Smooth = 12 },
 	Controls = {
-		Move = false, -- the server slides you; you only steer
+		Move = false, -- you slide on your own; you only steer
 		Jump = false,
 		Actions = {
 			{ Action = "Left", Label = "◀", Keys = { "A", "Left" }, Gamepad = "DPadLeft", Hold = true, Side = "Left" },
@@ -69,9 +63,11 @@ IceDash.Info = {
 	},
 	ProgressLabel = "Progress",
 	ProgressBar = true,
+	ClientModule = "IceDash", -- client/Minigames/IceDash runs the local racer and smooths the others
 }
 
-local HALF_WIDTH = TRACK_WIDTH / 2
+local HALF_WIDTH = Sim.HALF_WIDTH
+local TRACK_LENGTH = Sim.TRACK_LENGTH
 
 -- Track building ----------------------------------------------------------------------------
 
@@ -91,112 +87,64 @@ function IceDash:_part(properties)
 	return part
 end
 
--- Track space: x = sideways (+ is the racer's right), s = distance from the start line.
+-- Track space -> world. x = sideways (+ is the racer's right), s = distance from the start line.
 function IceDash:_at(x: number, y: number, s: number): CFrame
 	return self.Frame * CFrame.new(x, y, -s)
 end
 
-function IceDash:_buildTrack(rng)
-	self.Snow = {} -- { X, S } centres of slow rectangles
-	self.Puddles = {} -- { X, S }
-	self.Bumpers = {} -- { X, S }
-	self.Barriers = {} -- { X0, X1, S0, S1 }
-	self.Open = {} -- { S0, S1 } stretches with no side walls
-	self.Checkpoints = {}
-
-	-- Ice sheet, with a run-off area past the finish.
+-- Turns the layout (plain numbers from IceDashSim) into parts.
+function IceDash:_buildTrack(layout)
+	local width = Sim.TRACK_WIDTH
 	local total = TRACK_LENGTH + 60
 	self:_part({
 		Name = "Ice",
-		Size = Vector3.new(TRACK_WIDTH, 1, total),
+		Size = Vector3.new(width, 1, total),
 		CFrame = self:_at(0, 0, total / 2 - 10),
 		Material = Enum.Material.Ice,
 		Color = Color3.fromRGB(190, 235, 255),
 		CanCollide = true,
 	})
 
-	local lanes = { -13, -8, -3, 3, 8, 13 }
-	local s = FIRST_OBSTACLE
-	while s < TRACK_LENGTH - 30 do
-		local roll = rng:NextNumber()
-		if roll < 0.24 then
-			local x = rng:NextNumber(-HALF_WIDTH + 7, HALF_WIDTH - 7)
-			table.insert(self.Snow, { X = x, S = s })
-			self:_part({
-				Name = "SnowDrift",
-				Size = Vector3.new(SNOW_SIZE.X, 0.8, SNOW_SIZE.Y),
-				CFrame = self:_at(x, 0.7, s),
-				Material = Enum.Material.SmoothPlastic,
-				Color = Color3.fromRGB(255, 255, 255),
-			})
-		elseif roll < 0.42 then
-			local x = rng:NextNumber(-HALF_WIDTH + 6, HALF_WIDTH - 6)
-			table.insert(self.Puddles, { X = x, S = s })
-			self:_part({
-				Name = "Puddle",
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(0.2, PUDDLE_RADIUS * 2, PUDDLE_RADIUS * 2),
-				CFrame = self:_at(x, 0.56, s) * CFrame.Angles(0, 0, math.rad(90)),
-				Material = Enum.Material.Glass,
-				Color = Color3.fromRGB(40, 110, 220),
-				Transparency = 0.25,
-			})
-		elseif roll < 0.68 then
-			-- Two bumpers in different lanes.
-			local first = rng:NextInteger(1, #lanes)
-			local second = (first + rng:NextInteger(2, 4) - 1) % #lanes + 1
-			for _, lane in { first, second } do
-				local x = lanes[lane]
-				table.insert(self.Bumpers, { X = x, S = s })
-				self:_part({
-					Name = "Bumper",
-					Shape = Enum.PartType.Cylinder,
-					Size = Vector3.new(3, BUMPER_RADIUS * 2, BUMPER_RADIUS * 2),
-					CFrame = self:_at(x, 2, s) * CFrame.Angles(0, 0, math.rad(90)),
-					Material = Enum.Material.Neon,
-					Color = Color3.fromRGB(255, 80, 140),
-				})
-			end
-		elseif roll < 0.84 then
-			-- A wall block sticking out from one side, or sitting in the middle.
-			local width = TRACK_WIDTH * rng:NextNumber(0.3, 0.42)
-			local kind = rng:NextInteger(1, 3)
-			local x0 = if kind == 1 then -HALF_WIDTH elseif kind == 2 then HALF_WIDTH - width else -width / 2
-			table.insert(self.Barriers, { X0 = x0, X1 = x0 + width, S0 = s - 1.5, S1 = s + 1.5 })
-			self:_part({
-				Name = "Barrier",
-				Size = Vector3.new(width, 4, 3),
-				CFrame = self:_at(x0 + width / 2, 2.5, s),
-				Material = Enum.Material.Brick,
-				Color = Color3.fromRGB(255, 170, 60),
-			})
-		else
-			-- No side walls here, and a bumper in the middle to make it interesting.
-			table.insert(self.Open, { S0 = s - OBSTACLE_SPACING / 2, S1 = s + OBSTACLE_SPACING / 2 })
-			table.insert(self.Bumpers, { X = 0, S = s })
-			self:_part({
-				Name = "Bumper",
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(3, BUMPER_RADIUS * 2, BUMPER_RADIUS * 2),
-				CFrame = self:_at(0, 2, s) * CFrame.Angles(0, 0, math.rad(90)),
-				Material = Enum.Material.Neon,
-				Color = Color3.fromRGB(255, 80, 140),
-			})
-			for _, side in { -1, 1 } do
-				self:_part({
-					Name = "EdgeWarning",
-					Size = Vector3.new(2, 0.2, OBSTACLE_SPACING),
-					CFrame = self:_at(side * (HALF_WIDTH - 1), 0.56, s),
-					Material = Enum.Material.Neon,
-					Color = Color3.fromRGB(255, 60, 60),
-				})
-			end
-		end
-		s += OBSTACLE_SPACING
+	for _, snow in layout.Snow do
+		self:_part({
+			Name = "SnowDrift",
+			Size = Vector3.new(Sim.SNOW_SIZE.X, 0.8, Sim.SNOW_SIZE.Y),
+			CFrame = self:_at(snow.X, 0.7, snow.S),
+			Color = Color3.fromRGB(255, 255, 255),
+		})
+	end
+	for _, puddle in layout.Puddles do
+		self:_part({
+			Name = "Puddle",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.2, Sim.PUDDLE_RADIUS * 2, Sim.PUDDLE_RADIUS * 2),
+			CFrame = self:_at(puddle.X, 0.56, puddle.S) * CFrame.Angles(0, 0, math.rad(90)),
+			Material = Enum.Material.Glass,
+			Color = Color3.fromRGB(40, 110, 220),
+			Transparency = 0.25,
+		})
+	end
+	for _, bumper in layout.Bumpers do
+		self:_part({
+			Name = "Bumper",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(3, Sim.BUMPER_RADIUS * 2, Sim.BUMPER_RADIUS * 2),
+			CFrame = self:_at(bumper.X, 2, bumper.S) * CFrame.Angles(0, 0, math.rad(90)),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(255, 80, 140),
+		})
+	end
+	for _, barrier in layout.Barriers do
+		self:_part({
+			Name = "Barrier",
+			Size = Vector3.new(barrier.X1 - barrier.X0, 4, barrier.S1 - barrier.S0),
+			CFrame = self:_at((barrier.X0 + barrier.X1) / 2, 2.5, (barrier.S0 + barrier.S1) / 2),
+			Material = Enum.Material.Brick,
+			Color = Color3.fromRGB(255, 170, 60),
+		})
 	end
 
-	-- Side walls everywhere except the open stretches.
-	local wallStart = -10
+	-- Side walls everywhere except the open stretches, which get a red warning stripe.
 	local function wall(s0: number, s1: number)
 		if s1 - s0 < 1 then
 			return
@@ -212,9 +160,19 @@ function IceDash:_buildTrack(rng)
 			})
 		end
 	end
-	for _, open in self.Open do
+	local wallStart = -10
+	for _, open in layout.Open do
 		wall(wallStart, open.S0)
 		wallStart = open.S1
+		for _, side in { -1, 1 } do
+			self:_part({
+				Name = "EdgeWarning",
+				Size = Vector3.new(2, 0.2, open.S1 - open.S0),
+				CFrame = self:_at(side * (HALF_WIDTH - 1), 0.56, (open.S0 + open.S1) / 2),
+				Material = Enum.Material.Neon,
+				Color = Color3.fromRGB(255, 60, 60),
+			})
+		end
 	end
 	wall(wallStart, TRACK_LENGTH + 50)
 
@@ -222,7 +180,7 @@ function IceDash:_buildTrack(rng)
 	local function gate(at: number, color: Color3, name: string)
 		self:_part({
 			Name = name,
-			Size = Vector3.new(TRACK_WIDTH, 0.2, 2),
+			Size = Vector3.new(width, 0.2, 2),
 			CFrame = self:_at(0, 0.58, at),
 			Material = Enum.Material.Neon,
 			Color = color,
@@ -238,18 +196,15 @@ function IceDash:_buildTrack(rng)
 		end
 		self:_part({
 			Name = name .. "Beam",
-			Size = Vector3.new(TRACK_WIDTH + 3, 1.5, 1.5),
+			Size = Vector3.new(width + 3, 1.5, 1.5),
 			CFrame = self:_at(0, 14.5, at),
 			Material = Enum.Material.Neon,
 			Color = color,
 		})
 	end
 	gate(0, Color3.fromRGB(255, 255, 255), "StartLine")
-	local checkpoint = CHECKPOINT_SPACING
-	while checkpoint < TRACK_LENGTH - 40 do
-		table.insert(self.Checkpoints, checkpoint)
+	for _, checkpoint in layout.Checkpoints do
 		gate(checkpoint, Color3.fromRGB(90, 255, 140), "Checkpoint")
-		checkpoint += CHECKPOINT_SPACING
 	end
 	gate(TRACK_LENGTH, Color3.fromRGB(255, 220, 60), "FinishLine")
 end
@@ -261,236 +216,30 @@ function IceDash:Setup(arena, participants, round)
 	self.Racers = {}
 	self.Anchored = {}
 	self.FinishCount = 0
-	self:_buildTrack(round.Rng)
+	self.Layout = Sim.generateLayout(round.Rng)
+	self:_buildTrack(self.Layout)
 
 	local spawns = {}
 	for index, participant in participants do
-		local lane = START_LANES[(index - 1) % #START_LANES + 1]
-		self.Racers[participant] = {
-			X = lane,
-			S = 3,
-			VX = 0,
-			VS = 0,
-			Left = false,
-			Right = false,
-			Lane = lane,
-			Checkpoint = 3,
-			State = "Racing", -- "Racing" | "Falling" | "Finished"
-			FallTime = 0,
-			RideHeight = 3.5,
-			FinishTime = nil,
-		}
-		spawns[index] = self:_at(lane, 4, 3)
+		local lane = Sim.START_LANES[(index - 1) % #Sim.START_LANES + 1]
+		local racer = Sim.newRacer(lane)
+		racer.IsBot = participant.IsBot
+		racer.Left = false -- bots only: held steer buttons
+		racer.Right = false
+		racer.RideHeight = 3.5
+		racer.FinishTime = nil
+		-- Players only: bookkeeping for checking their reports.
+		racer.ClientTime = 0
+		racer.Budget = SPEED_BURST
+		racer.FellAt = 0
+		racer.Violations = 0
+		self.Racers[participant] = racer
+		spawns[index] = self:_at(lane, 4, Sim.START_S)
 	end
 	return spawns
 end
 
--- Physics -----------------------------------------------------------------------------------
-
-function IceDash:_hasWall(s: number): boolean
-	for _, open in self.Open do
-		if s >= open.S0 and s <= open.S1 then
-			return false
-		end
-	end
-	return true
-end
-
--- Speed-cap and steering multipliers for whatever the racer is sliding over.
-function IceDash:_surface(x: number, s: number): (number, number)
-	local slow, steer = 1, 1
-	for _, snow in self.Snow do
-		if math.abs(x - snow.X) <= SNOW_SIZE.X / 2 and math.abs(s - snow.S) <= SNOW_SIZE.Y / 2 then
-			slow = math.min(slow, SNOW_SLOW)
-		end
-	end
-	for _, puddle in self.Puddles do
-		local dx, ds = x - puddle.X, s - puddle.S
-		if dx * dx + ds * ds <= PUDDLE_RADIUS * PUDDLE_RADIUS then
-			slow = math.min(slow, PUDDLE_SLOW)
-			steer = math.min(steer, PUDDLE_STEER)
-		end
-	end
-	return slow, steer
-end
-
--- Bounces the racer's velocity off a surface with normal (nx, ns).
-local function bounce(racer, nx: number, ns: number, bounciness: number, kick: number)
-	local into = racer.VX * nx + racer.VS * ns
-	if into < 0 then
-		racer.VX -= (1 + bounciness) * into * nx
-		racer.VS -= (1 + bounciness) * into * ns
-	end
-	racer.VX += nx * kick
-	racer.VS += ns * kick
-end
-
-function IceDash:_respawn(racer)
-	racer.State = "Racing"
-	racer.X = racer.Lane
-	racer.S = racer.Checkpoint
-	racer.VX = 0
-	racer.VS = 0
-	racer.FallTime = 0
-end
-
-function IceDash:_step(participant, racer, dt: number, elapsed: number)
-	if racer.State == "Falling" then
-		racer.FallTime += dt
-		racer.X += racer.VX * dt
-		racer.S += racer.VS * dt * 0.5
-		if racer.FallTime >= RESPAWN_DELAY then
-			self:_respawn(racer)
-		end
-		return
-	end
-	if racer.State == "Finished" then
-		-- Glide to a stop in the run-off area.
-		racer.VS *= math.exp(-2.5 * dt)
-		racer.VX *= math.exp(-3 * dt)
-		racer.X = math.clamp(racer.X + racer.VX * dt, -HALF_WIDTH + RACER_RADIUS, HALF_WIDTH - RACER_RADIUS)
-		racer.S = math.min(racer.S + racer.VS * dt, TRACK_LENGTH + 40)
-		return
-	end
-
-	local slow, steerGrip = self:_surface(racer.X, racer.S)
-	local steer = (if racer.Right then 1 else 0) - (if racer.Left then 1 else 0)
-
-	-- Sideways: push from steering, a little friction, lots of drift.
-	racer.VX += steer * STEER_ACCEL * steerGrip * dt
-	racer.VX *= math.exp(-ICE_FRICTION * dt)
-	racer.VX = math.clamp(racer.VX, -MAX_SIDE_SPEED, MAX_SIDE_SPEED)
-
-	-- Forward: always accelerating up to the cap of the surface you're on.
-	local cap = MAX_SPEED * slow
-	if racer.VS < cap then
-		racer.VS = math.min(cap, racer.VS + FORWARD_ACCEL * dt)
-	else
-		racer.VS = cap + (racer.VS - cap) * math.exp(-SLOW_DRAG * dt)
-	end
-
-	racer.X += racer.VX * dt
-	racer.S += racer.VS * dt
-
-	-- Bumpers: round, bouncy, and they kick.
-	for _, bumper in self.Bumpers do
-		local dx, ds = racer.X - bumper.X, racer.S - bumper.S
-		local reach = BUMPER_RADIUS + RACER_RADIUS
-		local distanceSquared = dx * dx + ds * ds
-		if distanceSquared < reach * reach then
-			local distance = math.sqrt(distanceSquared)
-			local nx, ns = 0, -1
-			if distance > 0.01 then
-				nx, ns = dx / distance, ds / distance
-			end
-			racer.X = bumper.X + nx * reach
-			racer.S = bumper.S + ns * reach
-			bounce(racer, nx, ns, BUMPER_BOUNCE, BUMPER_KICK)
-		end
-	end
-
-	-- Barrier blocks: bounce off whichever face you hit.
-	for _, barrier in self.Barriers do
-		local nearestX = math.clamp(racer.X, barrier.X0, barrier.X1)
-		local nearestS = math.clamp(racer.S, barrier.S0, barrier.S1)
-		local dx, ds = racer.X - nearestX, racer.S - nearestS
-		local distanceSquared = dx * dx + ds * ds
-		if distanceSquared < RACER_RADIUS * RACER_RADIUS then
-			local distance = math.sqrt(distanceSquared)
-			local nx, ns
-			if distance > 0.01 then
-				nx, ns = dx / distance, ds / distance
-			else
-				nx, ns = 0, -1 -- somehow inside: shove back the way you came
-			end
-			racer.X = nearestX + nx * RACER_RADIUS
-			racer.S = nearestS + ns * RACER_RADIUS
-			bounce(racer, nx, ns, WALL_BOUNCE, 0)
-		end
-	end
-	racer.VS = math.max(racer.VS, -MAX_SPEED * 0.6)
-	racer.S = math.max(racer.S, 1)
-
-	-- Edges: a wall bounces you back; no wall means a long drop.
-	local limit = HALF_WIDTH - RACER_RADIUS
-	if math.abs(racer.X) > limit then
-		if self:_hasWall(racer.S) then
-			local side = math.sign(racer.X)
-			racer.X = side * limit
-			if racer.VX * side > 0 then
-				racer.VX = -racer.VX * WALL_BOUNCE
-			end
-		elseif math.abs(racer.X) > HALF_WIDTH + 0.5 then
-			racer.State = "Falling"
-			racer.FallTime = 0
-			self.Round:Toast(("❄ %s slid off the edge"):format(participant.Name))
-			return
-		end
-	end
-
-	for _, checkpoint in self.Checkpoints do
-		if racer.S >= checkpoint and racer.Checkpoint < checkpoint then
-			racer.Checkpoint = checkpoint
-		end
-	end
-
-	if racer.S >= TRACK_LENGTH then
-		racer.State = "Finished"
-		racer.FinishTime = elapsed
-		self.FinishCount += 1
-		self.Round:Toast(("🏁 %s finished in %.1fs"):format(participant.Name, elapsed))
-		self.Round:ReportProgress(participant, self:_progressText(racer))
-	end
-end
-
--- Racers are solid to each other: overlapping pairs are pushed apart and trade momentum.
-function IceDash:_collideRacers(alive)
-	local reach = RACER_RADIUS * 2
-	for i = 1, #alive do
-		local a = self.Racers[alive[i]]
-		for j = i + 1, #alive do
-			local b = self.Racers[alive[j]]
-			if a.State == "Racing" and b.State == "Racing" then
-				local dx, ds = b.X - a.X, b.S - a.S
-				local distanceSquared = dx * dx + ds * ds
-				if distanceSquared < reach * reach then
-					local distance = math.sqrt(distanceSquared)
-					local nx, ns = 1, 0
-					if distance > 0.01 then
-						nx, ns = dx / distance, ds / distance
-					end
-					local overlap = (reach - distance) / 2
-					a.X -= nx * overlap
-					a.S -= ns * overlap
-					b.X += nx * overlap
-					b.S += ns * overlap
-					-- Equal masses: swap (most of) the speed along the line between them.
-					local closing = (a.VX - b.VX) * nx + (a.VS - b.VS) * ns
-					if closing > 0 then
-						local impulse = closing * (1 + RACER_BOUNCE) / 2
-						a.VX -= impulse * nx
-						a.VS -= impulse * ns
-						b.VX += impulse * nx
-						b.VS += impulse * ns
-					end
-				end
-			end
-		end
-	end
-end
-
--- Puts the character where the simulation says it is, leaning into the slide.
-function IceDash:_place(participant, racer)
-	local character = participant:GetCharacter()
-	if not character then
-		return
-	end
-	local drop = if racer.State == "Falling" then math.min(18, 40 * racer.FallTime * racer.FallTime) else 0
-	-- Lean sideways into the slide. No turning: the chase camera follows the way the body
-	-- faces, and it should keep looking straight down the track.
-	local lean = math.clamp(racer.VX / MAX_SIDE_SPEED, -1, 1) * 0.3
-	character:PivotTo(self:_at(racer.X, racer.RideHeight - drop, racer.S) * CFrame.Angles(0, 0, -lean))
-end
+-- Racing --------------------------------------------------------------------------------------
 
 function IceDash:_progressText(racer): string
 	if racer.FinishTime then
@@ -499,14 +248,159 @@ function IceDash:_progressText(racer): string
 	return ("%d%%"):format(math.clamp(racer.S / TRACK_LENGTH, 0, 0.99) * 100)
 end
 
+function IceDash:_finish(participant, racer)
+	racer.State = "Finished"
+	racer.FinishTime = os.clock() - self.StartedAt
+	self.FinishCount += 1
+	self.Round:Toast(("🏁 %s finished in %.1fs"):format(participant.Name, racer.FinishTime))
+	self.Round:ReportProgress(participant, self:_progressText(racer))
+end
+
+-- Puts the body where the server believes the racer is.
+function IceDash:_place(participant, racer)
+	local character = participant:GetCharacter()
+	if character then
+		local lean = math.clamp(racer.VX / Sim.MAX_SIDE_SPEED, -1, 1) * 0.3
+		character:PivotTo(
+			self:_at(racer.X, racer.RideHeight - Sim.fallDrop(racer), racer.S) * CFrame.Angles(0, 0, -lean)
+		)
+	end
+end
+
+-- Tells one client to drop its own idea of where it is and use the server's.
+function IceDash:_correct(participant, racer)
+	Net.minigameRemote():FireClient(participant.Player, {
+		Type = "Correct",
+		X = racer.X,
+		S = racer.S,
+		VX = racer.VX,
+		VS = racer.VS,
+		State = racer.State,
+		Checkpoint = racer.Checkpoint,
+	})
+end
+
+--[[
+	A player's client says "I am here, moving like this". Decide whether the rules allow that
+	given the last accepted state. Returns nil if fine, or a short reason if not.
+]]
+function IceDash:_checkReport(racer, x: number, s: number, vx: number, vs: number, dt: number): string?
+	local layout = self.Layout
+	-- One report can't move further than top speed (plus a bounce) allows.
+	if math.abs(s - racer.S) > (Sim.MAX_SPEED + Sim.BUMPER_KICK) * dt + STEP_SLACK then
+		return "jump"
+	end
+	if math.abs(x - racer.X) > (Sim.MAX_SIDE_SPEED + Sim.BUMPER_KICK) * dt + STEP_SLACK then
+		return "sidejump"
+	end
+	if math.abs(vx) > Sim.MAX_SIDE_SPEED + Sim.BUMPER_KICK + 1 or vs > Sim.MAX_SPEED + Sim.BUMPER_KICK + 1 then
+		return "velocity"
+	end
+	-- Sustained speed: forward travel is paid for out of a budget that refills at top speed.
+	local budget = math.min(SPEED_BURST, racer.Budget + Sim.MAX_SPEED * SPEED_TOLERANCE * dt)
+	if s > racer.S then
+		budget -= s - racer.S
+	end
+	if budget < 0 then
+		return "speed"
+	end
+	-- Solid things stay solid.
+	if Sim.hasWall(layout, s) and math.abs(x) > HALF_WIDTH - Sim.RACER_RADIUS + WALL_SLACK then
+		return "wall"
+	end
+	for _, barrier in layout.Barriers do
+		if
+			x > barrier.X0 + WALL_SLACK
+			and x < barrier.X1 - WALL_SLACK
+			and s > barrier.S0 + WALL_SLACK * 0.5
+			and s < barrier.S1 - WALL_SLACK * 0.5
+		then
+			return "barrier"
+		end
+	end
+	for _, bumper in layout.Bumpers do
+		local dx, ds = x - bumper.X, s - bumper.S
+		if dx * dx + ds * ds < (Sim.BUMPER_RADIUS * 0.5) ^ 2 then
+			return "bumper"
+		end
+	end
+	racer.Budget = budget
+	return nil
+end
+
+function IceDash:_validateReport(participant, racer, message)
+	local t, x, s, vx, vs = message.T, message.X, message.S, message.VX, message.VS
+	for _, value in { t, x, s, vx, vs } do
+		if type(value) ~= "number" or value ~= value or math.abs(value) > 1e5 then
+			return
+		end
+	end
+	if racer.State == "Finished" or self.Round.Ended or not self.StartedAt then
+		return
+	end
+	local elapsed = os.clock() - self.StartedAt
+	-- The client's race clock can't run ahead of real time (that would be a speed hack), and
+	-- reports can arrive out of order on the unreliable channel: drop stale ones.
+	if t <= racer.ClientTime then
+		return
+	end
+	if t > elapsed + CLOCK_SLACK then
+		racer.Violations += 1
+		racer.LastProblem = "clock"
+		self:_correct(participant, racer)
+		return
+	end
+	local dt = math.min(t - racer.ClientTime, 0.5)
+	racer.ClientTime = t
+
+	if racer.State == "Falling" then
+		-- The only way back is the checkpoint the server has on record.
+		if math.abs(s - racer.Checkpoint) < 3 and math.abs(x - racer.Lane) < 3 then
+			Sim.respawn(racer)
+			racer.Budget = SPEED_BURST
+		elseif os.clock() - racer.FellAt > Sim.RESPAWN_DELAY + RESPAWN_GRACE then
+			Sim.respawn(racer)
+			racer.Budget = SPEED_BURST
+			self:_correct(participant, racer)
+		else
+			racer.FallTime = os.clock() - racer.FellAt
+			racer.X = math.clamp(x, -HALF_WIDTH - 20, HALF_WIDTH + 20)
+		end
+		return
+	end
+
+	local problem = self:_checkReport(racer, x, s, vx, vs, dt)
+	if problem then
+		racer.Violations += 1
+		racer.LastProblem = problem
+		self:_correct(participant, racer)
+		return
+	end
+	racer.X, racer.S, racer.VX, racer.VS = x, s, vx, vs
+	racer.AcceptedAt = os.clock()
+
+	-- Checkpoints, falls and the finish are decided here, from accepted positions only.
+	racer.Checkpoint = math.max(racer.Checkpoint, Sim.checkpointFor(self.Layout, s))
+	if not Sim.hasWall(self.Layout, s) and math.abs(x) > HALF_WIDTH + 0.5 then
+		racer.State = "Falling"
+		racer.FallTime = 0
+		racer.FellAt = os.clock()
+		self.Round:Toast(("❄ %s slid off the edge"):format(participant.Name))
+	elseif s >= TRACK_LENGTH then
+		self:_finish(participant, racer)
+	end
+end
+
 -- Interface -----------------------------------------------------------------------------
 
 function IceDash:Start()
 	local round = self.Round
-	local startedAt = os.clock()
-	local nextReport = 0
+	self.StartedAt = os.clock()
+	local nextReport, nextSnapshot, nextPlace = 0, 0, 0
 
-	-- Take over the bodies: anchored, and moved by the simulation from here on.
+	-- Take over the bodies: anchored for the whole race. Clients position them every frame
+	-- (their own racer from local simulation, everyone else from snapshots).
+	local describe = {}
 	for _, participant in self.Participants do
 		local racer = self.Racers[participant]
 		local character = participant:GetCharacter()
@@ -517,7 +411,19 @@ function IceDash:Start()
 			root.Anchored = true
 			table.insert(self.Anchored, root)
 		end
+		table.insert(describe, {
+			Id = participant.Id,
+			Character = character,
+			Lane = racer.Lane,
+			RideHeight = racer.RideHeight,
+		})
 	end
+	Net.minigameRemote():FireAllClients({
+		Type = "Setup",
+		Layout = self.Layout,
+		Frame = self.Frame,
+		Racers = describe,
+	})
 	round:SetStatus("Steer! ◀ ▶")
 
 	table.insert(
@@ -528,14 +434,64 @@ function IceDash:Start()
 			end
 			dt = math.min(dt, 0.05)
 			local clock = os.clock()
-			local elapsed = clock - startedAt
 			local alive = round:GetAlive()
+
+			-- Bots run the shared rules here. Players are driven by their own reports.
 			for _, participant in alive do
-				self:_step(participant, self.Racers[participant], dt, elapsed)
+				local racer = self.Racers[participant]
+				if racer.IsBot then
+					local steer = (if racer.Right then 1 else 0) - (if racer.Left then 1 else 0)
+					local event = Sim.step(self.Layout, racer, steer, dt)
+					if event == "fell" then
+						round:Toast(("❄ %s slid off the edge"):format(participant.Name))
+					elseif event == "finished" then
+						self:_finish(participant, racer)
+					end
+				elseif racer.State == "Falling" then
+					racer.FallTime = clock - racer.FellAt
+				end
 			end
-			self:_collideRacers(alive)
-			for _, participant in alive do
-				self:_place(participant, self.Racers[participant])
+			-- Bots bump into everyone; a player's own client handles the player's half.
+			for i = 1, #alive do
+				local a = self.Racers[alive[i]]
+				for j = i + 1, #alive do
+					local b = self.Racers[alive[j]]
+					if a.IsBot or b.IsBot then
+						Sim.collide(a, b, a.IsBot, b.IsBot)
+					end
+				end
+			end
+
+			if clock >= nextSnapshot then
+				nextSnapshot = clock + 1 / SNAPSHOT_RATE
+				local racers = {}
+				for _, participant in self.Participants do
+					local racer = self.Racers[participant]
+					local x, s = racer.X, racer.S
+					if not racer.IsBot and racer.State == "Racing" and racer.AcceptedAt then
+						-- A player's report is a little old by now: project it to this instant,
+						-- so everyone else sees steady motion instead of stair-steps.
+						local age = math.min(clock - racer.AcceptedAt, MAX_REPORT_AGE)
+						x += racer.VX * age
+						s += racer.VS * age
+					end
+					table.insert(racers, {
+						participant.Id,
+						x,
+						s,
+						racer.VX,
+						racer.VS,
+						if racer.State == "Falling" then racer.FallTime else -1,
+					})
+				end
+				Net.minigameFastRemote():FireAllClients({ T = clock, R = racers })
+			end
+
+			if clock >= nextPlace then
+				nextPlace = clock + 1 / FALLBACK_PLACE_RATE
+				for _, participant in alive do
+					self:_place(participant, self.Racers[participant])
+				end
 			end
 
 			if clock >= nextReport then
@@ -545,16 +501,17 @@ function IceDash:Start()
 				end
 			end
 
-			if self.FinishCount >= #round:GetAlive() then
+			if self.FinishCount >= #alive then
 				round:End("Finish")
 			end
 		end)
 	)
 end
 
+-- Bots steer through the normal input path. Players steer on their own client.
 function IceDash:OnInput(participant, action)
 	local racer = self.Racers[participant]
-	if not racer then
+	if not racer or not racer.IsBot then
 		return
 	end
 	if action == "Left" then
@@ -568,6 +525,31 @@ function IceDash:OnInput(participant, action)
 	end
 end
 
+-- A state report from a player's client (see client/Minigames/IceDash).
+function IceDash:OnClientMessage(participant, message)
+	local racer = self.Racers[participant]
+	if racer and not racer.IsBot and type(message) == "table" then
+		self:_validateReport(participant, racer, message)
+	end
+end
+
+-- The round is over: put every body where the server has it, for everyone.
+function IceDash:OnRoundEnding(_reason)
+	for _, participant in self.Participants do
+		local racer = self.Racers[participant]
+		self:_place(participant, racer)
+		if racer.Violations > 0 then
+			print(
+				("[IceDash] %s: %d report(s) rejected (last: %s)"):format(
+					participant.Name,
+					racer.Violations,
+					tostring(racer.LastProblem)
+				)
+			)
+		end
+	end
+end
+
 --[[
 	Bot behaviour: look a little way down the track, score a handful of lines across it
 	(bumpers and walls are terrible, snow and puddles are bad, the edge of an open stretch is
@@ -575,37 +557,38 @@ end
 	far ahead, misjudge their drift, re-plan less often and sometimes just pick a bad line.
 ]]
 function IceDash:_lineCost(me, x: number, fromS: number, toS: number): number
+	local layout = self.Layout
 	local cost = 0
-	local margin = RACER_RADIUS + 1.2
+	local margin = Sim.RACER_RADIUS + 1.2
 	-- Don't tuck in right behind (or drive into) another racer.
 	for _, other in self.Racers do
 		if other ~= me and other.State == "Racing" and other.S > fromS - 3 and other.S < fromS + 14 then
-			if math.abs(x - other.X) < RACER_RADIUS * 2 + 0.5 then
+			if math.abs(x - other.X) < Sim.RACER_RADIUS * 2 + 0.5 then
 				cost += 45
 			end
 		end
 	end
-	for _, bumper in self.Bumpers do
-		if bumper.S > fromS and bumper.S < toS and math.abs(x - bumper.X) < BUMPER_RADIUS + margin then
+	for _, bumper in layout.Bumpers do
+		if bumper.S > fromS and bumper.S < toS and math.abs(x - bumper.X) < Sim.BUMPER_RADIUS + margin then
 			cost += 120
 		end
 	end
-	for _, barrier in self.Barriers do
+	for _, barrier in layout.Barriers do
 		if barrier.S1 > fromS and barrier.S0 < toS and x > barrier.X0 - margin and x < barrier.X1 + margin then
 			cost += 150
 		end
 	end
-	for _, snow in self.Snow do
-		if snow.S > fromS - 4 and snow.S < toS and math.abs(x - snow.X) < SNOW_SIZE.X / 2 + 1 then
+	for _, snow in layout.Snow do
+		if snow.S > fromS - 4 and snow.S < toS and math.abs(x - snow.X) < Sim.SNOW_SIZE.X / 2 + 1 then
 			cost += 35
 		end
 	end
-	for _, puddle in self.Puddles do
-		if puddle.S > fromS - 4 and puddle.S < toS and math.abs(x - puddle.X) < PUDDLE_RADIUS + 1 then
+	for _, puddle in layout.Puddles do
+		if puddle.S > fromS - 4 and puddle.S < toS and math.abs(x - puddle.X) < Sim.PUDDLE_RADIUS + 1 then
 			cost += 28
 		end
 	end
-	for _, open in self.Open do
+	for _, open in layout.Open do
 		if open.S1 > fromS and open.S0 < toS and math.abs(x) > HALF_WIDTH - 6 then
 			cost += 70
 		end
@@ -626,7 +609,7 @@ function IceDash:UpdateBot(bot, _dt)
 		local lookAhead = 24 + bot.Skill * 30
 		if math.random() < (1 - bot.Skill) * 0.07 then
 			-- Brain fart: commit to a random line for a moment.
-			memory.TargetX = (math.random() - 0.5) * (TRACK_WIDTH - 6)
+			memory.TargetX = (math.random() - 0.5) * (Sim.TRACK_WIDTH - 6)
 			memory.PlanAt = clock + 0.7
 		else
 			local best, bestCost = racer.X, math.huge
