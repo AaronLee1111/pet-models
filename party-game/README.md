@@ -89,6 +89,22 @@ Coins by placement are set in `Config.CoinsByPlacement = { 10, 6, 3, 1 }`. Ties 
 If a module is broken (missing a function, bad `Layout`/`Camera`), the server prints
 `[MinigameManager] Skipping minigame X: <why>` and the rest of the game keeps working.
 
+## Testing under lag
+
+Ice Dash moves each player's racer on their own client and smooths everyone else, so it
+needs checking with real latency. `tests/lag` builds a place with a small measuring harness:
+
+1. `rojo build tests/lag/lag.project.json -o LagTest.rbxlx` (delete the other minigame
+   modules from a copy first if you want Ice Dash every round).
+2. Quit Studio, set `IncomingReplicationLag` (seconds, each way) in
+   `~/Library/Roblox/GlobalSettings_13.xml` (Studio Settings > Network on Windows), reopen
+   Studio with the place. Studio only reads the value at startup.
+3. In the command bar: `print(game:GetService("StudioTestService"):ExecuteMultiplayerTestAsync(2))`.
+   One server and two clients play a round; the result lists, per client, how smoothly its
+   own racer, the other player and a bot were drawn, plus input latency.
+4. Keep Studio in the foreground while it runs: background windows are throttled to ~15 fps.
+5. Set `IncomingReplicationLag` back to 0 afterwards.
+
 ## Tests and lint
 
 - `lune run tests/sim [seed] [-v]`: headless end-to-end run on a mock engine with virtual time.
