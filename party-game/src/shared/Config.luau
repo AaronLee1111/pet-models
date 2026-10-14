@@ -86,6 +86,7 @@ Config.BotNames = {
 -- Networking -------------------------------------------------------------------
 
 Config.InputRateLimit = 20 -- max inputs per second per player before they are dropped
+Config.MinigameMessageRateLimit = 40 -- same, for messages a minigame's own client code sends
 
 -- The extra vote card shown when there are fewer minigames than Config.VoteChoices.
 Config.RandomChoice = {

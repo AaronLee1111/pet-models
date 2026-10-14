@@ -22,6 +22,8 @@
 	                               Side = "Left"           on-screen button goes bottom-left
 	    },
 	    ProgressLabel = "Score",   optional default label for the player chips
+	    ClientModule = "IceDash",  optional: name of a module in client/Minigames that Main starts
+	                               for the round (its messages arrive in OnClientMessage)
 	    ProgressBar = true,        optional: show a race bar along the top instead of the chips;
 	                               report values like "37%" (anything with 🏁 counts as 100%)
 	  }
@@ -116,6 +118,7 @@ function MinigameInfo.normalize(id: string, info)
 		Controls = controls,
 		ProgressLabel = info.ProgressLabel,
 		ProgressBar = info.ProgressBar == true,
+		ClientModule = if type(info.ClientModule) == "string" then info.ClientModule else nil,
 	}
 end
 

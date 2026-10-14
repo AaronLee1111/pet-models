@@ -6,6 +6,15 @@
 	  PartyInput  (client -> server): inputs only (ready / vote / minigame action).
 	                                  The server validates every one of them.
 
+	Two more remotes exist for minigames that run their own client code (Info.ClientModule):
+
+	  PartyMinigame      reliable, both ways: setup data, corrections
+	  PartyMinigameFast  unreliable, both ways: high-rate state (positions) where a lost
+	                     packet doesn't matter because a newer one is right behind it
+
+	Whatever a client sends on these goes to the active minigame's OnClientMessage, which
+	must treat it as untrusted.
+
 	The server creates the remotes; clients wait for them.
 ]]
 
@@ -56,12 +65,12 @@ local function getFolder(): Instance
 	return ReplicatedStorage:WaitForChild(FOLDER_NAME)
 end
 
-local function getRemote(name: string): RemoteEvent
+local function getRemote(name: string, className: string?): RemoteEvent
 	local folder = getFolder()
 	if RunService:IsServer() then
 		local remote = folder:FindFirstChild(name)
 		if not remote then
-			remote = Instance.new("RemoteEvent")
+			remote = Instance.new(className or "RemoteEvent")
 			remote.Name = name
 			remote.Parent = folder
 		end
@@ -76,6 +85,14 @@ end
 
 function Net.inputRemote(): RemoteEvent
 	return getRemote("PartyInput")
+end
+
+function Net.minigameRemote(): RemoteEvent
+	return getRemote("PartyMinigame")
+end
+
+function Net.minigameFastRemote(): UnreliableRemoteEvent
+	return getRemote("PartyMinigameFast", "UnreliableRemoteEvent") :: any
 end
 
 return Net

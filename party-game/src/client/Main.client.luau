@@ -33,7 +33,38 @@ local function sendInput(payload)
 	inputRemote:FireServer(payload)
 end
 
+-- Some minigames run their own client code for the round (Info.ClientModule), e.g. Ice Dash
+-- simulates your racer locally. Those modules live in the Minigames folder next to this script.
+local minigameClients = script.Parent:FindFirstChild("Minigames")
+local activeMinigameClient = nil
+
+local function stopMinigameClient()
+	if activeMinigameClient then
+		local client = activeMinigameClient
+		activeMinigameClient = nil
+		client.stop()
+	end
+end
+
+local function startMinigameClient(name: string?)
+	stopMinigameClient()
+	local module = name and minigameClients and minigameClients:FindFirstChild(name)
+	if module and module:IsA("ModuleScript") then
+		local ok, client = pcall(require, module)
+		if ok and type(client) == "table" then
+			activeMinigameClient = client
+			client.start()
+		else
+			warn("[PartyClient] Could not load minigame client " .. tostring(name) .. ": " .. tostring(client))
+		end
+	end
+end
+
 local function sendAction(action: string)
+	-- The minigame's client code gets first go; if it handles the action, the server needn't hear.
+	if activeMinigameClient and activeMinigameClient.onAction and activeMinigameClient.onAction(action) then
+		return
+	end
 	sendInput({ Kind = Net.Input.Action, Action = action })
 end
 
@@ -135,12 +166,14 @@ local function beginRound(message)
 	inRound = true
 	amParticipant = isParticipant(message.Participants)
 	useProgressBar = message.Minigame.ProgressBar == true
+	startMinigameClient(message.Minigame.ClientModule)
 	CameraController.start(message.Minigame.Camera, message.ArenaOrigin)
 	CameraController.setSpectating(not amParticipant)
 end
 
 local function endRound()
 	inRound = false
+	stopMinigameClient()
 	Controls.unbind()
 	CameraController.stop()
 	spectatorBar:hide()
@@ -224,6 +257,7 @@ phaseHandlers[Phase.Playing] = function(message)
 end
 
 phaseHandlers[Phase.Finished] = function(_message)
+	stopMinigameClient() -- hand the bodies back to the server before it sends everyone home
 	Controls.unbind()
 	hud:setTimer(nil)
 	hud:showBanner("FINISH!", Theme.Colors.Hot, 1.5)

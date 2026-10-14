@@ -551,6 +551,36 @@ function MinigameManager.init()
 	loadMinigames()
 	BotService.setActionHandler(submitAction)
 
+	-- Messages from a minigame's own client code go to the running minigame, rate limited.
+	-- The minigame must validate them: they are whatever the client chose to send.
+	local messageBuckets: { [Player]: { Start: number, Count: number } } = {}
+	local function onMinigameMessage(player: Player, payload)
+		local clock = os.clock()
+		local bucket = messageBuckets[player]
+		if not bucket or clock - bucket.Start >= 1 then
+			bucket = { Start = clock, Count = 0 }
+			messageBuckets[player] = bucket
+		end
+		bucket.Count += 1
+		if bucket.Count > Config.MinigameMessageRateLimit then
+			return
+		end
+		local active = state.Active
+		local participant = state.ByPlayer[player]
+		if not active or not participant or state.PhaseMessage.Phase ~= Net.Phase.Playing or active.Round.Ended then
+			return
+		end
+		if active.Round:IsEliminated(participant) then
+			return
+		end
+		safeCall(active.Instance, "OnClientMessage", participant, payload)
+	end
+	Net.minigameRemote().OnServerEvent:Connect(onMinigameMessage)
+	Net.minigameFastRemote().OnServerEvent:Connect(onMinigameMessage)
+	Players.PlayerRemoving:Connect(function(player)
+		messageBuckets[player] = nil
+	end)
+
 	-- Rate limit: at most Config.InputRateLimit inputs per player per second.
 	local buckets: { [Player]: { Start: number, Count: number } } = {}
 	inputRemote.OnServerEvent:Connect(function(player: Player, payload)
