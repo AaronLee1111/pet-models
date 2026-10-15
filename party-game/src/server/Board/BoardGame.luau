@@ -21,9 +21,11 @@ local Net = require(ReplicatedStorage.PartyShared.Net)
 local Arena = require(script.Parent.Parent.Arena)
 local BotService = require(script.Parent.Parent.BotService)
 local CoinService = require(script.Parent.Parent.CoinService)
+local CosmeticService = require(script.Parent.Parent.CosmeticService)
 local Inventory = require(script.Parent.Parent.Inventory)
 local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
+local Profiles = require(script.Parent.Parent.Profiles)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -559,10 +561,21 @@ function BoardGame.play(participants, settings)
 	})
 	task.wait(Config.Match.BonusDuration)
 
+	-- Permanent bank coins for real players (the only thing a match writes to a profile).
 	local rows = match:standings()
+	local described = describeRows(rows)
+	for index, row in rows do
+		local player = row.Participant.Player
+		local amount = Config.Profile.BankCoinsByPlacement[row.Placement] or 0
+		if player and player.Parent and not row.Participant.Left and amount > 0 then
+			Profiles.addBankCoins(player, amount)
+			described[index].BankCoins = amount
+			CosmeticService.sendInventory(player)
+		end
+	end
 	MinigameManager.setPhase(Net.Phase.Standings, {
 		Stage = "Final",
-		Rows = describeRows(rows),
+		Rows = described,
 		CollectiblePlural = Config.Collectible.Plural,
 		EndsAt = now() + Config.Match.StandingsDuration,
 	})

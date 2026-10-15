@@ -150,7 +150,7 @@ function StandingsScreen:show(message, myId: string)
 			Position = UDim2.fromScale(0.8, 0),
 			Size = UDim2.fromScale(0.2, 1),
 			TextColor3 = Theme.Colors.Muted,
-			Text = ("%d coins"):format(row.Coins),
+			Text = ("%d coins"):format(row.Coins) .. (if isMe and row.BankCoins then ("\n+%d bank"):format(row.BankCoins) else ""),
 			Parent = frame,
 		}, 22)
 	end
