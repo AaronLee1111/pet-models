@@ -1013,9 +1013,11 @@ local Net = require(ReplicatedStorage.PartyShared.Net)
 local Arena = require(script.Parent.Parent.Arena)
 local BotService = require(script.Parent.Parent.BotService)
 local CoinService = require(script.Parent.Parent.CoinService)
+local CosmeticService = require(script.Parent.Parent.CosmeticService)
 local Inventory = require(script.Parent.Parent.Inventory)
 local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
+local Profiles = require(script.Parent.Parent.Profiles)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -1551,10 +1553,21 @@ function BoardGame.play(participants, settings)
 	})
 	task.wait(Config.Match.BonusDuration)
 
+	-- Permanent bank coins for real players (the only thing a match writes to a profile).
 	local rows = match:standings()
+	local described = describeRows(rows)
+	for index, row in rows do
+		local player = row.Participant.Player
+		local amount = Config.Profile.BankCoinsByPlacement[row.Placement] or 0
+		if player and player.Parent and not row.Participant.Left and amount > 0 then
+			Profiles.addBankCoins(player, amount)
+			described[index].BankCoins = amount
+			CosmeticService.sendInventory(player)
+		end
+	end
 	MinigameManager.setPhase(Net.Phase.Standings, {
 		Stage = "Final",
-		Rows = describeRows(rows),
+		Rows = described,
 		CollectiblePlural = Config.Collectible.Plural,
 		EndsAt = now() + Config.Match.StandingsDuration,
 	})
@@ -4056,11 +4069,13 @@ local BotService = require(script.Parent.BotService)
 local CosmeticService = require(script.Parent.CosmeticService)
 local MinigameManager = require(script.Parent.MinigameManager)
 local Participant = require(script.Parent.Participant)
+local Profiles = require(script.Parent.Profiles)
 local WaitingRoom = require(script.Parent.WaitingRoom)
 
 Arena.ensureLobby()
 MinigameManager.init()
-CosmeticService.start(MinigameManager.sendTo)
+Profiles.start() -- before cosmetics: a profile's cosmetics attach to Inventory on join
+CosmeticService.start(MinigameManager.sendTo, Profiles.bankCoins)
 MinigameManager.onReady(CosmeticService.sendInventory)
 MinigameManager.setInputHandler(function(player, payload)
 	return WaitingRoom.handleInput(player, payload)
@@ -7767,6 +7782,284 @@ return Participant
       </Item>
       <Item class="ModuleScript" referent="37">
         <Properties>
+          <string name="Name">Profiles</string>
+          <string name="Source"><![CDATA[--[[
+	Profiles
+	The game's door to permanent player data (ProfileStore). Loads a profile when a player
+	joins, hands their cosmetic tables to Inventory, and saves when they leave or the server
+	closes. Bots never have profiles.
+
+	  Profiles.start()                    call once from Main
+	  Profiles.get(player) -> profile?    { Coins, Owned, Equipped } (see ProfileStore)
+	  Profiles.addBankCoins(player, n)    permanent coins
+	  Profiles.bankCoins(player) -> number
+
+	Backend: Config.Profile.Backend ("Memory" now; "DataStore" once DataStoreBackend is done).
+	Real saving plugs in ONLY in DataStoreBackend.luau; nothing else needs to change.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Inventory = require(script.Parent.Inventory)
+local DataStoreBackend = require(script.DataStoreBackend)
+local MemoryBackend = require(script.MemoryBackend)
+local ProfileStore = require(script.ProfileStore)
+
+local Profiles = {}
+
+Profiles.ProfileStore = ProfileStore
+Profiles.MemoryBackend = MemoryBackend
+
+local backend = if Config.Profile.Backend == "DataStore" then DataStoreBackend.new() else MemoryBackend.new()
+Profiles.store = ProfileStore.new(backend)
+
+local function keyOf(player: Player): string
+	return "player_" .. player.UserId
+end
+
+function Profiles.get(player: Player)
+	return Profiles.store:get(keyOf(player))
+end
+
+function Profiles.bankCoins(player: Player): number
+	local profile = Profiles.get(player)
+	return if profile then profile.Coins else 0
+end
+
+function Profiles.addBankCoins(player: Player, amount: number): number
+	return Profiles.store:addCoins(keyOf(player), amount)
+end
+
+local function onJoin(player: Player)
+	local key = keyOf(player)
+	local profile = Profiles.store:load(key)
+	if not player.Parent then
+		Profiles.store:release(key) -- left while loading
+		return
+	end
+	-- Inventory edits these tables directly, so cosmetics bought in a match are saved too.
+	Inventory.attach(key, profile.Owned, profile.Equipped)
+end
+
+function Profiles.start()
+	Players.PlayerAdded:Connect(onJoin)
+	for _, player in Players:GetPlayers() do
+		task.spawn(onJoin, player)
+	end
+	Players.PlayerRemoving:Connect(function(player)
+		Profiles.store:release(keyOf(player))
+	end)
+	game:BindToClose(function()
+		for _, player in Players:GetPlayers() do
+			Profiles.store:save(keyOf(player))
+		end
+	end)
+end
+
+return Profiles
+]]></string>
+        </Properties>
+        <Item class="ModuleScript" referent="38">
+          <Properties>
+            <string name="Name">DataStoreBackend</string>
+            <string name="Source"><![CDATA[--[[
+	DataStoreBackend  (NOT ENABLED)
+	Where real saving plugs in. Config.Profile.Backend = "DataStore" selects it; until it is
+	finished, read/write refuse to run so nothing is ever written by accident.
+
+	To finish it (one place, nothing else in the game needs to change):
+	  1. read(key):  DataStoreService:GetDataStore("PartyProfiles_v1"):GetAsync(key)
+	                 Retry a few times with backoff; return nil for a new player.
+	  2. write(key, data):  store:UpdateAsync(key, function() return data end)
+	                 UpdateAsync, not SetAsync, so concurrent servers can't clobber each other.
+	  3. Session locking: store the JobId + a timestamp in the record inside UpdateAsync and
+	     refuse to load a profile another live server still holds (or use a profile library).
+	  4. Autosave every few minutes from Profiles (init.luau), and save everyone in
+	     game:BindToClose (already wired there; it calls ProfileStore:save for each player).
+	  5. Studio: DataStores need "Enable Studio Access to API Services"; keep using the
+	     Memory backend for normal Studio testing.
+	Keys are "player_<UserId>". The data shape and migrations live in ProfileStore.reconcile.
+]]
+
+local DataStoreBackend = {}
+DataStoreBackend.__index = DataStoreBackend
+
+function DataStoreBackend.new()
+	return setmetatable({}, DataStoreBackend)
+end
+
+function DataStoreBackend:read(_key: string)
+	error("DataStore saving is not enabled yet (see DataStoreBackend.luau)")
+end
+
+function DataStoreBackend:write(_key: string, _data)
+	error("DataStore saving is not enabled yet (see DataStoreBackend.luau)")
+end
+
+return DataStoreBackend
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="39">
+          <Properties>
+            <string name="Name">MemoryBackend</string>
+            <string name="Source"><![CDATA[--[[
+	MemoryBackend
+	Keeps profiles in a Lua table: survives players leaving and rejoining the same server,
+	gone when the server shuts down. Used in Studio and the unit tests.
+]]
+
+local ProfileStore = require(script.Parent.ProfileStore)
+
+local MemoryBackend = {}
+MemoryBackend.__index = MemoryBackend
+
+function MemoryBackend.new()
+	return setmetatable({ Data = {}, Writes = 0 }, MemoryBackend)
+end
+
+function MemoryBackend:read(key: string)
+	return ProfileStore.deepCopy(self.Data[key])
+end
+
+function MemoryBackend:write(key: string, data)
+	self.Writes += 1
+	self.Data[key] = ProfileStore.deepCopy(data)
+end
+
+return MemoryBackend
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="40">
+          <Properties>
+            <string name="Name">ProfileStore</string>
+            <string name="Source"><![CDATA[--[[
+	ProfileStore
+	Permanent per-player data, behind a swappable storage backend. Only things that should
+	survive between matches and sessions live here:
+
+	  Version    schema version (bump + handle in reconcile when the shape changes)
+	  Coins      permanent "bank" coins (NOT match coins: those live in CoinService and reset)
+	  Owned      { [cosmeticId] = true }
+	  Equipped   { [slot] = cosmeticId }
+
+	Match coins, Crowns, board items and stats are never written here.
+
+	A backend is any table with:
+	  read(key)        -> data table or nil (may yield; may error)
+	  write(key, data) -> () (may yield; may error)
+	MemoryBackend is used in Studio and tests; DataStoreBackend is where real saving goes.
+]]
+
+local ProfileStore = {}
+ProfileStore.__index = ProfileStore
+
+ProfileStore.Version = 1
+
+function ProfileStore.template()
+	return { Version = ProfileStore.Version, Coins = 0, Owned = {}, Equipped = {} }
+end
+
+local function deepCopy(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local copy = {}
+	for key, inner in value do
+		copy[key] = deepCopy(inner)
+	end
+	return copy
+end
+ProfileStore.deepCopy = deepCopy
+
+-- Fills in missing fields and drops anything malformed, so old or damaged saves still load.
+function ProfileStore.reconcile(data)
+	local profile = ProfileStore.template()
+	if type(data) ~= "table" then
+		return profile
+	end
+	if type(data.Coins) == "number" and data.Coins >= 0 then
+		profile.Coins = math.floor(data.Coins)
+	end
+	if type(data.Owned) == "table" then
+		for id, owned in data.Owned do
+			if type(id) == "string" and owned == true then
+				profile.Owned[id] = true
+			end
+		end
+	end
+	if type(data.Equipped) == "table" then
+		for slot, id in data.Equipped do
+			if type(slot) == "string" and type(id) == "string" and profile.Owned[id] then
+				profile.Equipped[slot] = id
+			end
+		end
+	end
+	-- Future: if (data.Version or 0) < 2 then migrate ... end
+	return profile
+end
+
+function ProfileStore.new(backend)
+	return setmetatable({ Backend = backend, Loaded = {} }, ProfileStore)
+end
+
+-- Loads (or creates) a profile. On a backend error the player gets a fresh profile that is
+-- marked so it's never saved over their real data.
+function ProfileStore:load(key: string)
+	local ok, data = pcall(self.Backend.read, self.Backend, key)
+	local profile = ProfileStore.reconcile(if ok then data else nil)
+	local entry = { Data = profile, CanSave = ok }
+	if not ok then
+		warn(("[Profiles] Could not load %s, playing without saving: %s"):format(key, tostring(data)))
+	end
+	self.Loaded[key] = entry
+	return profile
+end
+
+function ProfileStore:get(key: string)
+	local entry = self.Loaded[key]
+	return entry and entry.Data
+end
+
+function ProfileStore:save(key: string): boolean
+	local entry = self.Loaded[key]
+	if not entry or not entry.CanSave then
+		return false
+	end
+	local ok, err = pcall(self.Backend.write, self.Backend, key, deepCopy(entry.Data))
+	if not ok then
+		warn(("[Profiles] Could not save %s: %s"):format(key, tostring(err)))
+	end
+	return ok
+end
+
+-- Saves and forgets a profile (player left).
+function ProfileStore:release(key: string): boolean
+	local saved = self:save(key)
+	self.Loaded[key] = nil
+	return saved
+end
+
+-- Permanent bank coins (never negative).
+function ProfileStore:addCoins(key: string, amount: number): number
+	local profile = self:get(key)
+	if not profile then
+		return 0
+	end
+	profile.Coins = math.max(0, profile.Coins + math.floor(amount))
+	return profile.Coins
+end
+
+return ProfileStore
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="41">
+        <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
 	ResultsUtil
@@ -7881,7 +8174,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="38">
+      <Item class="ModuleScript" referent="42">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -8006,7 +8299,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="39">
+      <Item class="ModuleScript" referent="43">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -8110,19 +8403,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="40">
+  <Item class="StarterPlayer" referent="44">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="41">
+    <Item class="StarterPlayerScripts" referent="45">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="42">
+      <Item class="Folder" referent="46">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -8345,7 +8638,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -8456,7 +8749,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="45">
+        <Item class="LocalScript" referent="49">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -8827,11 +9120,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="46">
+        <Item class="Folder" referent="50">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="47">
+          <Item class="ModuleScript" referent="51">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -9116,7 +9409,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="48">
+          <Item class="ModuleScript" referent="52">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -9372,11 +9665,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="49">
+        <Item class="Folder" referent="53">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="50">
+          <Item class="ModuleScript" referent="54">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -9524,7 +9817,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="51">
+          <Item class="ModuleScript" referent="55">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -9981,7 +10274,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="52">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -10206,7 +10499,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="53">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -10353,7 +10646,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -10595,7 +10888,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -10710,7 +11003,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -10847,7 +11140,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -10965,7 +11258,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -11054,7 +11347,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11209,7 +11502,7 @@ function StandingsScreen:show(message, myId: string)
 			Position = UDim2.fromScale(0.8, 0),
 			Size = UDim2.fromScale(0.2, 1),
 			TextColor3 = Theme.Colors.Muted,
-			Text = ("%d coins"):format(row.Coins),
+			Text = ("%d coins"):format(row.Coins) .. (if isMe and row.BankCoins then ("\n+%d bank"):format(row.BankCoins) else ""),
 			Parent = frame,
 		}, 22)
 	end
@@ -11225,7 +11518,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -11343,7 +11636,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11520,18 +11813,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="62">
+  <Item class="Workspace" referent="66">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="63">
+    <Item class="Model" referent="67">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="64">
+      <Item class="Part" referent="68">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -11551,7 +11844,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="65">
+      <Item class="SpawnLocation" referent="69">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
