@@ -1,8 +1,12 @@
 # Party Games (working title)
 
-A 4-player party-game prototype for Roblox: lobby vote → arena → 3-2-1 → minigame →
-results and coins → back to the lobby. Bots fill any empty seats. The server owns all game
-state, and clients only send inputs.
+A 4-player board-and-minigame party game for Roblox. A match goes:
+
+waiting room (the host picks rounds and bot difficulty) → **board rounds** (each seat rolls a die,
+moves and resolves the space it lands on) → a **minigame** after every full turn cycle → repeat for
+the chosen number of rounds → **final standings** (most Crowns wins, coins break ties) → back to
+the waiting room. Bots fill empty seats and take over from players who leave. The server owns all
+game state; clients only send inputs.
 
 Six placeholder minigames exercise the framework:
 
@@ -19,7 +23,8 @@ Six placeholder minigames exercise the framework:
 
 **Option A: open the prebuilt place (no plugins needed)**
 1. Open `party-game/MemeParty.rbxlx` in Roblox Studio.
-2. Press **Play** (F5). You are seated with 3 bots, and the vote opens after about 5 s.
+2. Press **Play** (F5). The waiting room counts down 15 s (as host you can change the settings or
+   press START), then you're seated with 3 bots on the board. Press ROLL (or Space) on your turn.
 3. To test touch controls: **Test → Device** → pick a phone, then Play.
 
 **Option B: live sync with Rojo**
@@ -28,6 +33,56 @@ Six placeholder minigames exercise the framework:
    - With no `SpawnLocation` in the place, a lobby is built automatically.
 
 Rebuild the place file after changing code with `rojo build place.project.json -o MemeParty.rbxlx`.
+
+## Board game
+
+| Piece | File |
+|---|---|
+| Match loop (waiting room → match → back) | `src/server/Main.server.luau` |
+| Waiting room + host settings | `src/server/WaitingRoom.luau` |
+| Turns, timing, prompts, bots, seats, world | `src/server/Board/BoardGame.luau` |
+| Rules only (testable): movement, forks, collectible, shop, rewards, standings | `src/server/Board/Match.luau` |
+| Board layouts | `src/server/Board/Boards/*.luau` |
+| Space types (look + effect) | `src/server/Board/SpaceTypes.luau` |
+| Events | `src/server/Board/Events.luau` |
+| Coins + Crowns wallets | `src/server/CoinService.luau` |
+| Cosmetic catalog / ownership | `src/shared/Cosmetics.luau`, `src/server/Inventory.luau` |
+| Prices, rewards, timings, round counts | `Config.Match`, `Config.Board`, `Config.Collectible`, `Config.Economy` |
+| Client UI | `src/client/UI/BoardView.luau`, `LobbyPanel.luau`, `StandingsScreen.luau` |
+
+Crowns are the placeholder name for the main collectible (`Config.Collectible`). Passing or
+landing on the Crown's space offers it for `Price` coins; after a purchase it moves to another of
+the board's `CrownSpaces`. Coins and Crowns reset every match. Cosmetics are session-only and
+nothing is drawn on characters yet.
+
+### Add a board
+1. Copy `src/server/Board/Boards/Classic.luau` to e.g. `Beach.luau`.
+2. List the spaces: `{ Id, Type, At = { x, z }, Next = { ids }, Paths = { labels }? }`. Two or
+   more `Next` entries make a fork; the mover picks (bots pick at random).
+3. Set `Start` and at least two `CrownSpaces`.
+4. Set `Config.Match.Board = "Beach"`. A broken board stops the match with a message saying
+   exactly what's wrong (dead end, missing space, unreachable space, unknown type...).
+
+### Add a space type
+Add an entry to `src/server/Board/SpaceTypes.luau` with `Name`, `Short` (tile text), `Color`
+and `Resolve(match, seat, space) -> feed text`, then use its key in a board. Resolve can use
+`match:changeCoins`, `match:runEvent`, `match:giveReward`, `match:visitShop`,
+`match:grantCosmetic`, or ask the player something with
+`match:ask(seat, { Kind, Prompt, Options, Default })`. Give bots an answer for a new `Kind` in
+`Match:botDecision`.
+
+### Add an event
+Append `{ Id, Name, Weight, Apply = function(match, seat, rng) return "feed text" end }` to
+`src/server/Board/Events.luau`. If it moves pieces (changes `seat.SpaceId`), BoardGame redraws
+them after the landing.
+
+### Add a cosmetic
+Append `{ Id, Name, Slot, Price, Rarity }` to `src/shared/Cosmetics.luau` (`Slot` must be one of
+`Cosmetics.Slots`). Shops and Gift spaces offer it automatically. Never reuse or rename an `Id`.
+
+### Rewards and prices
+Gift-space rewards (`Config.Economy.Rewards`, weighted), coin space amounts, starting coins,
+the Crown price and the bots' shop reserve are all in `src/shared/Config.luau`.
 
 ## Where things live
 
@@ -107,6 +162,10 @@ needs checking with real latency. `tests/lag` builds a place with a small measur
 5. Set `IncomingReplicationLag` back to 0 afterwards.
 
 ## Tests and lint
+
+- Board rules unit tests (movement, forks, turns, spaces, events, purchases, wallets, inventory,
+  standings): `rojo build tests/unit.project.json -o UnitTests.rbxlx`, open it in Studio and run
+  `require(game.ServerStorage.PartyTests.BoardTests)()` in the command bar (edit mode is fine).
 
 - `lune run tests/sim [seed] [-v]`: headless end-to-end run on a mock engine with virtual time.
   It plays 9 rounds plus a rage-quit and rejoin, and checks phase order, results and coins,
