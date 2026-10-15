@@ -7,6 +7,7 @@
 	  inputLatencyMs      time from a scripted steer press to this client's racer moving sideways
 	  remoteRoundTripMs   client -> server -> client time for an ordinary remote
 	"self" is this client's own racer, "otherPlayer" the other human, "bot" one of the bots.
+	Works for Ice Dash (scripted steering) and Pole Shimmy (scripted steady climbing).
 ]]
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -19,10 +20,11 @@ local tracks = {}
 local presses = {}
 local sent = false
 local pingMs = "none"
+local minigame = nil -- "Ice Dash" | "Pole Shimmy"
 local function clientModule()
 	local folder = script.Parent:FindFirstChild("PartyClient")
 	local games = folder and folder:FindFirstChild("Minigames")
-	local m = games and games:FindFirstChild("IceDash")
+	local m = games and games:FindFirstChild(if minigame == "Pole Shimmy" then "PoleShimmy" else "IceDash")
 	if m then local ok, mod = pcall(require, m) if ok then return mod end end
 	return nil
 end
@@ -64,6 +66,7 @@ state.OnClientEvent:Connect(function(m)
 	if type(m) ~= "table" then return end
 	if m.Type == "Phase" then
 		if m.Phase == "Playing" and phase ~= "Playing" then startedAt = os.clock() end
+		if m.Minigame then minigame = m.Minigame.Name end
 		phase = m.Phase
 		if m.Phase == "Finished" then finish() end
 	elseif m.Type == "Chips" then
@@ -89,6 +92,7 @@ task.spawn(function()
 	end)
 	input:FireServer({ Kind = "Ready" })
 end)
+local climb = nil
 local schedule = { { 4, "Left" }, { 7, "Right" }, { 10, "Left" }, { 13, "Right" } }
 local nextPress = 1
 local active
@@ -100,16 +104,37 @@ RunService.RenderStepped:Connect(function(dt)
 		if hrp then
 			local tr = tracks[label] or { list = {} }
 			tracks[label] = tr
-			local z = hrp.Position.Z
-			if tr.z and t > 2 and t < 20 and hrp.Position.Y > 75 then
-				local d = math.abs(z - tr.z)
+			local p = hrp.Position
+			if tr.p and t > 2 and t < 20 and p.Y > 75 then
+				local d = (p - tr.p).Magnitude
 				if d < 5 then table.insert(tr.list, { v = d / dt, d = d }) else tr.teleports = (tr.teleports or 0) + 1 end
 			end
-			tr.z = z
+			tr.p = p
 		end
 	end
 	local mine = chars.self and chars.self:FindFirstChild("HumanoidRootPart")
-	if mine then
+	if mine and minigame == "Pole Shimmy" then
+		-- Climb at a steady 4 presses a second; time how long each press takes to show up
+		-- as upward movement (only measured after a pause, so the climber is standing still).
+		climb = climb or { next = 2, key = "Left", pausedUntil = 0 }
+		if t >= climb.next and t > climb.pausedUntil then
+			local fresh = t - (climb.lastPress or -10) > 1.5
+			act(climb.key)
+			climb.lastPress = t
+			climb.key = if climb.key == "Left" then "Right" else "Left"
+			climb.next = t + 0.25
+			if fresh then
+				active = { t = os.clock(), y0 = mine.Position.Y }
+				table.insert(presses, active)
+			end
+			-- Pause for 2s every 4s so there are several "first press after a pause" samples.
+			if math.floor(t) % 4 == 3 and t - math.floor(t) < 0.25 then climb.pausedUntil = t + 2 end
+		end
+		if active and not active.ms and mine.Position.Y - active.y0 > 0.1 then
+			active.ms = (os.clock() - active.t) * 1000
+			active = nil
+		end
+	elseif mine then
 		local s = schedule[nextPress]
 		if s and t >= s[1] and not active then
 			active = { t = os.clock(), x0 = mine.Position.X, dir = s[2] }
