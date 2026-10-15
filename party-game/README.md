@@ -45,15 +45,17 @@ Rebuild the place file after changing code with `rojo build place.project.json -
 | Board layouts | `src/server/Board/Boards/*.luau` |
 | Space types (look + effect) | `src/server/Board/SpaceTypes.luau` |
 | Events | `src/server/Board/Events.luau` |
-| Coins + Crowns wallets | `src/server/CoinService.luau` |
-| Cosmetic catalog / ownership | `src/shared/Cosmetics.luau`, `src/server/Inventory.luau` |
+| Items / bot decisions | `src/server/Board/Items.luau`, `src/server/Board/BotBrain.luau` |
+| Coins + Crowns wallets (per match) | `src/server/CoinService.luau` |
+| Cosmetic catalog / ownership / drawing | `src/shared/Cosmetics.luau`, `src/server/Inventory.luau`, `src/server/CosmeticService.luau` |
+| Permanent profiles | `src/server/Profiles/` |
 | Prices, rewards, timings, round counts | `Config.Match`, `Config.Board`, `Config.Collectible`, `Config.Economy` |
 | Client UI | `src/client/UI/BoardView.luau`, `LobbyPanel.luau`, `StandingsScreen.luau` |
 
 Crowns are the placeholder name for the main collectible (`Config.Collectible`). Passing or
 landing on the Crown's space offers it for `Price` coins; after a purchase it moves to another of
-the board's `CrownSpaces`. Coins and Crowns reset every match. Cosmetics are session-only and
-nothing is drawn on characters yet.
+the board's `CrownSpaces`. Coins and Crowns reset every match. Cosmetics and bank coins live in
+the player's profile.
 
 ### Add a board
 1. Copy `src/server/Board/Boards/Classic.luau` to e.g. `Beach.luau`.
@@ -76,13 +78,67 @@ Append `{ Id, Name, Weight, Apply = function(match, seat, rng) return "feed text
 `src/server/Board/Events.luau`. If it moves pieces (changes `seat.SpaceId`), BoardGame redraws
 them after the landing.
 
+### Turn order
+Before round 1 everyone rolls once (players press ROLL, bots roll automatically, anyone who
+doesn't press in `Config.Match.OrderRollTimeout` rolls automatically). Highest goes first; tied
+seats roll again among themselves until nobody is tied (`Match:decideTurnOrder`).
+
+### Board items
+Each seat holds up to `Config.Items.MaxHeld` items (they stay with the seat if a bot takes
+over). On your turn, before rolling, tap one item button (or a bot decides); `Match:useItem`
+checks turn, timing, one-per-turn, ownership and the target for players and bots alike. Items
+come from Gift spaces (`Kind = "Item"` reward), the Item Drop event and the shop.
+`Config.Items.StartingItems` hands everyone items at the start (handy for testing).
+
+### Add an item
+1. Append to `src/server/Board/Items.luau`:
+   `{ Id, Name, Description, Price, Weight, Dice?, Target? = "Opponent", Use = function(match, seat, target) return "feed text" end }`.
+   Return `nil, "reason"` from `Use` to refuse (the item is kept). `Dice = n` rolls n dice this turn.
+2. Tell bots when it's worth using in `BotBrain.itemScore` and its shop value in `BotBrain.ItemValue`.
+3. Add a test in `tests/unit/BoardTests.luau` (the "every item" test checks the fields).
+
+### Bonus awards
+After the last round: standings before bonuses -> bonus card -> final standings. Bonuses are
+`Config.Bonuses` (`Stat`, `Crowns`, `AwardTies`); stats are tracked on each seat by Match:
+`MinigamePoints` (`Config.MinigamePointsByPlacement` per minigame), `CoinsEarned` (every coin
+gained on the board or in minigames, never reduced by losses or spending) and `SpacesMoved`
+(warps and swaps don't count). A bonus whose best value is 0 goes to nobody.
+
+### Bots
+`src/server/Board/BotBrain.luau`, tuned per difficulty in `Config.Match.BotBehavior`
+(random-choice chance, item-use chance, Crown savings, fork look-ahead, cosmetic spending).
+Bots see only what players see: Crown position and price, board distances, coins,
+standings and round. They never read upcoming dice or rewards. All their item uses go through
+`Match:useItem`, same as players.
+
 ### Add a cosmetic
-Append `{ Id, Name, Slot, Price, Rarity }` to `src/shared/Cosmetics.luau` (`Slot` must be one of
-`Cosmetics.Slots`). Shops and Gift spaces offer it automatically. Never reuse or rename an `Id`.
+Append to `src/shared/Cosmetics.luau`:
+`{ Id, Name, Slot, Price, Rarity, Visual = { Kind = "Hat" | "Trail" | "Sparkles", ... } }`
+(`Slot` must be one of `Cosmetics.Slots`; see the comment there for each `Visual` shape). Shops
+and Gift spaces offer it automatically, and CosmeticService draws it. Never reuse or rename an
+`Id`, because players' saved profiles refer to it. A new `Visual.Kind` needs a drawer in
+`CosmeticService` (`drawers` table).
+
+Equipping: clients send `Equip { ItemId }` / `Unequip { Slot }`; `Inventory.equip` refuses
+anything unowned. The waiting room shows a wardrobe row. CosmeticService redraws any character
+whose drawn set doesn't match its owner's (respawns, teleports, bot takeovers all heal on their own).
+
+### Profiles (permanent data)
+`src/server/Profiles/`: `ProfileStore` (data shape `{ Version, Coins, Owned, Equipped }`,
+`reconcile` for repairs/migrations), `MemoryBackend` (Studio and tests) and `DataStoreBackend`
+(**not enabled**: it refuses to read/write). `Profiles` (init) loads on join, gives the profile's
+cosmetic tables to Inventory, and saves on leave and in `BindToClose`.
+
+- Match coins, Crowns, items and stats are never stored in a profile. The only thing a match
+  writes is permanent bank coins (`Config.Profile.BankCoinsByPlacement`), added at the final standings.
+- To turn on real saving: finish `DataStoreBackend.read/write` (instructions in that file:
+  `GetAsync`/`UpdateAsync`, retries, session locking, autosave), then set
+  `Config.Profile.Backend = "DataStore"`. Nothing else changes.
 
 ### Rewards and prices
 Gift-space rewards (`Config.Economy.Rewards`, weighted), coin space amounts, starting coins,
-the Crown price and the bots' shop reserve are all in `src/shared/Config.luau`.
+the Crown price, item prices (`Items.luau`), shop offer counts and bank coins are all in
+`src/shared/Config.luau`.
 
 ## Where things live
 
@@ -163,9 +219,9 @@ needs checking with real latency. `tests/lag` builds a place with a small measur
 
 ## Tests and lint
 
-- Board rules unit tests (movement, forks, turns, spaces, events, purchases, wallets, inventory,
-  standings): `rojo build tests/unit.project.json -o UnitTests.rbxlx`, open it in Studio and run
-  `require(game.ServerStorage.PartyTests.BoardTests)()` in the command bar (edit mode is fine).
+- Unit tests (board rules, turn order, items, bonuses, bot decisions, cosmetics, profiles):
+  `rojo build tests/unit.project.json -o UnitTests.rbxlx`, open it in Studio and run
+  `require(game.ServerStorage.PartyTests.RunAll)()` in the command bar (edit mode is fine).
 
 - `lune run tests/sim [seed] [-v]`: headless end-to-end run on a mock engine with virtual time.
   It plays 9 rounds plus a rage-quit and rejoin, and checks phase order, results and coins,

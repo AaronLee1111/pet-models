@@ -19,14 +19,23 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - Prompt buttons are plain; the shop prompt doesn't show item pictures or rarity.
 - Final standings card has no podium, confetti or reward moment.
 - Waiting room: no explanation of the rules, no "how to play" for new players, and no pointer on START or ROLL for first-timers (style guide onboarding rule).
-- Cosmetics are data only: nothing is drawn (hats, trails, emotes), and there's no inventory/equip UI or equip remote yet.
+- Cosmetics are placeholder shapes (a coloured part on the head, a trail, sparkles for emotes). Emotes don't play an animation. The wardrobe is a plain row of buttons in the waiting room with no previews.
 
 ## Mechanics to revisit
 
-- Turn order is a random shuffle; Mario Party-style "everyone rolls for order" is not built.
-- No board items (double dice etc.), no Crown-steal, no bonus awards at match end.
-- Bots buy the Crown whenever they can afford it and pick forks at random; shop choices use a coin reserve scaled by skill.
+- No Crown-steal item or event yet.
+- Bot item use only looks at the Crown and the bot's own coins. It doesn't plan around other players' items or shields.
 - Late joiners watch until the next match; they can't take over a bot's seat mid-match.
 - Players who leave are replaced by a bot permanently (rejoining doesn't get the seat back).
 - `tests/sim.luau` (lune) predates the board game and still expects the old lobby → vote loop; lune isn't installed on this machine. Board rules are covered by `tests/unit` instead.
-- No persistence: coins/Crowns are per match, cosmetics per session (by design for now).
+- Persistence: profiles use the in-memory backend (lost when the server shuts down). DataStoreBackend is a documented stub. Session locking and autosave are still to build.
+- Bank coins have nothing to spend on yet.
+
+## Seen during the mechanics pass (presentation only)
+
+- Pieces sometimes lie down on the board after a minigame (seen at final standings). Bots are stood up when placed; players' clients stand themselves up while the board is shown. Still happens occasionally.
+- During the turn-order roll the camera frames the board centre, so the pieces at Start are off-screen.
+- Order-roll results are only text in the standings rows ("Rolled 5, then 3"). There's no dice.
+- Item buttons are plain text tiles above ROLL. There are no item icons, no description tooltip, and the swap-target prompt is a list of names.
+- The bonus card has no reveal animation, and the three standings stages are the same plain card.
+- Bank coins only show in the waiting-room info line and on the final card.
