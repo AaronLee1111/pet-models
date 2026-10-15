@@ -1,10 +1,8 @@
 --[[
 	Main (server entry point)
-	The party loop: lobby -> seat 4 participants (real players first, bots fill the rest)
-	-> MinigameManager.runRound -> repeat.
-
-	When the board game exists, it replaces this loop and calls
-	MinigameManager.runRound(participants) at the end of each turn.
+	The match loop: waiting room (host picks settings) -> seat 4 participants (real players
+	first, bots fill the rest) -> BoardGame.play (board turns + a minigame every round ->
+	final standings) -> back to the waiting room.
 ]]
 
 local Players = game:GetService("Players")
@@ -12,12 +10,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Arena = require(script.Parent.Arena)
+local BoardGame = require(script.Parent.Board.BoardGame)
 local BotService = require(script.Parent.BotService)
 local MinigameManager = require(script.Parent.MinigameManager)
 local Participant = require(script.Parent.Participant)
+local WaitingRoom = require(script.Parent.WaitingRoom)
 
 Arena.ensureLobby()
 MinigameManager.init()
+MinigameManager.setInputHandler(function(player, payload)
+	return WaitingRoom.handleInput(player, payload) or BoardGame.handleInput(player, payload)
+end)
 
 -- First come, first seated: track join order so seats are fair when >4 players are on.
 local joinOrder: { Player } = {}
@@ -53,18 +56,27 @@ local function buildParticipants()
 	return participants
 end
 
+local function getHost(): Player?
+	return joinOrder[1]
+end
+
 while true do
 	while #Players:GetPlayers() == 0 do
 		MinigameManager.showLobby("Waiting for players...")
 		Players.PlayerAdded:Wait()
 	end
 
-	MinigameManager.showLobby("Next minigame starting soon!", Config.IntermissionDuration)
+	local settings = WaitingRoom.run(getHost)
+	if #Players:GetPlayers() == 0 then
+		continue -- everyone left during the countdown
+	end
+	BotService.setSkillRange(Config.Match.BotDifficulties[settings.Difficulty])
 
 	local participants = buildParticipants()
-	local ok, err = xpcall(MinigameManager.runRound, debug.traceback, participants)
+	local ok, err = xpcall(BoardGame.play, debug.traceback, participants, settings)
 	if not ok then
-		warn("[Party] Round crashed, returning to lobby:\n" .. tostring(err))
-		MinigameManager.abort("⚠️ Minigame crashed — back to the lobby!")
+		warn("[Party] Match crashed, returning to the waiting room:\n" .. tostring(err))
+		MinigameManager.abort("Match crashed, back to the lobby!")
+		BoardGame.cleanup()
 	end
 end

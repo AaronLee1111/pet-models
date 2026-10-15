@@ -45,6 +45,61 @@ Config.ResultsDuration = 8
 -- Coins awarded by placement. Ties share a placement, so two 1st places both get 10.
 Config.CoinsByPlacement = { 10, 6, 3, 1 }
 
+-- Match (board game) ------------------------------------------------------------
+
+Config.Match = {
+	-- Defaults; the host can change these in the waiting room.
+	BoardRounds = 5, -- each round = every seat takes one turn, then one minigame
+	BoardRoundChoices = { 3, 5, 8, 12 },
+	BotDifficulty = "Normal",
+	-- bot.Skill is rolled in this range (0..1). Minigame bots and board decisions both use it.
+	BotDifficulties = {
+		Easy = { 0.1, 0.45 },
+		Normal = { 0.35, 0.85 },
+		Hard = { 0.75, 1 },
+	},
+	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
+	Board = "Classic", -- module name in PartyServer/Board/Boards
+	WaitingRoomDuration = 15, -- seconds the waiting room counts down before a match
+	StandingsDuration = 10, -- final standings screen
+}
+
+Config.Board = {
+	Origin = Vector3.new(0, 0, -300), -- far from the lobby (0,0,0) and the arenas
+	SpaceSpacing = 12, -- studs between grid cells in board layouts
+	DieSides = 6,
+	RollTimeout = 12, -- a player who doesn't roll in time rolls automatically
+	ChoiceTimeout = 10, -- unanswered prompts take their default option
+	HopTime = 0.35, -- seconds per space moved
+	BotRollDelay = { 0.8, 1.6 },
+	BotChoiceDelay = { 0.6, 1.4 },
+	LandPause = 1.5, -- beat after landing so everyone can read what happened
+}
+
+-- The primary collectible (wins the match; coins only break ties). Placeholder name.
+Config.Collectible = {
+	Name = "Crown",
+	Plural = "Crowns",
+	Price = 20, -- coins
+}
+
+-- All coin amounts the board hands out or takes, in one place.
+Config.Economy = {
+	StartingCoins = 10,
+	GainSpaceCoins = 3,
+	LoseSpaceCoins = 3,
+	-- Reward spaces roll one of these (Weight is relative).
+	Rewards = {
+		{ Kind = "Coins", Amount = 5, Weight = 6 },
+		{ Kind = "Coins", Amount = 10, Weight = 3 },
+		{ Kind = "Cosmetic", Weight = 2 }, -- a random cosmetic the owner doesn't have yet
+		{ Kind = "Collectible", Amount = 1, Weight = 0.5 },
+	},
+	ShopOffers = 2, -- cosmetics offered per shop visit
+	-- Bots keep at least this many coins after a shop purchase, saving for the collectible.
+	BotShopReserve = 20,
+}
+
 -- World layout -----------------------------------------------------------------
 
 -- Arenas are built here, far away from the lobby so they never overlap it.
@@ -83,16 +138,16 @@ Config.ChipFlushInterval = 0.15
 Config.BotThinkInterval = 0.2 -- how often each bot's brain runs
 Config.BotVoteDelay = { 1.5, 5 } -- bots "think" about their vote for this long (min, max)
 Config.BotNames = {
-	"Doge",
-	"Big Chungus",
-	"Stonks",
-	"Sus Bean",
-	"Nyan",
-	"Shrek",
-	"Grumpy",
-	"Bonk",
-	"Pepe Jr",
-	"Rickroll",
+	"Pip",
+	"Mochi",
+	"Ziggy",
+	"Nova",
+	"Biscuit",
+	"Pebble",
+	"Juniper",
+	"Comet",
+	"Waffles",
+	"Maple",
 }
 
 -- Networking -------------------------------------------------------------------
@@ -104,7 +159,7 @@ Config.MinigameMessageRateLimit = 40 -- same, for messages a minigame's own clie
 Config.RandomChoice = {
 	Id = "__random",
 	Name = "🎲 Surprise Me",
-	Description = "Can't decide? Let chaos pick for you.",
+	Description = "Can't decide? Let the game pick one at random.",
 	Layout = "???",
 }
 
@@ -113,6 +168,53 @@ return Config
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Cosmetics</string>
+          <string name="Source"><![CDATA[--[[
+	Cosmetics
+	The catalog of cosmetic items. Pure data, readable by server and client.
+
+	Each item:
+	  Id      unique, never reuse or rename once players own it
+	  Name    shown to players
+	  Slot    one equipped item per slot (Cosmetics.Slots)
+	  Price   coins at a shop space
+	  Rarity  "Common" | "Rare" | "Epic" (for the later visual pass)
+
+	Placeholders: nothing is drawn on the character yet (see BACKLOG.md).
+	To add one, append an entry; shops and reward spaces pick it up automatically.
+]]
+
+local Cosmetics = {}
+
+Cosmetics.Slots = { "Hat", "Trail", "Emote" }
+
+Cosmetics.Items = {
+	{ Id = "hat_party", Name = "Party Hat", Slot = "Hat", Price = 6, Rarity = "Common" },
+	{ Id = "hat_crown_paper", Name = "Paper Crown", Slot = "Hat", Price = 10, Rarity = "Rare" },
+	{ Id = "hat_propeller", Name = "Propeller Cap", Slot = "Hat", Price = 14, Rarity = "Epic" },
+	{ Id = "trail_confetti", Name = "Confetti Trail", Slot = "Trail", Price = 8, Rarity = "Common" },
+	{ Id = "trail_rainbow", Name = "Rainbow Trail", Slot = "Trail", Price = 14, Rarity = "Epic" },
+	{ Id = "emote_wave", Name = "Big Wave", Slot = "Emote", Price = 5, Rarity = "Common" },
+	{ Id = "emote_spin", Name = "Victory Spin", Slot = "Emote", Price = 9, Rarity = "Rare" },
+}
+
+local byId = {}
+for _, item in Cosmetics.Items do
+	assert(not byId[item.Id], "duplicate cosmetic id " .. item.Id)
+	assert(table.find(Cosmetics.Slots, item.Slot), "unknown slot for " .. item.Id)
+	byId[item.Id] = item
+end
+
+function Cosmetics.get(id: string)
+	return byId[id]
+end
+
+return Cosmetics
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
         <Properties>
           <string name="Name">IceDashSim</string>
           <string name="Source"><![CDATA[--[[
@@ -441,7 +543,7 @@ return Sim
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="4">
+      <Item class="ModuleScript" referent="5">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--[[
@@ -480,15 +582,21 @@ Net.Phase = {
 	Playing = "Playing",
 	Finished = "Finished",
 	Results = "Results",
+	-- Board game (around the minigame rounds above)
+	Board = "Board", -- turns on the board; details arrive as BoardState messages
+	Standings = "Standings", -- final match standings
 }
 
 -- Server -> client message types (message.Type).
 Net.Message = {
 	Phase = "Phase", -- full phase change; carries everything needed to draw that screen
 	VoteUpdate = "VoteUpdate", -- live vote counts during the Vote phase
-	Status = "Status", -- persistent HUD line set by the minigame ("Doge has the potato!")
+	Status = "Status", -- persistent HUD line set by the minigame ("Pip has the potato!")
 	Toast = "Toast", -- short-lived feed message ("BOOM!")
 	Chips = "Chips", -- player-chip strip: every participant's live value + eliminated flag
+	BoardLayout = "BoardLayout", -- the board's spaces (sent once per match and to late joiners)
+	BoardState = "BoardState", -- seats, coins, collectibles, whose turn, dice, moves left
+	Prompt = "Prompt", -- to one player: pick an option (fork, buy, shop); Prompt = nil closes it
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -496,6 +604,10 @@ Net.Input = {
 	Ready = "Ready", -- client finished loading; server replies with a state snapshot
 	Vote = "Vote", -- payload.Choice = index of the vote card
 	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
+	Roll = "Roll", -- roll the die on your turn
+	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
+	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
+	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }
 
 local function getFolder(): Instance
@@ -545,7 +657,7 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="5">
+      <Item class="ModuleScript" referent="6">
         <Properties>
           <string name="Name">PoleShimmySim</string>
           <string name="Source"><![CDATA[--[[
@@ -666,15 +778,15 @@ return Sim
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="6">
+  <Item class="ServerScriptService" referent="7">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="7">
+    <Item class="Folder" referent="8">
       <Properties>
         <string name="Name">PartyServer</string>
       </Properties>
-      <Item class="ModuleScript" referent="8">
+      <Item class="ModuleScript" referent="9">
         <Properties>
           <string name="Name">Arena</string>
           <string name="Source"><![CDATA[--[[
@@ -805,7 +917,1455 @@ return Arena
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="9">
+      <Item class="Folder" referent="10">
+        <Properties>
+          <string name="Name">Board</string>
+        </Properties>
+        <Item class="ModuleScript" referent="11">
+          <Properties>
+            <string name="Name">BoardGame</string>
+            <string name="Source"><![CDATA[--[[
+	BoardGame
+	Runs one board-game match in the world: builds the board, takes turns (roll -> move ->
+	space), runs a minigame after every full turn cycle, then shows the final standings.
+	The rules themselves live in Match; this module adds timing, networking, bodies and bots.
+
+	  BoardGame.play(participants, settings)   -> final standings rows (yields for the whole match)
+	  BoardGame.cleanup()                      safe teardown, also after a crash
+	  BoardGame.handleInput(player, payload)   -> true if it was a board input (Roll / Choice)
+
+	Players who leave are replaced by a bot that keeps their seat, coins and collectibles.
+	Players who join mid-match watch until the next match.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local Arena = require(script.Parent.Parent.Arena)
+local BotService = require(script.Parent.Parent.BotService)
+local CoinService = require(script.Parent.Parent.CoinService)
+local Inventory = require(script.Parent.Parent.Inventory)
+local MinigameManager = require(script.Parent.Parent.MinigameManager)
+local Participant = require(script.Parent.Parent.Participant)
+local BoardLayout = require(script.Parent.BoardLayout)
+local BoardWorld = require(script.Parent.BoardWorld)
+local Match = require(script.Parent.Match)
+local SpaceTypes = require(script.Parent.SpaceTypes)
+
+local BoardGame = {}
+
+local rng = Random.new()
+local current = nil -- the running match, see BoardGame.play
+local nextPromptId = 0
+
+local function now(): number
+	return Workspace:GetServerTimeNow()
+end
+
+local function waitRandom(range: { number })
+	task.wait(rng:NextNumber(range[1], range[2]))
+end
+
+local function isAway(participant): boolean
+	return participant.Left or (not participant.IsBot and (not participant.Player or participant.Player.Parent == nil))
+end
+
+-- Messages -------------------------------------------------------------------------------------
+
+local function layoutMessage(board)
+	local spaces = {}
+	for _, id in board.Order do
+		local space = board.Spaces[id]
+		local spaceType = SpaceTypes[space.Type]
+		table.insert(spaces, {
+			Id = id,
+			Type = space.Type,
+			Name = spaceType.Name,
+			Color = spaceType.Color,
+			Position = current.World.Tops[id],
+		})
+	end
+	local legend = {}
+	for key, spaceType in SpaceTypes do
+		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
+	end
+	return { Type = Net.Message.BoardLayout, Name = board.Name, Spaces = spaces, Legend = legend }
+end
+
+local function stateMessage()
+	local match = current.Match
+	local seats = {}
+	for orderIndex, seat in match.Order do
+		local participant = seat.Participant
+		table.insert(seats, {
+			Id = participant.Id,
+			Name = participant.Name,
+			IsBot = participant.IsBot,
+			Order = orderIndex,
+			Coins = match:coinsOf(seat),
+			Collectibles = match:collectiblesOf(seat),
+			SpaceId = seat.SpaceId,
+			Character = participant:GetCharacter(),
+		})
+	end
+	local turn = current.Turn
+	return {
+		Type = Net.Message.BoardState,
+		Round = match.Round,
+		Rounds = match.Rounds,
+		TurnId = turn and turn.Participant.Id,
+		TurnName = turn and turn.Participant.Name,
+		Stage = current.Stage,
+		Roll = current.Roll,
+		Remaining = current.Remaining,
+		RollEndsAt = current.RollEndsAt,
+		Text = current.Text,
+		CollectibleSpace = match.CollectibleSpace,
+		CollectibleName = Config.Collectible.Name,
+		CollectiblePlural = Config.Collectible.Plural,
+		CollectiblePrice = Config.Collectible.Price,
+		Seats = seats,
+	}
+end
+
+local function publish()
+	if not current then
+		return
+	end
+	local match = current.Match
+	current.World:setCollectible(
+		match.CollectibleSpace,
+		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
+	)
+	current.StateMessage = stateMessage()
+	MinigameManager.broadcast(current.StateMessage)
+end
+
+local function feed(text: string?)
+	if text and current then
+		current.Text = text
+		MinigameManager.broadcast({ Type = Net.Message.Toast, Text = text })
+	end
+end
+
+-- Pieces on the board ---------------------------------------------------------------------------
+
+local function slotOf(seat): number
+	local slot = 0
+	for _, other in current.Match.Seats do
+		if other.SpaceId == seat.SpaceId then
+			slot += 1
+		end
+		if other == seat then
+			return slot
+		end
+	end
+	return 1
+end
+
+local function placeSeat(seat)
+	local participant = seat.Participant
+	if not participant:IsAlive() then
+		return
+	end
+	local facing = current.Match.Board:nextOptions(seat.SpaceId)[1]
+	participant:Teleport(current.World:spaceCFrame(seat.SpaceId, slotOf(seat), facing))
+	participant:Freeze()
+	-- Pieces bumping on a shared tile can tip over; stand bots back up (players' own
+	-- clients do the same in BoardView).
+	local humanoid = participant:GetHumanoid()
+	if participant.IsBot and humanoid then
+		humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+	end
+end
+
+local function placeAll()
+	for _, seat in current.Match.Seats do
+		placeSeat(seat)
+	end
+end
+
+local function ensureBodies()
+	BotService.reviveAll(Arena.lobbySpot)
+	for _, seat in current.Match.Seats do
+		local participant = seat.Participant
+		if not participant.IsBot and not isAway(participant) and not participant:IsAlive() then
+			pcall(function()
+				participant.Player:LoadCharacter()
+			end)
+		end
+	end
+end
+
+-- Seats whose player left get a bot that keeps the seat (coins, collectibles, position).
+local function refreshSeats()
+	local match = current.Match
+	for _, seat in match.Seats do
+		local leaver = seat.Participant
+		if not isAway(leaver) then
+			continue
+		end
+		leaver.Left = true
+		local seatedBots = {}
+		for _, other in match.Seats do
+			if other.Participant.IsBot then
+				seatedBots[other.Participant.Bot] = other.Participant
+			end
+		end
+		local count = 0
+		for _ in seatedBots do
+			count += 1
+		end
+		-- getBots clears every bot's Participant link, so restore the seated ones after.
+		local bots = BotService.getBots(count + 1, Arena.lobbySpot)
+		local newcomer
+		for _, bot in bots do
+			if seatedBots[bot] then
+				bot.Participant = seatedBots[bot]
+			else
+				newcomer = bot
+			end
+		end
+		if newcomer then
+			local replacement = Participant.fromBot(newcomer)
+			match:replaceParticipant(seat, replacement)
+			feed(("%s left, %s takes over their seat"):format(leaver.Name, replacement.Name))
+			placeSeat(seat)
+		end
+	end
+end
+
+-- Choices -----------------------------------------------------------------------------------------
+
+-- Match's Ask: players get a prompt on screen, bots decide on their own.
+local function ask(seat, request)
+	local participant = seat.Participant
+	local previousStage = current.Stage
+	current.Stage = "Deciding"
+	current.Text = ("%s is deciding: %s"):format(participant.Name, request.Prompt)
+	publish()
+
+	local answer
+	if participant.IsBot or isAway(participant) then
+		waitRandom(Config.Board.BotChoiceDelay)
+		local skill = if participant.Bot then participant.Bot.Skill else 0.5
+		answer = current.Match:botDecision(seat, request, skill)
+	else
+		nextPromptId += 1
+		local prompt = {
+			Id = nextPromptId,
+			Player = participant.Player,
+			Count = #request.Options,
+			Answer = nil,
+		}
+		current.Prompt = prompt
+		local endsAt = now() + Config.Board.ChoiceTimeout
+		MinigameManager.sendTo(participant.Player, {
+			Type = Net.Message.Prompt,
+			PromptId = prompt.Id,
+			Prompt = request.Prompt,
+			Options = request.Options,
+			Default = request.Default,
+			EndsAt = endsAt,
+		})
+		while prompt.Answer == nil and now() < endsAt and not isAway(participant) do
+			task.wait(0.1)
+		end
+		current.Prompt = nil
+		if participant.Player.Parent then
+			MinigameManager.sendTo(participant.Player, { Type = Net.Message.Prompt, PromptId = nil })
+		end
+		answer = prompt.Answer or request.Default
+	end
+
+	current.Stage = previousStage
+	publish()
+	return answer
+end
+
+-- Turns -------------------------------------------------------------------------------------------
+
+local function takeTurn(seat)
+	refreshSeats()
+	local match = current.Match
+	local participant = seat.Participant
+	current.Turn = seat
+	current.Stage = "Roll"
+	current.Roll = nil
+	current.Remaining = nil
+	current.RollEndsAt = now() + Config.Board.RollTimeout
+	current.Text = ("%s's turn"):format(participant.Name)
+	current.RollRequested = false
+	publish()
+
+	if participant.IsBot or isAway(participant) then
+		waitRandom(Config.Board.BotRollDelay)
+	else
+		current.RollWaiting = participant.Player
+		while not current.RollRequested and now() < current.RollEndsAt and not isAway(participant) do
+			task.wait(0.05)
+		end
+		current.RollWaiting = nil
+	end
+
+	local roll = match:roll()
+	current.Stage = "Moving"
+	current.Roll = roll
+	current.Remaining = roll
+	current.RollEndsAt = nil
+	current.Text = ("%s rolled a %d"):format(seat.Participant.Name, roll)
+	publish()
+	task.wait(0.8)
+
+	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
+		current.Remaining = remaining
+		placeSeat(movedSeat)
+		publish()
+		task.wait(Config.Board.HopTime)
+	end, function(note)
+		feed(note)
+		publish()
+	end)
+
+	placeAll() -- events can move other pieces too
+	current.Stage = "Landed"
+	local space = match.Board:get(seat.SpaceId)
+	feed(landing or ("%s landed on a %s"):format(seat.Participant.Name, SpaceTypes[space.Type].Name))
+	publish()
+	task.wait(Config.Board.LandPause)
+end
+
+-- Match -------------------------------------------------------------------------------------------
+
+local function describeRows(rows)
+	local list = {}
+	for _, row in rows do
+		local entry = row.Participant:Describe()
+		entry.Placement = row.Placement
+		entry.Collectibles = row.Collectibles
+		entry.Coins = row.Coins
+		table.insert(list, entry)
+	end
+	return list
+end
+
+function BoardGame.play(participants, settings)
+	BoardGame.cleanup()
+	CoinService.resetAll()
+	Inventory.resetBots()
+
+	local data = require(script.Parent.Boards:FindFirstChild(settings.Board or Config.Match.Board))
+	local board = BoardLayout.load(data, SpaceTypes)
+	current = {
+		World = BoardWorld.build(board, SpaceTypes, Config.Board.Origin),
+		Stage = "Start",
+	}
+	current.Match = Match.new(board, participants, { Rounds = settings.Rounds }, {
+		Wallet = CoinService,
+		Inventory = Inventory,
+		Rng = rng,
+		Ask = ask,
+	})
+	local match = current.Match
+	for _, seat in match.Seats do
+		CoinService.add(seat.Participant, Config.Economy.StartingCoins)
+	end
+	current.LayoutMessage = layoutMessage(board)
+	MinigameManager.broadcast(current.LayoutMessage)
+
+	for round = 1, match.Rounds do
+		match.Round = round
+		current.Turn = nil
+		current.Stage = "Start"
+		current.Text = ("Round %d of %d"):format(round, match.Rounds)
+		MinigameManager.setPhase(Net.Phase.Board, { Round = round, Rounds = match.Rounds })
+		refreshSeats()
+		ensureBodies()
+		placeAll()
+		publish()
+		task.wait(1.5)
+
+		for _, seat in match.Order do
+			takeTurn(seat)
+		end
+
+		current.Turn = nil
+		current.Stage = "Minigame"
+		current.Text = "Minigame time!"
+		publish()
+		task.wait(1)
+		refreshSeats()
+		local ok, err = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
+		if not ok then
+			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(err))
+			MinigameManager.abort("Minigame crashed, back to the board!")
+		end
+	end
+
+	refreshSeats()
+	local rows = match:standings()
+	MinigameManager.setPhase(Net.Phase.Standings, {
+		Rows = describeRows(rows),
+		CollectiblePlural = Config.Collectible.Plural,
+		EndsAt = now() + Config.Match.StandingsDuration,
+	})
+	ensureBodies()
+	placeAll()
+	task.wait(Config.Match.StandingsDuration)
+	BoardGame.cleanup()
+	return rows
+end
+
+-- Tears the match down and sends everyone back to the lobby. Safe to call any time.
+function BoardGame.cleanup()
+	local match = current and current.Match
+	if current then
+		current.World:destroy()
+	end
+	current = nil
+	CoinService.resetAll()
+	Inventory.resetBots()
+	BotService.setBrain(nil)
+	BotService.reviveAll(Arena.lobbySpot)
+	if match then
+		for index, seat in match.Seats do
+			local participant = seat.Participant
+			if participant:IsAlive() then
+				participant:Teleport(Arena.lobbySpot(index))
+				participant:ResetMovement()
+			end
+		end
+	end
+end
+
+function BoardGame.isRunning(): boolean
+	return current ~= nil
+end
+
+function BoardGame.handleInput(player: Player, payload): boolean
+	local kind = payload.Kind
+	if kind == Net.Input.Roll then
+		if current and current.RollWaiting == player then
+			current.RollRequested = true
+		end
+		return true
+	elseif kind == Net.Input.Choice then
+		local prompt = current and current.Prompt
+		local index = payload.Index
+		if
+			prompt
+			and prompt.Player == player
+			and payload.PromptId == prompt.Id
+			and type(index) == "number"
+			and index % 1 == 0
+			and index >= 1
+			and index <= prompt.Count
+		then
+			prompt.Answer = index
+		end
+		return true
+	end
+	return false
+end
+
+-- Late joiners / reloads: send the board and where everyone is.
+MinigameManager.onReady(function(player)
+	if current and current.LayoutMessage then
+		MinigameManager.sendTo(player, current.LayoutMessage)
+		if current.StateMessage then
+			MinigameManager.sendTo(player, current.StateMessage)
+		end
+	end
+end)
+
+-- A seated player who resets on the board goes straight back to their space.
+local function watchCharacter(player: Player)
+	player.CharacterAdded:Connect(function()
+		task.wait(0.2)
+		if not current or current.Stage == "Minigame" then
+			return
+		end
+		for _, seat in current.Match.Seats do
+			if seat.Participant.Player == player then
+				placeSeat(seat)
+				publish()
+			end
+		end
+	end)
+end
+Players.PlayerAdded:Connect(watchCharacter)
+for _, player in Players:GetPlayers() do
+	watchCharacter(player)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	if not current then
+		return
+	end
+	for _, seat in current.Match.Seats do
+		if seat.Participant.Player == player then
+			seat.Participant.Left = true -- the turn loop hands the seat to a bot
+		end
+	end
+end)
+
+return BoardGame
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">BoardLayout</string>
+            <string name="Source"><![CDATA[--[[
+	BoardLayout
+	Turns a board data module (Board/Boards/*) into a checked, indexed board.
+
+	  BoardLayout.load(data, spaceTypes)  -> board (errors with a clear message if the data is bad)
+	  BoardLayout.validate(data, spaceTypes) -> problem string or nil
+
+	A board:
+	  board.Name, board.Start, board.CrownSpaces
+	  board.Spaces[id] = { Id, Type, At = {x, z}, Next = {ids}, Paths = {labels}? }
+	  board.Order      every space id, in data order
+	  board:nextOptions(id) -> { ids }
+]]
+
+local BoardLayout = {}
+
+local Board = {}
+Board.__index = Board
+
+function Board:nextOptions(id: number): { number }
+	local space = self.Spaces[id]
+	return if space then space.Next else {}
+end
+
+function Board:get(id: number)
+	return self.Spaces[id]
+end
+
+function BoardLayout.validate(data, spaceTypes): string?
+	if type(data) ~= "table" or type(data.Spaces) ~= "table" or #data.Spaces == 0 then
+		return "board has no Spaces"
+	end
+	local byId = {}
+	for index, space in data.Spaces do
+		if type(space.Id) ~= "number" then
+			return ("space #%d has no numeric Id"):format(index)
+		end
+		if byId[space.Id] then
+			return ("duplicate space Id %d"):format(space.Id)
+		end
+		if not spaceTypes[space.Type] then
+			return ("space %d has unknown Type %s"):format(space.Id, tostring(space.Type))
+		end
+		if type(space.At) ~= "table" or type(space.At[1]) ~= "number" or type(space.At[2]) ~= "number" then
+			return ("space %d needs At = { x, z }"):format(space.Id)
+		end
+		if type(space.Next) ~= "table" or #space.Next == 0 then
+			return ("space %d is a dead end (no Next)"):format(space.Id)
+		end
+		if space.Paths and #space.Paths ~= #space.Next then
+			return ("space %d has %d Paths for %d Next"):format(space.Id, #space.Paths, #space.Next)
+		end
+		byId[space.Id] = space
+	end
+	for _, space in data.Spaces do
+		for _, nextId in space.Next do
+			if not byId[nextId] then
+				return ("space %d points to missing space %s"):format(space.Id, tostring(nextId))
+			end
+		end
+	end
+	if not byId[data.Start] then
+		return "Start is not a space"
+	end
+	if type(data.CrownSpaces) ~= "table" or #data.CrownSpaces < 2 then
+		return "need at least 2 CrownSpaces (the collectible moves after each purchase)"
+	end
+	for _, id in data.CrownSpaces do
+		if not byId[id] then
+			return ("CrownSpaces lists missing space %s"):format(tostring(id))
+		end
+	end
+
+	-- Every space must be reachable from Start, and Start reachable again from every space
+	-- (otherwise someone could get stuck on a branch forever).
+	local function reach(from, edges)
+		local seen, queue = { [from] = true }, { from }
+		while #queue > 0 do
+			local id = table.remove(queue)
+			for _, nextId in edges[id] or {} do
+				if not seen[nextId] then
+					seen[nextId] = true
+					table.insert(queue, nextId)
+				end
+			end
+		end
+		return seen
+	end
+	local forward, backward = {}, {}
+	for _, space in data.Spaces do
+		forward[space.Id] = space.Next
+		for _, nextId in space.Next do
+			backward[nextId] = backward[nextId] or {}
+			table.insert(backward[nextId], space.Id)
+		end
+	end
+	local fromStart, toStart = reach(data.Start, forward), reach(data.Start, backward)
+	for _, space in data.Spaces do
+		if not fromStart[space.Id] then
+			return ("space %d can't be reached from Start"):format(space.Id)
+		end
+		if not toStart[space.Id] then
+			return ("space %d never leads back to Start"):format(space.Id)
+		end
+	end
+	return nil
+end
+
+function BoardLayout.load(data, spaceTypes)
+	local problem = BoardLayout.validate(data, spaceTypes)
+	if problem then
+		error(("[BoardLayout] board %s: %s"):format(tostring(data and data.Name), problem), 2)
+	end
+	local board = setmetatable({
+		Name = data.Name,
+		Start = data.Start,
+		CrownSpaces = table.clone(data.CrownSpaces),
+		Spaces = {},
+		Order = {},
+	}, Board)
+	for _, space in data.Spaces do
+		board.Spaces[space.Id] = table.clone(space)
+		table.insert(board.Order, space.Id)
+	end
+	return board
+end
+
+return BoardLayout
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="13">
+          <Properties>
+            <string name="Name">BoardWorld</string>
+            <string name="Source"><![CDATA[--[[
+	BoardWorld
+	Builds a board in the Workspace from a loaded board (BoardLayout) and tells BoardGame
+	where pieces stand. Placeholder look: coloured tiles, paths and a gold collectible marker.
+
+	  local world = BoardWorld.build(board, spaceTypes, origin)
+	  world:spaceCFrame(id, slot, facingId?)  where a piece stands (slot 1..4 share a tile)
+	  world:setCollectible(id, label)        move the collectible marker
+	  world:destroy()
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local BoardWorld = {}
+BoardWorld.__index = BoardWorld
+
+local TILE_SIZE = 9
+local TILE_HEIGHT = 1
+local ROOT_HEIGHT = 3.2 -- HumanoidRootPart height above the tile top
+local SLOT_OFFSETS = {
+	Vector3.new(-2.5, 0, -2.5),
+	Vector3.new(2.5, 0, -2.5),
+	Vector3.new(-2.5, 0, 2.5),
+	Vector3.new(2.5, 0, 2.5),
+}
+
+local function part(props): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Material = Enum.Material.SmoothPlastic
+	for key, value in props do
+		(p :: any)[key] = value
+	end
+	return p
+end
+
+function BoardWorld.build(board, spaceTypes, origin: Vector3)
+	local self = setmetatable({ Board = board, Origin = origin, Tops = {} }, BoardWorld)
+	local spacing = Config.Board.SpaceSpacing
+	local folder = Instance.new("Folder")
+	folder.Name = "PartyBoard"
+	self.Folder = folder
+
+	local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+	for _, id in board.Order do
+		local at = board.Spaces[id].At
+		minX, maxX = math.min(minX, at[1]), math.max(maxX, at[1])
+		minZ, maxZ = math.min(minZ, at[2]), math.max(maxZ, at[2])
+	end
+	-- Centre the layout on the origin. Grid z goes "up the board" = -Z in the world.
+	local centre = Vector3.new((minX + maxX) / 2 * spacing, 0, -(minZ + maxZ) / 2 * spacing)
+	local function worldAt(at): Vector3
+		return origin + Vector3.new(at[1] * spacing, 0, -at[2] * spacing) - centre
+	end
+
+	part({
+		Name = "Base",
+		Size = Vector3.new((maxX - minX) * spacing + 30, 2, (maxZ - minZ) * spacing + 30),
+		Position = origin + Vector3.new(0, -1, 0),
+		Color = Color3.fromRGB(120, 200, 120),
+		Material = Enum.Material.Grass,
+		Parent = folder,
+	})
+
+	for _, id in board.Order do
+		local space = board.Spaces[id]
+		local spaceType = spaceTypes[space.Type]
+		local position = worldAt(space.At)
+		self.Tops[id] = position + Vector3.new(0, TILE_HEIGHT, 0)
+
+		local tile = part({
+			Name = "Space" .. id,
+			Size = Vector3.new(TILE_SIZE, TILE_HEIGHT, TILE_SIZE),
+			Position = position + Vector3.new(0, TILE_HEIGHT / 2, 0),
+			Color = spaceType.Color,
+			Parent = folder,
+		})
+		tile:SetAttribute("SpaceId", id)
+		tile:SetAttribute("SpaceType", space.Type)
+		if spaceType.Short ~= "" then
+			local gui = Instance.new("SurfaceGui")
+			gui.Face = Enum.NormalId.Top
+			gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+			gui.PixelsPerStud = 25
+			gui.Parent = tile
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.Font = Enum.Font.FredokaOne
+			label.TextScaled = true
+			label.TextColor3 = Color3.new(1, 1, 1)
+			label.TextStrokeTransparency = 0.4
+			label.Text = spaceType.Short
+			label.Parent = gui
+		end
+
+		-- Paths to the next spaces
+		for _, nextId in space.Next do
+			local target = worldAt(board.Spaces[nextId].At)
+			local length = (target - position).Magnitude - TILE_SIZE
+			if length > 0 then
+				local middle = (position + target) / 2 + Vector3.new(0, 0.2, 0)
+				part({
+					Name = ("Path%d_%d"):format(id, nextId),
+					Size = Vector3.new(2, 0.4, length),
+					CFrame = CFrame.lookAt(middle, target + Vector3.new(0, 0.2, 0)),
+					Color = Color3.fromRGB(245, 235, 210),
+					Parent = folder,
+				})
+			end
+		end
+	end
+
+	-- The collectible marker: a floating gold gem with a price tag.
+	local marker = part({
+		Name = "Collectible",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(3.5, 3.5, 3.5),
+		Color = Color3.fromRGB(255, 205, 40),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+		CanQuery = false,
+		Parent = folder,
+	})
+	local tag = Instance.new("BillboardGui")
+	tag.Size = UDim2.fromOffset(160, 40)
+	tag.StudsOffset = Vector3.new(0, 3.5, 0)
+	tag.AlwaysOnTop = true
+	tag.Parent = marker
+	local tagLabel = Instance.new("TextLabel")
+	tagLabel.Size = UDim2.fromScale(1, 1)
+	tagLabel.BackgroundTransparency = 1
+	tagLabel.Font = Enum.Font.FredokaOne
+	tagLabel.TextScaled = true
+	tagLabel.TextColor3 = Color3.fromRGB(255, 225, 90)
+	tagLabel.TextStrokeTransparency = 0
+	tagLabel.Parent = tag
+	self.Marker = marker
+	self.MarkerLabel = tagLabel
+
+	folder.Parent = Workspace
+	return self
+end
+
+-- Where a piece stands on space `id`. Up to four share a tile, one per corner slot.
+function BoardWorld:spaceCFrame(id: number, slot: number?, facingId: number?): CFrame
+	local top = self.Tops[id] or self.Origin
+	local position = top + SLOT_OFFSETS[((slot or 1) - 1) % #SLOT_OFFSETS + 1] + Vector3.new(0, ROOT_HEIGHT, 0)
+	local facing = facingId and self.Tops[facingId]
+	if facing and (facing - top).Magnitude > 0.1 then
+		local look = Vector3.new(facing.X, position.Y, facing.Z) + (position - top - Vector3.new(0, ROOT_HEIGHT, 0))
+		return CFrame.lookAt(position, look)
+	end
+	return CFrame.new(position)
+end
+
+function BoardWorld:setCollectible(id: number?, label: string)
+	local top = id and self.Tops[id]
+	self.Marker.Transparency = if top then 0 else 1
+	self.MarkerLabel.Text = label
+	if top then
+		self.Marker.Position = top + Vector3.new(0, 7, 0)
+	end
+end
+
+function BoardWorld:destroy()
+	self.Folder:Destroy()
+end
+
+return BoardWorld
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="14">
+          <Properties>
+            <string name="Name">Boards</string>
+          </Properties>
+          <Item class="ModuleScript" referent="15">
+            <Properties>
+              <string name="Name">Classic</string>
+              <string name="Source"><![CDATA[--[[
+	Classic board: a 26-space loop with one shortcut up the middle.
+
+	Each space:
+	  Id      unique number
+	  Type    a key of Board/SpaceTypes
+	  At      { x, z } grid cell; multiplied by Config.Board.SpaceSpacing
+	  Next    ids you can move to from here (2+ = a fork, the mover picks)
+	  Paths   optional labels for a fork's choices, same order as Next
+
+	Start          where everyone begins
+	CrownSpaces    where the collectible can appear (it moves after every purchase)
+
+	Layout (x across, z up), clockwise from Start at the bottom-left:
+
+	  22 21 20 19 18 17 16 15 14     top row (z = 5); the shortcut rejoins at 18
+	  23          30          13
+	  24          29          12
+	  25          28          11
+	  26          27          10
+	   1  2  3  4  5  6  7  8  9     5 is a fork: main road (6) or shortcut (27)
+]]
+
+return {
+	Name = "Classic",
+	Start = 1,
+	CrownSpaces = { 7, 10, 13, 17, 20, 23, 26 },
+	Spaces = {
+		-- bottom row, left to right
+		{ Id = 1, Type = "Neutral", At = { 0, 0 }, Next = { 2 } },
+		{ Id = 2, Type = "Gain", At = { 1, 0 }, Next = { 3 } },
+		{ Id = 3, Type = "Gain", At = { 2, 0 }, Next = { 4 } },
+		{ Id = 4, Type = "Event", At = { 3, 0 }, Next = { 5 } },
+		{ Id = 5, Type = "Neutral", At = { 4, 0 }, Next = { 6, 27 }, Paths = { "Main road", "Shortcut" } },
+		{ Id = 6, Type = "Lose", At = { 5, 0 }, Next = { 7 } },
+		{ Id = 7, Type = "Gain", At = { 6, 0 }, Next = { 8 } },
+		{ Id = 8, Type = "Reward", At = { 7, 0 }, Next = { 9 } },
+		{ Id = 9, Type = "Gain", At = { 8, 0 }, Next = { 10 } },
+		-- right column, upwards
+		{ Id = 10, Type = "Gain", At = { 8, 1 }, Next = { 11 } },
+		{ Id = 11, Type = "Lose", At = { 8, 2 }, Next = { 12 } },
+		{ Id = 12, Type = "Shop", At = { 8, 3 }, Next = { 13 } },
+		{ Id = 13, Type = "Gain", At = { 8, 4 }, Next = { 14 } },
+		-- top row, right to left
+		{ Id = 14, Type = "Event", At = { 8, 5 }, Next = { 15 } },
+		{ Id = 15, Type = "Gain", At = { 7, 5 }, Next = { 16 } },
+		{ Id = 16, Type = "Lose", At = { 6, 5 }, Next = { 17 } },
+		{ Id = 17, Type = "Gain", At = { 5, 5 }, Next = { 18 } },
+		{ Id = 18, Type = "Neutral", At = { 4, 5 }, Next = { 19 } },
+		{ Id = 19, Type = "Reward", At = { 3, 5 }, Next = { 20 } },
+		{ Id = 20, Type = "Gain", At = { 2, 5 }, Next = { 21 } },
+		{ Id = 21, Type = "Lose", At = { 1, 5 }, Next = { 22 } },
+		{ Id = 22, Type = "Event", At = { 0, 5 }, Next = { 23 } },
+		-- left column, downwards
+		{ Id = 23, Type = "Gain", At = { 0, 4 }, Next = { 24 } },
+		{ Id = 24, Type = "Shop", At = { 0, 3 }, Next = { 25 } },
+		{ Id = 25, Type = "Lose", At = { 0, 2 }, Next = { 26 } },
+		{ Id = 26, Type = "Gain", At = { 0, 1 }, Next = { 1 } },
+		-- shortcut up the middle: quicker, but riskier
+		{ Id = 27, Type = "Lose", At = { 4, 1 }, Next = { 28 } },
+		{ Id = 28, Type = "Event", At = { 4, 2 }, Next = { 29 } },
+		{ Id = 29, Type = "Lose", At = { 4, 3 }, Next = { 30 } },
+		{ Id = 30, Type = "Reward", At = { 4, 4 }, Next = { 18 } },
+	},
+}
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">Events</string>
+            <string name="Source"><![CDATA[--[[
+	Events
+	What can happen on an Event space. One is picked at random by Weight.
+
+	Each event:
+	  Id       unique
+	  Name     headline shown to everyone
+	  Weight   relative chance
+	  Apply    function(match, seat, rng) -> string   does the thing, returns the feed line
+
+	Board pieces that change space here are moved in the world by BoardGame afterwards.
+	To add an event: append an entry. Keep the numbers here so they're easy to tune.
+]]
+
+local function others(match, seat)
+	local list = {}
+	for _, other in match.Seats do
+		if other ~= seat then
+			table.insert(list, other)
+		end
+	end
+	return list
+end
+
+return {
+	{
+		Id = "LuckyFind",
+		Name = "Lucky Find",
+		Weight = 3,
+		Apply = function(match, seat)
+			local delta = match:changeCoins(seat, 5)
+			return ("%s found %d coins on the ground"):format(seat.Participant.Name, delta)
+		end,
+	},
+	{
+		Id = "PartyBus",
+		Name = "Party Bus",
+		Weight = 2,
+		Apply = function(match)
+			for _, each in match.Seats do
+				match:changeCoins(each, 2)
+			end
+			return "Everyone gets 2 coins"
+		end,
+	},
+	{
+		Id = "LeakyPocket",
+		Name = "Leaky Pocket",
+		Weight = 2,
+		Apply = function(match, seat)
+			local delta = match:changeCoins(seat, -5)
+			return ("%s dropped %d coins"):format(seat.Participant.Name, -delta)
+		end,
+	},
+	{
+		Id = "SwapSpots",
+		Name = "Swap Spots",
+		Weight = 2,
+		Apply = function(match, seat, rng)
+			local candidates = others(match, seat)
+			local other = candidates[rng:NextInteger(1, #candidates)]
+			seat.SpaceId, other.SpaceId = other.SpaceId, seat.SpaceId
+			return ("%s swapped places with %s"):format(seat.Participant.Name, other.Participant.Name)
+		end,
+	},
+	{
+		Id = "HelpingHand",
+		Name = "Helping Hand",
+		Weight = 1,
+		Apply = function(match)
+			local richest, poorest = match.Seats[1], match.Seats[1]
+			for _, each in match.Seats do
+				if match:coinsOf(each) > match:coinsOf(richest) then
+					richest = each
+				end
+				if match:coinsOf(each) < match:coinsOf(poorest) then
+					poorest = each
+				end
+			end
+			if richest == poorest or match:coinsOf(richest) == match:coinsOf(poorest) then
+				return "Everyone has the same coins, so nothing happens"
+			end
+			local given = -match:changeCoins(richest, -5)
+			match:changeCoins(poorest, given)
+			return ("%s gives %d coins to %s"):format(richest.Participant.Name, given, poorest.Participant.Name)
+		end,
+	},
+	{
+		Id = "CollectibleMoves",
+		Name = "On the Move",
+		Weight = 1,
+		Apply = function(match)
+			match:relocateCollectible()
+			return ("The %s moved to a new space!"):format(match.CollectibleName)
+		end,
+	},
+	{
+		Id = "Warp",
+		Name = "Warp",
+		Weight = 1,
+		Apply = function(match, seat, rng)
+			local order = match.Board.Order
+			seat.SpaceId = order[rng:NextInteger(1, #order)]
+			return ("%s warped across the board"):format(seat.Participant.Name)
+		end,
+	},
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="17">
+          <Properties>
+            <string name="Name">Match</string>
+            <string name="Source"><![CDATA[--[[
+	Match
+	The rules of one board-game match, with no networking, timing or world in it, so it can
+	be tested on its own. BoardGame drives it and draws the results.
+
+	  Match.new(board, participants, settings, deps)
+	    settings  { Rounds }
+	    deps      {
+	      Wallet     CoinService-like: get, add, spend, getCollectibles, addCollectibles, transfer
+	      Inventory  Inventory-like: grant, equip, getEquipped, unowned
+	      Rng        Random
+	      Ask        function(seat, request) -> option index; may yield. request =
+	                 { Kind = "Path"|"Collectible"|"Shop", Prompt, Options = {labels}, Default, Data }
+	    }
+
+	A seat: { Index, Participant, SpaceId }. Seats keep their place in the turn order even
+	when a bot takes over from a player who left (replaceParticipant).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
+local Events = require(script.Parent.Events)
+local SpaceTypes = require(script.Parent.SpaceTypes)
+
+local Match = {}
+Match.__index = Match
+
+local function weightedPick(rng: Random, list)
+	local total = 0
+	for _, entry in list do
+		total += entry.Weight
+	end
+	local roll = rng:NextNumber() * total
+	for _, entry in list do
+		roll -= entry.Weight
+		if roll <= 0 then
+			return entry
+		end
+	end
+	return list[#list]
+end
+
+function Match.new(board, participants, settings, deps)
+	local self = setmetatable({
+		Board = board,
+		Deps = deps,
+		Rng = deps.Rng or Random.new(),
+		Rounds = settings.Rounds or Config.Match.BoardRounds,
+		Round = 0,
+		Seats = {},
+		Order = {},
+		CollectibleSpace = nil,
+		CollectibleName = Config.Collectible.Name,
+		CollectiblePrice = Config.Collectible.Price,
+	}, Match)
+
+	for index, participant in participants do
+		local seat = { Index = index, Participant = participant, SpaceId = board.Start }
+		table.insert(self.Seats, seat)
+		table.insert(self.Order, seat)
+	end
+	-- Random turn order, fixed for the whole match.
+	for i = #self.Order, 2, -1 do
+		local j = self.Rng:NextInteger(1, i)
+		self.Order[i], self.Order[j] = self.Order[j], self.Order[i]
+	end
+	self:relocateCollectible()
+	return self
+end
+
+function Match:participants()
+	local list = {}
+	for _, seat in self.Seats do
+		table.insert(list, seat.Participant)
+	end
+	return list
+end
+
+function Match:seatOf(participant)
+	for _, seat in self.Seats do
+		if seat.Participant == participant then
+			return seat
+		end
+	end
+	return nil
+end
+
+function Match:coinsOf(seat): number
+	return self.Deps.Wallet.get(seat.Participant)
+end
+
+function Match:collectiblesOf(seat): number
+	return self.Deps.Wallet.getCollectibles(seat.Participant)
+end
+
+-- Adds/removes coins (never below 0). Returns the change that actually happened.
+function Match:changeCoins(seat, amount: number): number
+	local _, delta = self.Deps.Wallet.add(seat.Participant, amount)
+	return delta
+end
+
+function Match:roll(): number
+	return self.Rng:NextInteger(1, Config.Board.DieSides)
+end
+
+function Match:ask(seat, request): number
+	local pick = self.Deps.Ask(seat, request)
+	if type(pick) ~= "number" or pick % 1 ~= 0 or pick < 1 or pick > #request.Options then
+		return request.Default or 1
+	end
+	return pick
+end
+
+-- Collectible --------------------------------------------------------------------------------
+
+-- Moves the collectible to a different allowed space, avoiding occupied ones when possible.
+function Match:relocateCollectible()
+	local candidates, free = {}, {}
+	local occupied = {}
+	for _, seat in self.Seats do
+		occupied[seat.SpaceId] = true
+	end
+	for _, id in self.Board.CrownSpaces do
+		if id ~= self.CollectibleSpace then
+			table.insert(candidates, id)
+			if not occupied[id] then
+				table.insert(free, id)
+			end
+		end
+	end
+	local pool = if #free > 0 then free else candidates
+	self.CollectibleSpace = pool[self.Rng:NextInteger(1, #pool)]
+	return self.CollectibleSpace
+end
+
+-- Pays for the collectible. Returns true if bought (and moves it).
+function Match:buyCollectible(seat): boolean
+	if not self.Deps.Wallet.spend(seat.Participant, self.CollectiblePrice) then
+		return false
+	end
+	self.Deps.Wallet.addCollectibles(seat.Participant, 1)
+	self:relocateCollectible()
+	return true
+end
+
+-- Reached the collectible's space (passing or landing): offer it if affordable.
+function Match:offerCollectible(seat): string
+	local name = seat.Participant.Name
+	if self:coinsOf(seat) < self.CollectiblePrice then
+		return ("%s needs %d coins for a %s"):format(name, self.CollectiblePrice, self.CollectibleName)
+	end
+	local pick = self:ask(seat, {
+		Kind = "Collectible",
+		Prompt = ("Buy a %s for %d coins?"):format(self.CollectibleName, self.CollectiblePrice),
+		Options = { "Buy", "Not now" },
+		Default = 1,
+	})
+	if pick == 1 and self:buyCollectible(seat) then
+		return ("%s bought a %s!"):format(name, self.CollectibleName)
+	end
+	return ("%s passed on the %s"):format(name, self.CollectibleName)
+end
+
+-- Movement ------------------------------------------------------------------------------------
+
+-- One space forward. At a fork the mover chooses.
+function Match:step(seat): number
+	local options = self.Board:nextOptions(seat.SpaceId)
+	local nextId = options[1]
+	if #options > 1 then
+		local space = self.Board:get(seat.SpaceId)
+		local labels = {}
+		for i, id in options do
+			labels[i] = if space.Paths then space.Paths[i] else ("Space %d"):format(id)
+		end
+		nextId = options[self:ask(seat, { Kind = "Path", Prompt = "Which way?", Options = labels, Default = 1 })]
+	end
+	seat.SpaceId = nextId
+	return nextId
+end
+
+--[[
+	Moves `steps` spaces, then resolves the landing space.
+	onHop(seat, spaceId, remaining) runs after every hop (BoardGame animates there).
+	onNotice(text) receives anything worth telling everyone on the way (collectible offers).
+	Returns the feed line for the landing (may be nil).
+]]
+function Match:move(seat, steps: number, onHop, onNotice)
+	for remaining = steps - 1, 0, -1 do
+		local id = self:step(seat)
+		if onHop then
+			onHop(seat, id, remaining)
+		end
+		if id == self.CollectibleSpace then
+			local text = self:offerCollectible(seat)
+			if onNotice then
+				onNotice(text)
+			end
+		end
+	end
+	return self:land(seat)
+end
+
+function Match:land(seat): string?
+	local space = self.Board:get(seat.SpaceId)
+	local spaceType = SpaceTypes[space.Type]
+	return spaceType.Resolve(self, seat, space)
+end
+
+-- Space helpers (used by SpaceTypes / Events) ---------------------------------------------------
+
+function Match:runEvent(seat): string
+	local event = weightedPick(self.Rng, Events)
+	return ("%s: %s"):format(event.Name, event.Apply(self, seat, self.Rng))
+end
+
+function Match:grantCosmetic(seat, itemId: string): boolean
+	local ownerId = seat.Participant.Id
+	if not self.Deps.Inventory.grant(ownerId, itemId) then
+		return false
+	end
+	local item = Cosmetics.get(itemId)
+	if not self.Deps.Inventory.getEquipped(ownerId)[item.Slot] then
+		self.Deps.Inventory.equip(ownerId, itemId) -- first item in a slot goes straight on
+	end
+	return true
+end
+
+function Match:giveReward(seat): string
+	local name = seat.Participant.Name
+	local reward = weightedPick(self.Rng, Config.Economy.Rewards)
+	if reward.Kind == "Cosmetic" then
+		local unowned = self.Deps.Inventory.unowned(seat.Participant.Id)
+		if #unowned > 0 then
+			local item = unowned[self.Rng:NextInteger(1, #unowned)]
+			self:grantCosmetic(seat, item.Id)
+			return ("%s unwrapped a %s!"):format(name, item.Name)
+		end
+		reward = { Kind = "Coins", Amount = 5 } -- owns everything already
+	end
+	if reward.Kind == "Collectible" then
+		self.Deps.Wallet.addCollectibles(seat.Participant, reward.Amount)
+		return ("%s unwrapped a %s!"):format(name, self.CollectibleName)
+	end
+	local delta = self:changeCoins(seat, reward.Amount)
+	return ("%s unwrapped %d coins"):format(name, delta)
+end
+
+function Match:visitShop(seat): string
+	local name = seat.Participant.Name
+	local unowned = self.Deps.Inventory.unowned(seat.Participant.Id)
+	if #unowned == 0 then
+		return ("%s already owns everything in the shop"):format(name)
+	end
+	local offers = {}
+	for _ = 1, math.min(Config.Economy.ShopOffers, #unowned) do
+		local item = table.remove(unowned, self.Rng:NextInteger(1, #unowned))
+		table.insert(offers, item)
+	end
+	local labels = {}
+	for i, item in offers do
+		labels[i] = ("%s (%d coins)"):format(item.Name, item.Price)
+	end
+	table.insert(labels, "Leave")
+	local pick = self:ask(seat, {
+		Kind = "Shop",
+		Prompt = "Shop: buy a cosmetic?",
+		Options = labels,
+		Default = #labels,
+		Data = { Items = offers },
+	})
+	local item = offers[pick]
+	if not item then
+		return ("%s left the shop"):format(name)
+	end
+	if not self.Deps.Wallet.spend(seat.Participant, item.Price) then
+		return ("%s can't afford the %s"):format(name, item.Name)
+	end
+	self:grantCosmetic(seat, item.Id)
+	return ("%s bought a %s"):format(name, item.Name)
+end
+
+-- Seats -----------------------------------------------------------------------------------------
+
+-- A bot takes over a seat (its player left). Coins and collectibles carry over.
+function Match:replaceParticipant(seat, newParticipant)
+	self.Deps.Wallet.transfer(seat.Participant, newParticipant)
+	seat.Participant = newParticipant
+end
+
+-- Bots ------------------------------------------------------------------------------------------
+
+-- What a bot picks for an Ask request. `skill` is 0..1.
+function Match:botDecision(seat, request, skill: number): number
+	if request.Kind == "Collectible" then
+		return 1 -- always buy: it's what wins
+	elseif request.Kind == "Shop" then
+		local coins = self:coinsOf(seat)
+		-- Better bots keep enough coins for the collectible.
+		local reserve = Config.Economy.BotShopReserve * skill
+		for i, item in request.Data.Items do
+			if coins - item.Price >= reserve then
+				return i
+			end
+		end
+		return request.Default
+	elseif request.Kind == "Path" then
+		return self.Rng:NextInteger(1, #request.Options)
+	end
+	return request.Default or 1
+end
+
+-- Standings -------------------------------------------------------------------------------------
+
+--[[
+	Ranks rows { Participant, Collectibles, Coins, ... }: most collectibles first, coins break
+	ties, and rows equal on both share a placement. Returns a new sorted list with Placement set.
+]]
+function Match.rank(rows)
+	local sorted = table.clone(rows)
+	table.sort(sorted, function(a, b)
+		if a.Collectibles ~= b.Collectibles then
+			return a.Collectibles > b.Collectibles
+		end
+		if a.Coins ~= b.Coins then
+			return a.Coins > b.Coins
+		end
+		return (a.SeatIndex or 0) < (b.SeatIndex or 0)
+	end)
+	for i, row in sorted do
+		local previous = sorted[i - 1]
+		if previous and previous.Collectibles == row.Collectibles and previous.Coins == row.Coins then
+			row.Placement = previous.Placement
+		else
+			row.Placement = i
+		end
+	end
+	return sorted
+end
+
+function Match:standings()
+	local rows = {}
+	for _, seat in self.Seats do
+		table.insert(rows, {
+			Participant = seat.Participant,
+			SeatIndex = seat.Index,
+			Collectibles = self:collectiblesOf(seat),
+			Coins = self:coinsOf(seat),
+		})
+	end
+	return Match.rank(rows)
+end
+
+return Match
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">SpaceTypes</string>
+            <string name="Source"><![CDATA[--[[
+	SpaceTypes
+	What every kind of board space looks like and does. Board layouts refer to these by key.
+
+	Each type:
+	  Name      shown in the legend / landing toast
+	  Short     a few characters drawn on the tile
+	  Color     tile colour
+	  Resolve   function(match, seat, space) -> string?  runs when a piece LANDS here
+	            (passing over a space does nothing). Return a short line for the feed.
+	            Use the match helpers: changeCoins, runEvent, giveReward, visitShop.
+
+	To add a type: add an entry here, then use its key in a board's Spaces.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local function coinsText(name: string, delta: number): string
+	if delta == 0 then
+		return ("%s has no coins to lose"):format(name)
+	end
+	return ("%s %s %d coins"):format(name, if delta > 0 then "gets" else "loses", math.abs(delta))
+end
+
+return {
+	Neutral = {
+		Name = "Plain space",
+		Short = "",
+		Color = Color3.fromRGB(200, 200, 215),
+		Resolve = function()
+			return nil
+		end,
+	},
+	Gain = {
+		Name = "Coin space",
+		Short = "+" .. Config.Economy.GainSpaceCoins,
+		Color = Color3.fromRGB(70, 140, 255),
+		Resolve = function(match, seat)
+			return coinsText(seat.Participant.Name, match:changeCoins(seat, Config.Economy.GainSpaceCoins))
+		end,
+	},
+	Lose = {
+		Name = "Ouch space",
+		Short = "-" .. Config.Economy.LoseSpaceCoins,
+		Color = Color3.fromRGB(240, 70, 70),
+		Resolve = function(match, seat)
+			return coinsText(seat.Participant.Name, match:changeCoins(seat, -Config.Economy.LoseSpaceCoins))
+		end,
+	},
+	Event = {
+		Name = "Event space",
+		Short = "?",
+		Color = Color3.fromRGB(80, 200, 110),
+		Resolve = function(match, seat)
+			return match:runEvent(seat)
+		end,
+	},
+	Shop = {
+		Name = "Shop",
+		Short = "SHOP",
+		Color = Color3.fromRGB(170, 90, 230),
+		Resolve = function(match, seat)
+			return match:visitShop(seat)
+		end,
+	},
+	Reward = {
+		Name = "Gift space",
+		Short = "GIFT",
+		Color = Color3.fromRGB(255, 190, 40),
+		Resolve = function(match, seat)
+			return match:giveReward(seat)
+		end,
+	},
+}
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -839,6 +2399,7 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local BotService = {}
 
 local rng = Random.new()
+local skillRange = Config.Match.BotDifficulties[Config.Match.BotDifficulty]
 local bots = {} -- every bot we currently own, in seat order
 local nextBotNumber = 0
 local brain: ((any, number) -> ())? = nil
@@ -989,7 +2550,7 @@ local function createBot()
 	local bot = setmetatable({
 		Id = "bot_" .. nextBotNumber,
 		Name = pickName(),
-		Skill = rng:NextNumber(0.3, 1),
+		Skill = rng:NextNumber(skillRange[1], skillRange[2]),
 		Memory = {},
 		Participant = nil,
 		Model = nil,
@@ -1035,6 +2596,14 @@ function BotService.reviveAll(spawnAt: (number) -> CFrame)
 	end
 end
 
+-- Match difficulty: every bot (current and future) gets a skill in [min, max].
+function BotService.setSkillRange(range: { number })
+	skillRange = range
+	for _, bot in bots do
+		bot.Skill = rng:NextNumber(range[1], range[2])
+	end
+end
+
 function BotService.setBrain(fn: ((any, number) -> ())?)
 	brain = fn
 	for _, bot in bots do
@@ -1075,79 +2644,264 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="20">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
 	CoinService
-	Session coin totals. Real players get a "Coins" leaderstat; bots are tracked in memory.
-	(Swap this for DataStore persistence once the board game exists.)
+	Server-authoritative wallets: coins and the match collectible (Config.Collectible) for
+	every seat, players and bots alike, keyed by participant Id. Real players also get
+	leaderstats so the values show in the Roblox player list.
+
+	Wallets are per match: BoardGame calls resetAll() when a match starts.
+	(No persistence yet; add DataStore saving once the session systems are stable.)
 ]]
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
 
 local CoinService = {}
 
-local botCoins: { [string]: number } = {}
+local wallets: { [string]: { Coins: number, Collectibles: number } } = {}
+local playersById: { [string]: Player } = {}
 
 local function setupPlayer(player: Player)
+	if player:FindFirstChild("leaderstats") then
+		return
+	end
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
+	-- Collectible first: it's what the player list sorts by.
+	local collectibles = Instance.new("IntValue")
+	collectibles.Name = Config.Collectible.Plural
+	collectibles.Parent = leaderstats
 	local coins = Instance.new("IntValue")
 	coins.Name = "Coins"
 	coins.Parent = leaderstats
 	leaderstats.Parent = player
 end
 
-local function getValue(player: Player): IntValue?
-	local leaderstats = player:FindFirstChild("leaderstats")
-	return leaderstats and leaderstats:FindFirstChild("Coins") :: IntValue?
+local function wallet(participant)
+	local entry = wallets[participant.Id]
+	if not entry then
+		entry = { Coins = 0, Collectibles = 0 }
+		wallets[participant.Id] = entry
+	end
+	if participant.Player then
+		playersById[participant.Id] = participant.Player
+	end
+	return entry
+end
+
+-- Copies a wallet into the owner's leaderstats (real players only).
+local function mirror(id: string)
+	local player = playersById[id]
+	local entry = wallets[id]
+	local leaderstats = player and player.Parent and player:FindFirstChild("leaderstats")
+	if not leaderstats then
+		return
+	end
+	local coins = leaderstats:FindFirstChild("Coins")
+	local collectibles = leaderstats:FindFirstChild(Config.Collectible.Plural)
+	if coins then
+		coins.Value = if entry then entry.Coins else 0
+	end
+	if collectibles then
+		collectibles.Value = if entry then entry.Collectibles else 0
+	end
 end
 
 function CoinService.get(participant): number
-	if participant.IsBot then
-		return botCoins[participant.Id] or 0
-	end
-	local value = getValue(participant.Player)
-	return if value then value.Value else 0
+	return wallet(participant).Coins
 end
 
--- Adds coins and returns the new total.
-function CoinService.add(participant, amount: number): number
-	if participant.IsBot then
-		botCoins[participant.Id] = (botCoins[participant.Id] or 0) + amount
-		return botCoins[participant.Id]
+function CoinService.getCollectibles(participant): number
+	return wallet(participant).Collectibles
+end
+
+-- Adds (or with a negative amount, removes) coins. Never goes below 0.
+-- Returns the new total and how many coins actually changed hands.
+function CoinService.add(participant, amount: number): (number, number)
+	local entry = wallet(participant)
+	local before = entry.Coins
+	entry.Coins = math.max(0, before + math.floor(amount))
+	mirror(participant.Id)
+	return entry.Coins, entry.Coins - before
+end
+
+function CoinService.addCollectibles(participant, amount: number): number
+	local entry = wallet(participant)
+	entry.Collectibles = math.max(0, entry.Collectibles + math.floor(amount))
+	mirror(participant.Id)
+	return entry.Collectibles
+end
+
+-- Takes `amount` coins only if the participant has them all. Returns true if paid.
+function CoinService.spend(participant, amount: number): boolean
+	local entry = wallet(participant)
+	if amount < 0 or entry.Coins < amount then
+		return false
 	end
-	local value = getValue(participant.Player)
-	if value then
-		value.Value += amount
-		return value.Value
+	entry.Coins -= amount
+	mirror(participant.Id)
+	return true
+end
+
+-- A bot taking over a seat inherits everything the leaver had.
+function CoinService.transfer(from, to)
+	local entry = wallet(from)
+	local target = wallet(to)
+	target.Coins += entry.Coins
+	target.Collectibles += entry.Collectibles
+	wallets[from.Id] = nil
+	mirror(from.Id)
+	mirror(to.Id)
+end
+
+-- Fresh match: everyone back to zero.
+function CoinService.resetAll()
+	table.clear(wallets)
+	for id in playersById do
+		mirror(id)
 	end
-	return 0
 end
 
 Players.PlayerAdded:Connect(setupPlayer)
-for _, player in Players:GetPlayers() do
-	if not player:FindFirstChild("leaderstats") then
-		setupPlayer(player)
+Players.PlayerRemoving:Connect(function(player)
+	for id, owner in playersById do
+		if owner == player then
+			playersById[id] = nil
+		end
 	end
+end)
+for _, player in Players:GetPlayers() do
+	setupPlayer(player)
 end
 
 return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="11">
+      <Item class="ModuleScript" referent="21">
+        <Properties>
+          <string name="Name">Inventory</string>
+          <string name="Source"><![CDATA[--[[
+	Inventory
+	Who owns which cosmetic (PartyShared.Cosmetics) and what each owner has equipped.
+	Server-authoritative; owners are participant Ids ("player_123", "bot_4").
+
+	Session only: real players keep their items across matches until they leave the
+	server; bots lose theirs at the end of every match (resetBots). No saving yet.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
+
+local Inventory = {}
+
+local owners: { [string]: { Owned: { [string]: boolean }, Equipped: { [string]: string } } } = {}
+
+local function entry(ownerId: string)
+	local record = owners[ownerId]
+	if not record then
+		record = { Owned = {}, Equipped = {} }
+		owners[ownerId] = record
+	end
+	return record
+end
+
+function Inventory.owns(ownerId: string, itemId: string): boolean
+	local record = owners[ownerId]
+	return record ~= nil and record.Owned[itemId] == true
+end
+
+-- Gives an item. Returns false for unknown items or ones already owned.
+function Inventory.grant(ownerId: string, itemId: string): boolean
+	if not Cosmetics.get(itemId) or Inventory.owns(ownerId, itemId) then
+		return false
+	end
+	entry(ownerId).Owned[itemId] = true
+	return true
+end
+
+-- Equips an owned item into its slot (replacing whatever was there).
+function Inventory.equip(ownerId: string, itemId: string): boolean
+	local item = Cosmetics.get(itemId)
+	if not item or not Inventory.owns(ownerId, itemId) then
+		return false
+	end
+	entry(ownerId).Equipped[item.Slot] = itemId
+	return true
+end
+
+function Inventory.unequip(ownerId: string, slot: string)
+	local record = owners[ownerId]
+	if record then
+		record.Equipped[slot] = nil
+	end
+end
+
+function Inventory.getEquipped(ownerId: string): { [string]: string }
+	local record = owners[ownerId]
+	return if record then table.clone(record.Equipped) else {}
+end
+
+function Inventory.getOwned(ownerId: string): { string }
+	local list = {}
+	local record = owners[ownerId]
+	if record then
+		for itemId in record.Owned do
+			table.insert(list, itemId)
+		end
+	end
+	table.sort(list)
+	return list
+end
+
+-- Catalog items this owner doesn't have yet.
+function Inventory.unowned(ownerId: string)
+	local list = {}
+	for _, item in Cosmetics.Items do
+		if not Inventory.owns(ownerId, item.Id) then
+			table.insert(list, item)
+		end
+	end
+	return list
+end
+
+function Inventory.forget(ownerId: string)
+	owners[ownerId] = nil
+end
+
+function Inventory.resetBots()
+	for ownerId in owners do
+		if string.sub(ownerId, 1, 4) == "bot_" then
+			owners[ownerId] = nil
+		end
+	end
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	Inventory.forget("player_" .. player.UserId)
+end)
+
+return Inventory
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="22">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
           <string name="Source"><![CDATA[--[[
 	Main (server entry point)
-	The party loop: lobby -> seat 4 participants (real players first, bots fill the rest)
-	-> MinigameManager.runRound -> repeat.
-
-	When the board game exists, it replaces this loop and calls
-	MinigameManager.runRound(participants) at the end of each turn.
+	The match loop: waiting room (host picks settings) -> seat 4 participants (real players
+	first, bots fill the rest) -> BoardGame.play (board turns + a minigame every round ->
+	final standings) -> back to the waiting room.
 ]]
 
 local Players = game:GetService("Players")
@@ -1155,12 +2909,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Arena = require(script.Parent.Arena)
+local BoardGame = require(script.Parent.Board.BoardGame)
 local BotService = require(script.Parent.BotService)
 local MinigameManager = require(script.Parent.MinigameManager)
 local Participant = require(script.Parent.Participant)
+local WaitingRoom = require(script.Parent.WaitingRoom)
 
 Arena.ensureLobby()
 MinigameManager.init()
+MinigameManager.setInputHandler(function(player, payload)
+	return WaitingRoom.handleInput(player, payload) or BoardGame.handleInput(player, payload)
+end)
 
 -- First come, first seated: track join order so seats are fair when >4 players are on.
 local joinOrder: { Player } = {}
@@ -1196,25 +2955,34 @@ local function buildParticipants()
 	return participants
 end
 
+local function getHost(): Player?
+	return joinOrder[1]
+end
+
 while true do
 	while #Players:GetPlayers() == 0 do
 		MinigameManager.showLobby("Waiting for players...")
 		Players.PlayerAdded:Wait()
 	end
 
-	MinigameManager.showLobby("Next minigame starting soon!", Config.IntermissionDuration)
+	local settings = WaitingRoom.run(getHost)
+	if #Players:GetPlayers() == 0 then
+		continue -- everyone left during the countdown
+	end
+	BotService.setSkillRange(Config.Match.BotDifficulties[settings.Difficulty])
 
 	local participants = buildParticipants()
-	local ok, err = xpcall(MinigameManager.runRound, debug.traceback, participants)
+	local ok, err = xpcall(BoardGame.play, debug.traceback, participants, settings)
 	if not ok then
-		warn("[Party] Round crashed, returning to lobby:\n" .. tostring(err))
-		MinigameManager.abort("⚠️ Minigame crashed — back to the lobby!")
+		warn("[Party] Match crashed, returning to the waiting room:\n" .. tostring(err))
+		MinigameManager.abort("Match crashed, back to the lobby!")
+		BoardGame.cleanup()
 	end
 end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="23">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -1345,7 +3113,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="24">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -1381,6 +3149,8 @@ local inputRemote = Net.inputRemote()
 local rng = Random.new()
 
 local registry = {} -- { { Id = moduleName, Definition = module table } }
+local extraInputHandler: ((Player, any) -> boolean)? = nil -- board game / lobby inputs
+local readyHooks: { (Player) -> () } = {}
 
 local state = {
 	PhaseMessage = { Type = Net.Message.Phase, Phase = Net.Phase.Lobby } :: any,
@@ -1487,6 +3257,9 @@ local function sendSnapshot(player: Player)
 	end
 	if state.Active then
 		stateRemote:FireClient(player, chipsMessage())
+	end
+	for _, hook in readyHooks do
+		task.spawn(hook, player)
 	end
 end
 
@@ -1684,7 +3457,7 @@ local function onParticipantLost(participant, reason: string)
 	end
 	active.Round:Eliminate(participant, true)
 	active.Round:Toast(
-		if reason == "Left" then ("👋 %s rage quit"):format(participant.Name) else ("💀 %s got bonked"):format(participant.Name)
+		if reason == "Left" then ("👋 %s left the game"):format(participant.Name) else ("💥 %s is out"):format(participant.Name)
 	)
 	safeCall(active.Instance, "OnParticipantLost", participant, reason)
 end
@@ -1730,7 +3503,7 @@ end
 --[[
 	Plays one full round with exactly Config.PlayersPerMatch participants.
 	Returns the normalized ranked results and the coin rows shown on the results screen.
-	This is the hook a future board game calls between turns.
+	BoardGame calls this after every full turn cycle.
 ]]
 function MinigameManager.runRound(participants)
 	assert(#registry > 0, "No minigames loaded")
@@ -1889,6 +3662,24 @@ function MinigameManager.showLobby(text: string, duration: number?)
 	end
 end
 
+-- Hooks for the board game and lobby, which share the same remotes and phase snapshot.
+MinigameManager.setPhase = setPhase
+MinigameManager.broadcast = broadcast
+
+function MinigameManager.sendTo(player: Player, message)
+	stateRemote:FireClient(player, message)
+end
+
+-- fn(player, payload) -> true if it handled the input. Runs after rate limiting, before votes/actions.
+function MinigameManager.setInputHandler(fn: ((Player, any) -> boolean)?)
+	extraInputHandler = fn
+end
+
+-- fn(player) runs whenever a client asks for the current state (join / reload).
+function MinigameManager.onReady(fn: (Player) -> ())
+	table.insert(readyHooks, fn)
+end
+
 function MinigameManager.getMinigames()
 	local list = {}
 	for _, entry in registry do
@@ -1953,6 +3744,9 @@ function MinigameManager.init()
 			sendSnapshot(player)
 			return
 		end
+		if extraInputHandler and extraInputHandler(player, payload) then
+			return
+		end
 		local participant = state.ByPlayer[player]
 		if not participant then
 			return -- spectators (5th+ player) can't vote or act
@@ -1984,11 +3778,11 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="14">
+      <Item class="Folder" referent="25">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -2009,7 +3803,7 @@ local FallingPlatforms = {}
 
 FallingPlatforms.Info = {
 	Name = "Falling Platforms",
-	Description = "The floor is lava's lazy cousin: tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
+	Description = "Tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
 	Duration = 75,
 	Layout = Config.Layouts.FFA,
 	Camera = { Mode = "FollowBehind" },
@@ -2301,7 +4095,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -2519,7 +4313,7 @@ function HotPotato:_explode(spawnNext: boolean)
 		explosion.DestroyJointRadiusPercent = 0
 		explosion.Parent = self.Arena.Folder
 	end
-	self.Round:Toast(("💥 BOOM! %s got cooked"):format(holder.Name))
+	self.Round:Toast(("💥 BOOM! The potato popped on %s"):format(holder.Name))
 	self.Round:Eliminate(holder, true)
 	self:_refreshChips()
 
@@ -2797,7 +4591,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -3470,7 +5264,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -3657,7 +5451,7 @@ function KernelCatch:_hitByRock(participant, position: Vector3)
 	self.StunnedUntil[participant] = stunEnds + STUN_IMMUNITY
 	self:_setScore(participant, math.max(0, self.Score[participant] - ROCK_PENALTY))
 	participant:SetMovement(0, false)
-	self.Round:Toast(("💥 %s got bonked!"):format(participant.Name))
+	self.Round:Toast(("💥 %s got hit by a rock!"):format(participant.Name))
 
 	-- Hit effect: a puff at the impact point and a red flash on the victim while stunned.
 	local burst = Instance.new("Explosion")
@@ -3980,7 +5774,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -4002,7 +5796,7 @@ local MashDash = {}
 
 MashDash.Info = {
 	Name = "Mash Dash",
-	Description = "Mash to run! First one over the finish line wins it for their team. Your thumbs will hate you 👍💥",
+	Description = "Mash to run! First one over the finish line wins it for their team. Tap as fast as you can! 👍",
 	Duration = 30,
 	Layout = Config.Layouts.TwoVsTwo,
 	Camera = { Mode = "SideView", Distance = 55, Height = 10 },
@@ -4137,7 +5931,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -4554,7 +6348,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -4680,7 +6474,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="33">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -4824,7 +6618,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="23">
+      <Item class="ModuleScript" referent="34">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -4940,7 +6734,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="24">
+      <Item class="ModuleScript" referent="35">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -5065,21 +6859,123 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
+      <Item class="ModuleScript" referent="36">
+        <Properties>
+          <string name="Name">WaitingRoom</string>
+          <string name="Source"><![CDATA[--[[
+	WaitingRoom
+	The pre-match lobby: counts down, shows who's in, and lets the host (first player in
+	the server) pick the match settings or start early. Empty seats are filled with bots
+	when the match starts, so one player is enough.
+
+	  WaitingRoom.run(getHost) -> settings { Rounds, Difficulty, Board } (yields)
+	  WaitingRoom.handleInput(player, payload) -> true if it was a waiting-room input
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local MinigameManager = require(script.Parent.MinigameManager)
+
+local WaitingRoom = {}
+
+-- Kept between matches, so the host doesn't have to pick again.
+local settings = {
+	Rounds = Config.Match.BoardRounds,
+	Difficulty = Config.Match.BotDifficulty,
+	Board = Config.Match.Board,
+}
+
+local open = false
+local changed = false
+local startNow = false
+local hostGetter: (() -> Player?)? = nil
+
+local function publish(endsAt: number)
+	local host = hostGetter and hostGetter()
+	MinigameManager.setPhase(Net.Phase.Lobby, {
+		Text = "Next match starting soon",
+		EndsAt = endsAt,
+		WaitingRoom = true,
+		Settings = table.clone(settings),
+		Choices = {
+			Rounds = Config.Match.BoardRoundChoices,
+			Difficulty = Config.Match.BotDifficultyOrder,
+		},
+		HostId = host and host.UserId,
+		HostName = host and host.DisplayName,
+		PlayerCount = math.min(#Players:GetPlayers(), Config.PlayersPerMatch),
+		Seats = Config.PlayersPerMatch,
+	})
+end
+
+function WaitingRoom.run(getHost: () -> Player?)
+	hostGetter = getHost
+	open = true
+	startNow = false
+	local endsAt = Workspace:GetServerTimeNow() + Config.Match.WaitingRoomDuration
+	local playerCount = #Players:GetPlayers()
+	local host = getHost()
+	publish(endsAt)
+	while Workspace:GetServerTimeNow() < endsAt and not startNow do
+		task.wait(0.1)
+		if changed or #Players:GetPlayers() ~= playerCount or getHost() ~= host then
+			changed = false
+			playerCount = #Players:GetPlayers()
+			host = getHost()
+			publish(endsAt)
+		end
+	end
+	open = false
+	return table.clone(settings)
+end
+
+function WaitingRoom.getSettings()
+	return table.clone(settings)
+end
+
+function WaitingRoom.handleInput(player: Player, payload): boolean
+	local kind = payload.Kind
+	if kind ~= Net.Input.Setting and kind ~= Net.Input.StartMatch then
+		return false
+	end
+	if not open or not hostGetter or hostGetter() ~= player then
+		return true -- only the host, only while the waiting room is open
+	end
+	if kind == Net.Input.StartMatch then
+		startNow = true
+	elseif payload.Key == "Rounds" and table.find(Config.Match.BoardRoundChoices, payload.Value) then
+		settings.Rounds = payload.Value
+		changed = true
+	elseif payload.Key == "Difficulty" and table.find(Config.Match.BotDifficultyOrder, payload.Value) then
+		settings.Difficulty = payload.Value
+		changed = true
+	end
+	return true
+end
+
+return WaitingRoom
+]]></string>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="25">
+  <Item class="StarterPlayer" referent="37">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="26">
+    <Item class="StarterPlayerScripts" referent="38">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="27">
+      <Item class="Folder" referent="39">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -5302,7 +7198,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -5413,7 +7309,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="30">
+        <Item class="LocalScript" referent="42">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -5434,12 +7330,15 @@ local Controls = require(script.Parent:WaitForChild("Controls"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
 local ActionBar = require(UI:WaitForChild("ActionBar"))
+local BoardView = require(UI:WaitForChild("BoardView"))
 local Hud = require(UI:WaitForChild("Hud"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
+local LobbyPanel = require(UI:WaitForChild("LobbyPanel"))
 local PlayerChips = require(UI:WaitForChild("PlayerChips"))
 local ProgressBar = require(UI:WaitForChild("ProgressBar"))
 local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
+local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
 
 local player = Players.LocalPlayer
@@ -5511,10 +7410,25 @@ spectatorBar = SpectatorBar.new(screen, function(direction)
 	spectatorBar:show(CameraController.getTargetName())
 end)
 Controls.setActionBar(ActionBar.new(screen))
+local boardView = BoardView.new(screen, sendInput)
+local lobbyPanel = LobbyPanel.new(screen, sendInput)
+local standings = StandingsScreen.new(screen)
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
 -- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
-local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "ProgressBar", "SpectatorBar", "Lobby" }
+local HUD_STRIPS = {
+	"Timer",
+	"Status",
+	"PlayerChips",
+	"ProgressBar",
+	"SpectatorBar",
+	"Lobby",
+	"BoardHeader",
+	"BoardStandings",
+	"BoardRoll",
+	"BoardPrompt",
+	"WaitingRoom",
+}
 local HUD_DESIGN_HEIGHT = 720
 local hudBasePositions = {}
 
@@ -5551,6 +7465,7 @@ local function hideOverlays()
 	voteScreen:hide()
 	instructions:hide()
 	results:hide()
+	standings:hide()
 	setCardOpen(false)
 end
 
@@ -5633,13 +7548,44 @@ local phaseHandlers = {}
 phaseHandlers[Phase.Lobby] = function(message)
 	hideOverlays()
 	endRound()
+	boardView:hide()
 	hud:setTimer(nil)
 	hud:setStatus(nil)
-	hud:setLobby(message.Text or "Lobby", message.EndsAt)
+	if message.WaitingRoom then
+		hud:setLobby(nil)
+		lobbyPanel:show(message)
+	else
+		lobbyPanel:hide()
+		hud:setLobby(message.Text or "Lobby", message.EndsAt)
+	end
+end
+
+phaseHandlers[Phase.Board] = function(_message)
+	hideOverlays()
+	endRound()
+	lobbyPanel:hide()
+	hud:setLobby(nil)
+	hud:setTimer(nil)
+	hud:setStatus(nil)
+	setCardOpen(true) -- no walking on the board: hide the thumbstick so the roll button is clear
+	boardView:show()
+end
+
+phaseHandlers[Phase.Standings] = function(message)
+	hideOverlays()
+	endRound()
+	lobbyPanel:hide()
+	boardView:show()
+	boardView:hidePanels()
+	hud:clearToasts()
+	setCardOpen(true)
+	standings:show(message, myId)
 end
 
 phaseHandlers[Phase.Vote] = function(message)
 	hideOverlays()
+	boardView:hide()
+	lobbyPanel:hide()
 	hud:setLobby(nil)
 	setCardOpen(true)
 	voteScreen:show(message.Choices, message.EndsAt)
@@ -5709,6 +7655,12 @@ stateRemote.OnClientEvent:Connect(function(message)
 		hud:toast(message.Text)
 	elseif message.Type == Net.Message.Chips then
 		onChips(message.Chips)
+	elseif message.Type == Net.Message.BoardLayout then
+		boardView:setLayout(message)
+	elseif message.Type == Net.Message.BoardState then
+		boardView:setState(message)
+	elseif message.Type == Net.Message.Prompt then
+		boardView:showPrompt(message)
 	end
 end)
 
@@ -5716,6 +7668,8 @@ RunService.RenderStepped:Connect(function()
 	hud:update()
 	voteScreen:update()
 	instructions:update()
+	boardView:update()
+	lobbyPanel:update()
 end)
 
 -- Ask for the current state in case we joined mid-round.
@@ -5723,11 +7677,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="31">
+        <Item class="Folder" referent="43">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="32">
+          <Item class="ModuleScript" referent="44">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -6012,7 +7966,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="33">
+          <Item class="ModuleScript" referent="45">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -6268,11 +8222,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="34">
+        <Item class="Folder" referent="46">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="35">
+          <Item class="ModuleScript" referent="47">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -6420,7 +8374,381 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="36">
+          <Item class="ModuleScript" referent="48">
+            <Properties>
+              <string name="Name">BoardView</string>
+              <string name="Source"><![CDATA[--[[
+	BoardView
+	Everything the client shows during the board phase. Functional placeholder UI; the
+	visual pass (style guide) comes later.
+
+	  header      top centre, under Roblox's top bar: round, whose turn, dice / moves left
+	  standings   left side: every seat's collectibles and coins, current turn highlighted
+	  roll        big button bottom right, only on your turn (Space / ButtonA too)
+	  prompt      bottom centre: fork / buy / shop choices sent to you by the server
+	  camera      follows whoever's turn it is
+
+	Only renders server state; every decision is validated on the server.
+]]
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local BoardView = {}
+BoardView.__index = BoardView
+
+local ROLL_ACTION = "PartyBoardRoll"
+local CAMERA_BIND = "PartyBoardCamera"
+local CAMERA_OFFSET = Vector3.new(0, 42, 34)
+
+local myId = "player_" .. Players.LocalPlayer.UserId
+
+-- send(payload) fires the input remote.
+function BoardView.new(screen: ScreenGui, send: (any) -> ())
+	local self = setmetatable({ Send = send, Visible = false }, BoardView)
+
+	-- Header
+	self.Header = make("Frame", {
+		Name = "BoardHeader",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 64), -- below Roblox's top bar
+		Size = UDim2.fromOffset(460, 70),
+		BackgroundColor3 = Theme.Colors.Card,
+		BackgroundTransparency = 0.1,
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(18), Theme.stroke(Theme.Colors.Accent, 3) })
+	self.Title = Theme.label({
+		Position = UDim2.fromScale(0.03, 0.05),
+		Size = UDim2.fromScale(0.94, 0.5),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Parent = self.Header,
+	}, 30)
+	self.Subtitle = Theme.label({
+		Position = UDim2.fromScale(0.03, 0.55),
+		Size = UDim2.fromScale(0.94, 0.4),
+		Parent = self.Header,
+	}, 22)
+
+	-- Standings (left side, below the top-left Roblox buttons)
+	self.Standings = make("Frame", {
+		Name = "BoardStandings",
+		Position = UDim2.new(0, 12, 0, 150),
+		Size = UDim2.fromOffset(230, 4 * 54 + 3 * 6),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	}, { make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	self.Rows = {}
+
+	-- Roll button
+	self.RollButton = make("TextButton", {
+		Name = "BoardRoll",
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -24, 1, -24),
+		Size = UDim2.fromOffset(150, 150),
+		BackgroundColor3 = Theme.Colors.Good,
+		Font = Theme.TitleFont,
+		Text = "",
+		AutoButtonColor = true,
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(75), Theme.stroke(Color3.new(1, 1, 1), 4) })
+	self.RollLabel = Theme.label({
+		Size = UDim2.fromScale(1, 0.6),
+		Position = UDim2.fromScale(0, 0.12),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Overlay,
+		Text = "ROLL!",
+		Parent = self.RollButton,
+	}, 44)
+	self.RollClock = Theme.label({
+		Size = UDim2.fromScale(1, 0.22),
+		Position = UDim2.fromScale(0, 0.68),
+		TextColor3 = Theme.Colors.Overlay,
+		Parent = self.RollButton,
+	}, 22)
+	self.RollButton.Activated:Connect(function()
+		self:roll()
+	end)
+
+	-- Prompt (bottom centre)
+	self.Prompt = make("Frame", {
+		Name = "BoardPrompt",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -20),
+		Size = UDim2.fromOffset(620, 150),
+		BackgroundColor3 = Theme.Colors.Card,
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(18), Theme.stroke(Theme.Colors.Accent, 3), Theme.padding(10) })
+	self.PromptText = Theme.label({
+		Size = UDim2.new(1, 0, 0, 40),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Parent = self.Prompt,
+	}, 30)
+	self.PromptButtons = make("Frame", {
+		Position = UDim2.new(0, 0, 0, 48),
+		Size = UDim2.new(1, 0, 1, -48),
+		BackgroundTransparency = 1,
+		Parent = self.Prompt,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			Padding = UDim.new(0, 10),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	self.PromptId = nil
+	self.PromptEndsAt = nil
+
+	self.State = nil
+	self.Layout = nil
+	self.Focus = nil
+	return self
+end
+
+-- Layout / state ------------------------------------------------------------------------------
+
+function BoardView:setLayout(message)
+	self.Layout = message
+	local sum, count = Vector3.zero, 0
+	for _, space in message.Spaces do
+		sum += space.Position
+		count += 1
+	end
+	self.Centre = if count > 0 then sum / count else Vector3.zero
+end
+
+local function seatLine(seat, plural: string): string
+	return ("%d %s  ·  %d coins"):format(
+		seat.Collectibles,
+		if seat.Collectibles == 1 then string.sub(plural, 1, -2) else plural,
+		seat.Coins
+	)
+end
+
+function BoardView:setState(message)
+	self.State = message
+	if not self.Visible then
+		return
+	end
+
+	-- Header
+	local myTurn = message.TurnId == myId
+	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
+	self.Title.Text = ("Round %d / %d%s"):format(message.Round or 0, message.Rounds or 0, if who then "  ·  " .. who .. " turn" else "")
+	local sub = message.Text or ""
+	if message.Stage == "Moving" and message.Remaining then
+		sub = ("Rolled %d  ·  %d move%s left"):format(message.Roll or 0, message.Remaining, if message.Remaining == 1 then "" else "s")
+	elseif message.Stage == "Roll" and myTurn then
+		sub = "Tap ROLL to roll the die!"
+	end
+	self.Subtitle.Text = sub
+
+	-- Standings rows (turn order)
+	for _, row in self.Rows do
+		row:Destroy()
+	end
+	self.Rows = {}
+	for _, seat in message.Seats do
+		local isTurn = seat.Id == message.TurnId
+		local isMe = seat.Id == myId
+		local row = make("Frame", {
+			LayoutOrder = seat.Order,
+			Size = UDim2.new(1, 0, 0, 54),
+			BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Card,
+			BackgroundTransparency = 0.1,
+			Parent = self.Standings,
+		}, { Theme.corner(12) })
+		if isTurn then
+			Theme.stroke(Theme.Colors.Accent, 3).Parent = row
+		end
+		Theme.label({
+			Position = UDim2.fromOffset(10, 4),
+			Size = UDim2.new(1, -20, 0, 26),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Font = Theme.TitleFont,
+			Text = (if isTurn then "▶ " else "") .. (if isMe then "YOU" else seat.Name) .. (if seat.IsBot then " (bot)" else ""),
+			Parent = row,
+		}, 22)
+		Theme.label({
+			Position = UDim2.fromOffset(10, 30),
+			Size = UDim2.new(1, -20, 0, 20),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = Theme.Colors.Accent,
+			Text = seatLine(seat, message.CollectiblePlural or "Crowns"),
+			Parent = row,
+		}, 18)
+		table.insert(self.Rows, row)
+	end
+
+	-- Roll button: only on your turn, while waiting for the roll.
+	local canRoll = myTurn and message.Stage == "Roll"
+	if canRoll and not self.RollButton.Visible then
+		Theme.pop(self.RollButton)
+		ContextActionService:BindAction(ROLL_ACTION, function(_, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				self:roll()
+			end
+			return Enum.ContextActionResult.Sink
+		end, false, Enum.KeyCode.Space, Enum.KeyCode.ButtonA)
+	elseif not canRoll then
+		ContextActionService:UnbindAction(ROLL_ACTION)
+	end
+	self.RollButton.Visible = canRoll
+end
+
+function BoardView:roll()
+	if self.RollButton.Visible then
+		self.RollButton.Visible = false
+		ContextActionService:UnbindAction(ROLL_ACTION)
+		self.Send({ Kind = "Roll" })
+	end
+end
+
+-- Prompt ------------------------------------------------------------------------------------------
+
+function BoardView:showPrompt(message)
+	for _, child in self.PromptButtons:GetChildren() do
+		if child:IsA("GuiButton") then
+			child:Destroy()
+		end
+	end
+	self.PromptId = message.PromptId
+	self.PromptEndsAt = message.EndsAt
+	if not message.PromptId then
+		self.Prompt.Visible = false
+		return
+	end
+	self.PromptText.Text = message.Prompt
+	local count = #message.Options
+	for index, option in message.Options do
+		local button = make("TextButton", {
+			LayoutOrder = index,
+			Size = UDim2.new(1 / count, -10, 1, 0),
+			BackgroundColor3 = if index == count and count > 1 then Theme.Colors.CardLight else Theme.Colors.Cool,
+			Font = Theme.BodyFont,
+			TextScaled = true,
+			TextColor3 = if index == count and count > 1 then Theme.Colors.Text else Theme.Colors.Overlay,
+			Text = option,
+			Parent = self.PromptButtons,
+		}, {
+			Theme.corner(14),
+			Theme.padding(8),
+			make("UITextSizeConstraint", { MaxTextSize = 26, MinTextSize = 10 }),
+		})
+		button.Activated:Connect(function()
+			if self.PromptId == message.PromptId then
+				self.Send({ Kind = "Choice", PromptId = message.PromptId, Index = index })
+				self.PromptId = nil
+				self.Prompt.Visible = false
+			end
+		end)
+	end
+	self.Prompt.Visible = true
+	Theme.pop(self.Prompt)
+end
+
+-- Visibility + camera -----------------------------------------------------------------------------
+
+local function turnFocus(self): Vector3?
+	local state = self.State
+	if not state then
+		return self.Centre
+	end
+	for _, seat in state.Seats do
+		if seat.Id == state.TurnId then
+			local character = seat.Character
+			local root = character and character.Parent and character:FindFirstChild("HumanoidRootPart")
+			if root then
+				return root.Position
+			end
+		end
+	end
+	return self.Centre
+end
+
+function BoardView:show()
+	if self.Visible then
+		return
+	end
+	self.Visible = true
+	self.Header.Visible = true
+	self.Standings.Visible = true
+	self.Focus = nil
+	local camera = Workspace.CurrentCamera
+	camera.CameraType = Enum.CameraType.Scriptable
+	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
+		local goal = turnFocus(self)
+		if not goal then
+			return
+		end
+		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
+		camera.CameraType = Enum.CameraType.Scriptable
+		camera.CFrame = CFrame.lookAt(self.Focus + CAMERA_OFFSET, self.Focus)
+		-- Your piece is teleported around; if it tips over, stand it back up.
+		local character = Players.LocalPlayer.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local humanoidState = humanoid and humanoid:GetState()
+		if humanoidState == Enum.HumanoidStateType.FallingDown or humanoidState == Enum.HumanoidStateType.Ragdoll then
+			humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+		end
+	end)
+	if self.State then
+		self:setState(self.State)
+	end
+end
+
+function BoardView:hide()
+	if not self.Visible then
+		return
+	end
+	self.Visible = false
+	self.Header.Visible = false
+	self.Standings.Visible = false
+	self.RollButton.Visible = false
+	self.Prompt.Visible = false
+	ContextActionService:UnbindAction(ROLL_ACTION)
+	RunService:UnbindFromRenderStep(CAMERA_BIND)
+	local camera = Workspace.CurrentCamera
+	camera.CameraType = Enum.CameraType.Custom
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		camera.CameraSubject = humanoid
+	end
+end
+
+-- Keeps the board camera but hides the header, standings, roll and prompt (final standings card).
+function BoardView:hidePanels()
+	self.Header.Visible = false
+	self.Standings.Visible = false
+	self.RollButton.Visible = false
+	self.Prompt.Visible = false
+	ContextActionService:UnbindAction(ROLL_ACTION)
+end
+
+-- Per frame: countdown on the roll button.
+function BoardView:update()
+	if self.RollButton.Visible and self.State and self.State.RollEndsAt then
+		self.RollClock.Text = ("%ds"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))
+	end
+end
+
+return BoardView
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="49">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -6645,7 +8973,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="37">
+          <Item class="ModuleScript" referent="50">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -6792,7 +9120,174 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="38">
+          <Item class="ModuleScript" referent="51">
+            <Properties>
+              <string name="Name">LobbyPanel</string>
+              <string name="Source"><![CDATA[--[[
+	LobbyPanel
+	Waiting-room card (bottom centre, so the lobby stays visible): countdown, players
+	seated, and the match settings. The host can change settings and start early; everyone
+	else just sees them. The server checks every change.
+]]
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local LobbyPanel = {}
+LobbyPanel.__index = LobbyPanel
+
+function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
+	local self = setmetatable({ Send = send, EndsAt = nil }, LobbyPanel)
+
+	self.Root = make("Frame", {
+		Name = "WaitingRoom",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -16),
+		Size = UDim2.fromOffset(640, 196),
+		BackgroundColor3 = Theme.Colors.Card,
+		BackgroundTransparency = 0.05,
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(20), Theme.stroke(Theme.Colors.Accent, 3), Theme.padding(12) })
+
+	self.Title = Theme.label({
+		Size = UDim2.new(0.62, 0, 0, 36),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Text = "PARTY GAMES",
+		Parent = self.Root,
+	}, 32)
+	self.Clock = Theme.label({
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.new(0.38, 0, 0, 36),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Font = Theme.TitleFont,
+		Parent = self.Root,
+	}, 30)
+	self.Info = Theme.label({
+		Position = UDim2.fromOffset(0, 38),
+		Size = UDim2.new(1, 0, 0, 24),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = Theme.Colors.Muted,
+		Parent = self.Root,
+	}, 20)
+
+	self.SettingRows = make("Frame", {
+		Position = UDim2.fromOffset(0, 68),
+		Size = UDim2.new(0.72, 0, 1, -68),
+		BackgroundTransparency = 1,
+		Parent = self.Root,
+	}, { make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }) })
+
+	self.StartButton = make("TextButton", {
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.fromScale(1, 1),
+		Size = UDim2.new(0.26, 0, 1, -68),
+		BackgroundColor3 = Theme.Colors.Good,
+		Font = Theme.TitleFont,
+		TextScaled = true,
+		TextColor3 = Theme.Colors.Overlay,
+		Text = "START",
+		Visible = false,
+		Parent = self.Root,
+	}, { Theme.corner(16), Theme.padding(10), make("UITextSizeConstraint", { MaxTextSize = 34 }) })
+	self.StartButton.Activated:Connect(function()
+		self.Send({ Kind = "StartMatch" })
+	end)
+	return self
+end
+
+local function settingRow(self, order: number, label: string, key: string, choices, selected, isHost: boolean)
+	local row = make("Frame", {
+		LayoutOrder = order,
+		Size = UDim2.new(1, 0, 0, 52),
+		BackgroundTransparency = 1,
+		Parent = self.SettingRows,
+	})
+	Theme.label({
+		Size = UDim2.new(0.28, 0, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = label,
+		Parent = row,
+	}, 22)
+	local buttons = make("Frame", {
+		Position = UDim2.fromScale(0.28, 0),
+		Size = UDim2.fromScale(0.72, 1),
+		BackgroundTransparency = 1,
+		Parent = row,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	for index, choice in choices do
+		local isSelected = choice == selected
+		local button = make("TextButton", {
+			LayoutOrder = index,
+			Size = UDim2.new(1 / #choices, -6, 1, 0),
+			BackgroundColor3 = if isSelected then Theme.Colors.Accent else Theme.Colors.CardLight,
+			BackgroundTransparency = if isHost or isSelected then 0 else 0.5,
+			AutoButtonColor = isHost,
+			Font = Theme.BodyFont,
+			TextScaled = true,
+			TextColor3 = if isSelected then Theme.Colors.Overlay else Theme.Colors.Text,
+			Text = tostring(choice),
+			Parent = buttons,
+		}, { Theme.corner(12), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 24 }) })
+		if isHost then
+			button.Activated:Connect(function()
+				self.Send({ Kind = "Setting", Key = key, Value = choice })
+			end)
+		end
+	end
+end
+
+function LobbyPanel:show(message)
+	local isHost = message.HostId == Players.LocalPlayer.UserId
+	self.EndsAt = message.EndsAt
+	self.Info.Text = ("%d / %d players  ·  bots fill empty seats  ·  %s"):format(
+		message.PlayerCount or 1,
+		message.Seats or 4,
+		if isHost then "you're the host" else ("host: %s"):format(message.HostName or "?")
+	)
+	for _, child in self.SettingRows:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	local settings = message.Settings or {}
+	local choices = message.Choices or {}
+	settingRow(self, 1, "Rounds", "Rounds", choices.Rounds or {}, settings.Rounds, isHost)
+	settingRow(self, 2, "Bots", "Difficulty", choices.Difficulty or {}, settings.Difficulty, isHost)
+	self.StartButton.Visible = isHost
+	if not self.Root.Visible then
+		self.Root.Visible = true
+		Theme.pop(self.Root)
+	end
+end
+
+function LobbyPanel:hide()
+	self.Root.Visible = false
+end
+
+function LobbyPanel:update()
+	if self.Root.Visible and self.EndsAt then
+		self.Clock.Text = ("Starts in %d"):format(math.max(0, math.ceil(self.EndsAt - Workspace:GetServerTimeNow())))
+	end
+end
+
+return LobbyPanel
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="52">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -6907,7 +9402,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="39">
+          <Item class="ModuleScript" referent="53">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -7044,7 +9539,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="40">
+          <Item class="ModuleScript" referent="54">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -7162,12 +9657,12 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="41">
+          <Item class="ModuleScript" referent="55">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
 	SpectatorBar
-	"👀 Spectating Doge  ◀ ▶" bar shown while the spectator camera is on.
+	"👀 Spectating Pip  ◀ ▶" bar shown while the spectator camera is on.
 	Buttons work with touch/mouse; Q / E (and gamepad shoulder buttons) also cycle.
 ]]
 
@@ -7251,7 +9746,124 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="42">
+          <Item class="ModuleScript" referent="56">
+            <Properties>
+              <string name="Name">StandingsScreen</string>
+              <string name="Source"><![CDATA[--[[
+	StandingsScreen
+	End-of-match standings: collectibles first, coins break ties (ranked by the server).
+]]
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local StandingsScreen = {}
+StandingsScreen.__index = StandingsScreen
+
+function StandingsScreen.new(screen: ScreenGui)
+	local self = setmetatable({}, StandingsScreen)
+	self.Root = make("Frame", {
+		Name = "Standings",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.7, 0.78),
+		BackgroundColor3 = Theme.Colors.Card,
+		Visible = false,
+		Parent = screen,
+	}, {
+		Theme.corner(22),
+		Theme.stroke(Theme.Colors.Accent, 4),
+		Theme.padding(16),
+		make("UISizeConstraint", { MaxSize = Vector2.new(680, 500) }),
+	})
+	self.Title = Theme.label({
+		Size = UDim2.fromScale(1, 0.16),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Accent,
+		Parent = self.Root,
+	}, 44)
+	self.List = make("Frame", {
+		Position = UDim2.fromScale(0, 0.2),
+		Size = UDim2.fromScale(1, 0.8),
+		BackgroundTransparency = 1,
+		Parent = self.Root,
+	}, { make("UIListLayout", { Padding = UDim.new(0.03, 0), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	return self
+end
+
+function StandingsScreen:show(message, myId: string)
+	for _, child in self.List:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	local rows = message.Rows or {}
+	local winner = rows[1]
+	local tied = rows[2] ~= nil and rows[2].Placement == 1
+	if not winner then
+		self.Title.Text = "Match over"
+	elseif tied then
+		self.Title.Text = "It's a tie for 1st!"
+	elseif winner.Id == myId then
+		self.Title.Text = "You win the match!"
+	else
+		self.Title.Text = ("%s wins the match!"):format(winner.Name)
+	end
+	local plural = message.CollectiblePlural or "Crowns"
+	for index, row in rows do
+		local isMe = row.Id == myId
+		local frame = make("Frame", {
+			LayoutOrder = index,
+			Size = UDim2.fromScale(1, 0.22),
+			BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Overlay,
+			Parent = self.List,
+		}, { Theme.corner(12), Theme.padding(6) })
+		if isMe then
+			Theme.stroke(Theme.Colors.Accent, 2).Parent = frame
+		end
+		Theme.label({
+			Size = UDim2.fromScale(0.16, 1),
+			Font = Theme.TitleFont,
+			TextColor3 = Theme.PlacementColors[row.Placement] or Theme.PlacementColors[4],
+			Text = Theme.ordinal(row.Placement),
+			Parent = frame,
+		}, 34)
+		Theme.label({
+			Position = UDim2.fromScale(0.18, 0),
+			Size = UDim2.fromScale(0.4, 1),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Text = row.Name .. (if row.IsBot then " (bot)" else "") .. (if isMe then " (you)" else ""),
+			Parent = frame,
+		}, 26)
+		Theme.label({
+			Position = UDim2.fromScale(0.58, 0),
+			Size = UDim2.fromScale(0.22, 1),
+			Font = Theme.TitleFont,
+			TextColor3 = Theme.Colors.Accent,
+			Text = ("%d %s"):format(row.Collectibles, plural),
+			Parent = frame,
+		}, 26)
+		Theme.label({
+			Position = UDim2.fromScale(0.8, 0),
+			Size = UDim2.fromScale(0.2, 1),
+			TextColor3 = Theme.Colors.Muted,
+			Text = ("%d coins"):format(row.Coins),
+			Parent = frame,
+		}, 22)
+	end
+	self.Root.Visible = true
+	Theme.pop(self.Root)
+end
+
+function StandingsScreen:hide()
+	self.Root.Visible = false
+end
+
+return StandingsScreen
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -7369,7 +9981,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="43">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -7546,18 +10158,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="44">
+  <Item class="Workspace" referent="59">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="45">
+    <Item class="Model" referent="60">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="46">
+      <Item class="Part" referent="61">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -7577,7 +10189,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="47">
+      <Item class="SpawnLocation" referent="62">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>

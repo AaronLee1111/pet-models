@@ -31,6 +31,8 @@ local inputRemote = Net.inputRemote()
 local rng = Random.new()
 
 local registry = {} -- { { Id = moduleName, Definition = module table } }
+local extraInputHandler: ((Player, any) -> boolean)? = nil -- board game / lobby inputs
+local readyHooks: { (Player) -> () } = {}
 
 local state = {
 	PhaseMessage = { Type = Net.Message.Phase, Phase = Net.Phase.Lobby } :: any,
@@ -137,6 +139,9 @@ local function sendSnapshot(player: Player)
 	end
 	if state.Active then
 		stateRemote:FireClient(player, chipsMessage())
+	end
+	for _, hook in readyHooks do
+		task.spawn(hook, player)
 	end
 end
 
@@ -380,7 +385,7 @@ end
 --[[
 	Plays one full round with exactly Config.PlayersPerMatch participants.
 	Returns the normalized ranked results and the coin rows shown on the results screen.
-	This is the hook a future board game calls between turns.
+	BoardGame calls this after every full turn cycle.
 ]]
 function MinigameManager.runRound(participants)
 	assert(#registry > 0, "No minigames loaded")
@@ -539,6 +544,24 @@ function MinigameManager.showLobby(text: string, duration: number?)
 	end
 end
 
+-- Hooks for the board game and lobby, which share the same remotes and phase snapshot.
+MinigameManager.setPhase = setPhase
+MinigameManager.broadcast = broadcast
+
+function MinigameManager.sendTo(player: Player, message)
+	stateRemote:FireClient(player, message)
+end
+
+-- fn(player, payload) -> true if it handled the input. Runs after rate limiting, before votes/actions.
+function MinigameManager.setInputHandler(fn: ((Player, any) -> boolean)?)
+	extraInputHandler = fn
+end
+
+-- fn(player) runs whenever a client asks for the current state (join / reload).
+function MinigameManager.onReady(fn: (Player) -> ())
+	table.insert(readyHooks, fn)
+end
+
 function MinigameManager.getMinigames()
 	local list = {}
 	for _, entry in registry do
@@ -601,6 +624,9 @@ function MinigameManager.init()
 		local kind = payload.Kind
 		if kind == Net.Input.Ready then
 			sendSnapshot(player)
+			return
+		end
+		if extraInputHandler and extraInputHandler(player, payload) then
 			return
 		end
 		local participant = state.ByPlayer[player]

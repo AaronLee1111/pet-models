@@ -16,12 +16,15 @@ local Controls = require(script.Parent:WaitForChild("Controls"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
 local ActionBar = require(UI:WaitForChild("ActionBar"))
+local BoardView = require(UI:WaitForChild("BoardView"))
 local Hud = require(UI:WaitForChild("Hud"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
+local LobbyPanel = require(UI:WaitForChild("LobbyPanel"))
 local PlayerChips = require(UI:WaitForChild("PlayerChips"))
 local ProgressBar = require(UI:WaitForChild("ProgressBar"))
 local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
+local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
 
 local player = Players.LocalPlayer
@@ -93,10 +96,25 @@ spectatorBar = SpectatorBar.new(screen, function(direction)
 	spectatorBar:show(CameraController.getTargetName())
 end)
 Controls.setActionBar(ActionBar.new(screen))
+local boardView = BoardView.new(screen, sendInput)
+local lobbyPanel = LobbyPanel.new(screen, sendInput)
+local standings = StandingsScreen.new(screen)
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
 -- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
-local HUD_STRIPS = { "Timer", "Status", "PlayerChips", "ProgressBar", "SpectatorBar", "Lobby" }
+local HUD_STRIPS = {
+	"Timer",
+	"Status",
+	"PlayerChips",
+	"ProgressBar",
+	"SpectatorBar",
+	"Lobby",
+	"BoardHeader",
+	"BoardStandings",
+	"BoardRoll",
+	"BoardPrompt",
+	"WaitingRoom",
+}
 local HUD_DESIGN_HEIGHT = 720
 local hudBasePositions = {}
 
@@ -133,6 +151,7 @@ local function hideOverlays()
 	voteScreen:hide()
 	instructions:hide()
 	results:hide()
+	standings:hide()
 	setCardOpen(false)
 end
 
@@ -215,13 +234,44 @@ local phaseHandlers = {}
 phaseHandlers[Phase.Lobby] = function(message)
 	hideOverlays()
 	endRound()
+	boardView:hide()
 	hud:setTimer(nil)
 	hud:setStatus(nil)
-	hud:setLobby(message.Text or "Lobby", message.EndsAt)
+	if message.WaitingRoom then
+		hud:setLobby(nil)
+		lobbyPanel:show(message)
+	else
+		lobbyPanel:hide()
+		hud:setLobby(message.Text or "Lobby", message.EndsAt)
+	end
+end
+
+phaseHandlers[Phase.Board] = function(_message)
+	hideOverlays()
+	endRound()
+	lobbyPanel:hide()
+	hud:setLobby(nil)
+	hud:setTimer(nil)
+	hud:setStatus(nil)
+	setCardOpen(true) -- no walking on the board: hide the thumbstick so the roll button is clear
+	boardView:show()
+end
+
+phaseHandlers[Phase.Standings] = function(message)
+	hideOverlays()
+	endRound()
+	lobbyPanel:hide()
+	boardView:show()
+	boardView:hidePanels()
+	hud:clearToasts()
+	setCardOpen(true)
+	standings:show(message, myId)
 end
 
 phaseHandlers[Phase.Vote] = function(message)
 	hideOverlays()
+	boardView:hide()
+	lobbyPanel:hide()
 	hud:setLobby(nil)
 	setCardOpen(true)
 	voteScreen:show(message.Choices, message.EndsAt)
@@ -291,6 +341,12 @@ stateRemote.OnClientEvent:Connect(function(message)
 		hud:toast(message.Text)
 	elseif message.Type == Net.Message.Chips then
 		onChips(message.Chips)
+	elseif message.Type == Net.Message.BoardLayout then
+		boardView:setLayout(message)
+	elseif message.Type == Net.Message.BoardState then
+		boardView:setState(message)
+	elseif message.Type == Net.Message.Prompt then
+		boardView:showPrompt(message)
 	end
 end)
 
@@ -298,6 +354,8 @@ RunService.RenderStepped:Connect(function()
 	hud:update()
 	voteScreen:update()
 	instructions:update()
+	boardView:update()
+	lobbyPanel:update()
 end)
 
 -- Ask for the current state in case we joined mid-round.

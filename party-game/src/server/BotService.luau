@@ -29,6 +29,7 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local BotService = {}
 
 local rng = Random.new()
+local skillRange = Config.Match.BotDifficulties[Config.Match.BotDifficulty]
 local bots = {} -- every bot we currently own, in seat order
 local nextBotNumber = 0
 local brain: ((any, number) -> ())? = nil
@@ -179,7 +180,7 @@ local function createBot()
 	local bot = setmetatable({
 		Id = "bot_" .. nextBotNumber,
 		Name = pickName(),
-		Skill = rng:NextNumber(0.3, 1),
+		Skill = rng:NextNumber(skillRange[1], skillRange[2]),
 		Memory = {},
 		Participant = nil,
 		Model = nil,
@@ -222,6 +223,14 @@ function BotService.reviveAll(spawnAt: (number) -> CFrame)
 		if not bot:IsAlive() then
 			respawn(bot, spawnAt(index))
 		end
+	end
+end
+
+-- Match difficulty: every bot (current and future) gets a skill in [min, max].
+function BotService.setSkillRange(range: { number })
+	skillRange = range
+	for _, bot in bots do
+		bot.Skill = rng:NextNumber(range[1], range[2])
 	end
 end
 

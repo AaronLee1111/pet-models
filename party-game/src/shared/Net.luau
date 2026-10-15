@@ -34,6 +34,9 @@ Net.Phase = {
 	Playing = "Playing",
 	Finished = "Finished",
 	Results = "Results",
+	-- Board game (around the minigame rounds above)
+	Board = "Board", -- turns on the board; details arrive as BoardState messages
+	Standings = "Standings", -- final match standings
 }
 
 -- Server -> client message types (message.Type).
@@ -43,6 +46,9 @@ Net.Message = {
 	Status = "Status", -- persistent HUD line set by the minigame ("Pip has the potato!")
 	Toast = "Toast", -- short-lived feed message ("BOOM!")
 	Chips = "Chips", -- player-chip strip: every participant's live value + eliminated flag
+	BoardLayout = "BoardLayout", -- the board's spaces (sent once per match and to late joiners)
+	BoardState = "BoardState", -- seats, coins, collectibles, whose turn, dice, moves left
+	Prompt = "Prompt", -- to one player: pick an option (fork, buy, shop); Prompt = nil closes it
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -50,6 +56,10 @@ Net.Input = {
 	Ready = "Ready", -- client finished loading; server replies with a state snapshot
 	Vote = "Vote", -- payload.Choice = index of the vote card
 	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
+	Roll = "Roll", -- roll the die on your turn
+	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
+	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
+	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }
 
 local function getFolder(): Instance
