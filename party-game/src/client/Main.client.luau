@@ -113,6 +113,7 @@ local HUD_STRIPS = {
 	"BoardStandings",
 	"BoardRoll",
 	"BoardPrompt",
+	"BoardItems",
 	"WaitingRoom",
 }
 local HUD_DESIGN_HEIGHT = 720

@@ -69,12 +69,24 @@ local function layoutMessage(board)
 	return { Type = Net.Message.BoardLayout, Name = board.Name, Spaces = spaces, Legend = legend }
 end
 
+local function describeItems(seat)
+	local list = {}
+	for _, id in seat.Items do
+		local item = Match.getItem(id)
+		table.insert(list, { Id = id, Name = item.Name, Description = item.Description })
+	end
+	return list
+end
+
 local function stateMessage()
 	local match = current.Match
 	local seats = {}
 	for orderIndex, seat in match.Order do
 		local participant = seat.Participant
 		table.insert(seats, {
+			Items = describeItems(seat),
+			Shield = seat.Shield,
+			OrderRolls = current.OrderRolls and current.OrderRolls[seat],
 			Id = participant.Id,
 			Name = participant.Name,
 			IsBot = participant.IsBot,
@@ -86,7 +98,17 @@ local function stateMessage()
 		})
 	end
 	local turn = current.Turn
+	local pending = {}
+	for player, pressed in current.OrderWaiting or {} do
+		if not pressed then
+			pending["player_" .. player.UserId] = true
+		end
+	end
 	return {
+		OrderPending = pending,
+		Dice = match.Turn and match.Turn.Dice,
+		ItemUsed = match.Turn and match.Turn.ItemUsed,
+		MaxItems = Config.Items.MaxHeld,
 		Type = Net.Message.BoardState,
 		Round = match.Round,
 		Rounds = match.Rounds,
@@ -262,10 +284,105 @@ end
 
 -- Turns -------------------------------------------------------------------------------------------
 
+-- Turn order: everyone rolls once before round 1; ties roll again among themselves.
+local function rollForTurnOrder()
+	local match = current.Match
+	current.Stage = "OrderRoll"
+	current.OrderRolls = {}
+	current.Text = "Everyone rolls for turn order!"
+
+	local function rollFor(seats, attempt)
+		current.OrderWaiting = {}
+		for _, seat in seats do
+			local participant = seat.Participant
+			if not participant.IsBot and not isAway(participant) then
+				current.OrderWaiting[participant.Player] = false
+			end
+		end
+		current.RollEndsAt = now() + Config.Match.OrderRollTimeout
+		if attempt > 1 then
+			current.Text = "Tie! Tied players roll again"
+		end
+		publish()
+		task.wait(1) -- bots "roll" after a beat
+		while now() < current.RollEndsAt do
+			local waiting = false
+			for player, pressed in current.OrderWaiting do
+				if not pressed and player.Parent then
+					waiting = true
+				end
+			end
+			if not waiting then
+				break
+			end
+			task.wait(0.05)
+		end
+		current.OrderWaiting = nil
+		current.RollEndsAt = nil
+		local rolls = {}
+		for _, seat in seats do
+			rolls[seat] = match:roll()
+			current.OrderRolls[seat] = current.OrderRolls[seat] or {}
+			table.insert(current.OrderRolls[seat], rolls[seat])
+		end
+		publish()
+		task.wait(1.5)
+		return rolls
+	end
+
+	local order = match:decideTurnOrder(rollFor)
+	local names = {}
+	for index, seat in order do
+		table.insert(names, ("%d. %s"):format(index, seat.Participant.Name))
+	end
+	current.Stage = "OrderDone"
+	feed("Turn order: " .. table.concat(names, "   "))
+	publish()
+	task.wait(2.5)
+	current.OrderRolls = nil
+end
+
+-- Uses an item for the seat whose turn it is. Players pick a target here; bots pass one in.
+-- Match:useItem does all the validation for both.
+local function useItem(seat, slot, target)
+	local match = current.Match
+	local id = type(slot) == "number" and seat.Items[slot]
+	local item = id and Match.getItem(id)
+	if item and item.Target == "Opponent" and target == nil then
+		local opponents = match:opponentsOf(seat)
+		local labels = {}
+		for i, other in opponents do
+			labels[i] = other.Participant.Name
+		end
+		table.insert(labels, "Cancel")
+		local pick = ask(seat, {
+			Kind = "Target",
+			Prompt = ("%s: swap places with who?"):format(item.Name),
+			Options = labels,
+			Default = #labels,
+			Data = { Seats = opponents },
+		})
+		target = opponents[pick]
+		if not target then
+			return false
+		end
+	end
+	local used, text = match:useItem(seat, slot, target)
+	if used then
+		feed(text)
+		placeAll() -- swaps and warps move pieces
+	elseif seat.Participant.Player and seat.Participant.Player.Parent then
+		MinigameManager.sendTo(seat.Participant.Player, { Type = Net.Message.Toast, Text = "Can't use that: " .. text })
+	end
+	publish()
+	return used
+end
+
 local function takeTurn(seat)
 	refreshSeats()
 	local match = current.Match
 	local participant = seat.Participant
+	match:beginTurn(seat)
 	current.Turn = seat
 	current.Stage = "Roll"
 	current.Roll = nil
@@ -273,24 +390,39 @@ local function takeTurn(seat)
 	current.RollEndsAt = now() + Config.Board.RollTimeout
 	current.Text = ("%s's turn"):format(participant.Name)
 	current.RollRequested = false
+	current.ItemRequest = nil
 	publish()
 
 	if participant.IsBot or isAway(participant) then
 		waitRandom(Config.Board.BotRollDelay)
+		local slot, target = match:botItemChoice(seat)
+		if slot and useItem(seat, slot, target) then
+			task.wait(1)
+		end
 	else
 		current.RollWaiting = participant.Player
 		while not current.RollRequested and now() < current.RollEndsAt and not isAway(participant) do
+			local request = current.ItemRequest
+			if request then
+				current.ItemRequest = nil
+				if useItem(seat, request.Slot) then
+					current.RollEndsAt = math.max(current.RollEndsAt, now() + 5)
+					publish()
+				end
+			end
 			task.wait(0.05)
 		end
 		current.RollWaiting = nil
 	end
 
-	local roll = match:roll()
+	local roll, dice = match:rollTurn(seat)
 	current.Stage = "Moving"
 	current.Roll = roll
 	current.Remaining = roll
 	current.RollEndsAt = nil
-	current.Text = ("%s rolled a %d"):format(seat.Participant.Name, roll)
+	current.Text = if #dice > 1
+		then ("%s rolled %s = %d"):format(seat.Participant.Name, table.concat(dice, " + "), roll)
+		else ("%s rolled a %d"):format(seat.Participant.Name, roll)
 	publish()
 	task.wait(0.8)
 
@@ -308,11 +440,30 @@ local function takeTurn(seat)
 	current.Stage = "Landed"
 	local space = match.Board:get(seat.SpaceId)
 	feed(landing or ("%s landed on a %s"):format(seat.Participant.Name, SpaceTypes[space.Type].Name))
+	match:endTurn()
 	publish()
 	task.wait(Config.Board.LandPause)
 end
 
 -- Match -------------------------------------------------------------------------------------------
+
+local function describeBonuses(awarded)
+	local list = {}
+	for _, entry in awarded do
+		local winners = {}
+		for _, seat in entry.Winners do
+			table.insert(winners, { Id = seat.Participant.Id, Name = seat.Participant.Name })
+		end
+		table.insert(list, {
+			Name = entry.Bonus.Name,
+			Description = entry.Bonus.Description,
+			Crowns = entry.Bonus.Crowns or 1,
+			Value = entry.Value,
+			Winners = winners,
+		})
+	end
+	return list
+end
 
 local function describeRows(rows)
 	local list = {}
@@ -337,7 +488,7 @@ function BoardGame.play(participants, settings)
 		World = BoardWorld.build(board, SpaceTypes, Config.Board.Origin),
 		Stage = "Start",
 	}
-	current.Match = Match.new(board, participants, { Rounds = settings.Rounds }, {
+	current.Match = Match.new(board, participants, { Rounds = settings.Rounds, Difficulty = settings.Difficulty }, {
 		Wallet = CoinService,
 		Inventory = Inventory,
 		Rng = rng,
@@ -346,6 +497,9 @@ function BoardGame.play(participants, settings)
 	local match = current.Match
 	for _, seat in match.Seats do
 		CoinService.add(seat.Participant, Config.Economy.StartingCoins)
+		for _, itemId in Config.Items.StartingItems do
+			match:giveItem(seat, itemId)
+		end
 	end
 	current.LayoutMessage = layoutMessage(board)
 	MinigameManager.broadcast(current.LayoutMessage)
@@ -361,6 +515,9 @@ function BoardGame.play(participants, settings)
 		placeAll()
 		publish()
 		task.wait(1.5)
+		if round == 1 then
+			rollForTurnOrder()
+		end
 
 		for _, seat in match.Order do
 			takeTurn(seat)
@@ -372,22 +529,43 @@ function BoardGame.play(participants, settings)
 		publish()
 		task.wait(1)
 		refreshSeats()
-		local ok, err = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
-		if not ok then
-			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(err))
+		local ok, results, rows = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
+		if ok then
+			match:recordMinigame(results, rows)
+		else
+			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(results))
 			MinigameManager.abort("Minigame crashed, back to the board!")
 		end
 	end
 
+	-- Standings before bonuses -> bonus awards -> final standings.
 	refreshSeats()
+	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Before",
+		Rows = describeRows(match:standings()),
+		CollectiblePlural = Config.Collectible.Plural,
+		EndsAt = now() + Config.Match.PreBonusDuration,
+	})
+	ensureBodies()
+	placeAll()
+	task.wait(Config.Match.PreBonusDuration)
+
+	local awarded = match:awardBonuses()
+	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Bonus",
+		Bonuses = describeBonuses(awarded),
+		CollectiblePlural = Config.Collectible.Plural,
+		EndsAt = now() + Config.Match.BonusDuration,
+	})
+	task.wait(Config.Match.BonusDuration)
+
 	local rows = match:standings()
 	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Final",
 		Rows = describeRows(rows),
 		CollectiblePlural = Config.Collectible.Plural,
 		EndsAt = now() + Config.Match.StandingsDuration,
 	})
-	ensureBodies()
-	placeAll()
 	task.wait(Config.Match.StandingsDuration)
 	BoardGame.cleanup()
 	return rows
@@ -424,6 +602,14 @@ function BoardGame.handleInput(player: Player, payload): boolean
 	if kind == Net.Input.Roll then
 		if current and current.RollWaiting == player then
 			current.RollRequested = true
+		elseif current and current.OrderWaiting and current.OrderWaiting[player] == false then
+			current.OrderWaiting[player] = true
+		end
+		return true
+	elseif kind == Net.Input.UseItem then
+		-- Only queued here; takeTurn hands it to Match:useItem, which checks everything.
+		if current and current.RollWaiting == player and not current.ItemRequest then
+			current.ItemRequest = { Slot = payload.Slot }
 		end
 		return true
 	elseif kind == Net.Input.Choice then

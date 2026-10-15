@@ -29,6 +29,15 @@ local CAMERA_OFFSET = Vector3.new(0, 42, 34)
 
 local myId = "player_" .. Players.LocalPlayer.UserId
 
+-- A key that changes whenever the item list does (so buttons are only rebuilt then).
+local function itemKeyOf(items): string
+	local ids = {}
+	for _, item in items do
+		table.insert(ids, item.Id)
+	end
+	return table.concat(ids, ",")
+end
+
 -- send(payload) fires the input remote.
 function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	local self = setmetatable({ Send = send, Visible = false }, BoardView)
@@ -99,6 +108,25 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 		self:roll()
 	end)
 
+	-- Item buttons (above the roll button, your turn only, before rolling)
+	self.ItemBar = make("Frame", {
+		Name = "BoardItems",
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -24, 1, -186),
+		Size = UDim2.fromOffset(420, 64),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Right,
+			Padding = UDim.new(0, 8),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	self.ItemKey = nil
+
 	-- Prompt (bottom centre)
 	self.Prompt = make("Frame", {
 		Name = "BoardPrompt",
@@ -168,10 +196,15 @@ function BoardView:setState(message)
 	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
 	self.Title.Text = ("Round %d / %d%s"):format(message.Round or 0, message.Rounds or 0, if who then "  ·  " .. who .. " turn" else "")
 	local sub = message.Text or ""
-	if message.Stage == "Moving" and message.Remaining then
+	if message.Stage == "OrderRoll" then
+		self.Title.Text = ("Round %d / %d  ·  Turn order"):format(message.Round or 0, message.Rounds or 0)
+		sub = if message.OrderPending and message.OrderPending[myId] then "Tap ROLL! Highest roll goes first" else (message.Text or "")
+	elseif message.Stage == "Moving" and message.Remaining then
 		sub = ("Rolled %d  ·  %d move%s left"):format(message.Roll or 0, message.Remaining, if message.Remaining == 1 then "" else "s")
 	elseif message.Stage == "Roll" and myTurn then
-		sub = "Tap ROLL to roll the die!"
+		sub = if (message.Dice or 1) > 1
+			then ("Tap ROLL to roll %d dice!"):format(message.Dice)
+			else "Use an item, or tap ROLL to roll the die!"
 	end
 	self.Subtitle.Text = sub
 
@@ -201,19 +234,65 @@ function BoardView:setState(message)
 			Text = (if isTurn then "▶ " else "") .. (if isMe then "YOU" else seat.Name) .. (if seat.IsBot then " (bot)" else ""),
 			Parent = row,
 		}, 22)
+		local line = seatLine(seat, message.CollectiblePlural or "Crowns")
+		if seat.OrderRolls and #seat.OrderRolls > 0 then
+			line = "Rolled " .. table.concat(seat.OrderRolls, ", then ")
+		else
+			line ..= ("  ·  %d item%s"):format(#(seat.Items or {}), if #(seat.Items or {}) == 1 then "" else "s")
+			if seat.Shield then
+				line ..= "  ·  shield"
+			end
+		end
 		Theme.label({
 			Position = UDim2.fromOffset(10, 30),
 			Size = UDim2.new(1, -20, 0, 20),
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextColor3 = Theme.Colors.Accent,
-			Text = seatLine(seat, message.CollectiblePlural or "Crowns"),
+			Text = line,
 			Parent = row,
 		}, 18)
 		table.insert(self.Rows, row)
 	end
 
-	-- Roll button: only on your turn, while waiting for the roll.
-	local canRoll = myTurn and message.Stage == "Roll"
+	-- Item buttons: your turn, before rolling, no item used yet.
+	local mySeat
+	for _, seat in message.Seats do
+		if seat.Id == myId then
+			mySeat = seat
+		end
+	end
+	local items = mySeat and mySeat.Items or {}
+	local showItems = myTurn and message.Stage == "Roll" and not message.ItemUsed and #items > 0
+	local itemKey = if showItems then itemKeyOf(items) else nil
+	if itemKey ~= self.ItemKey then
+		self.ItemKey = itemKey
+		for _, child in self.ItemBar:GetChildren() do
+			if child:IsA("GuiButton") then
+				child:Destroy()
+			end
+		end
+		for slot, item in items do
+			local button = make("TextButton", {
+				LayoutOrder = slot,
+				Size = UDim2.fromOffset(132, 64),
+				BackgroundColor3 = Theme.Colors.Cool,
+				Font = Theme.BodyFont,
+				TextScaled = true,
+				TextColor3 = Theme.Colors.Overlay,
+				Text = item.Name,
+				Parent = self.ItemBar,
+			}, { Theme.corner(14), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 10 }) })
+			button.Activated:Connect(function()
+				self.ItemBar.Visible = false
+				self.Send({ Kind = "UseItem", Slot = slot })
+			end)
+		end
+	end
+	self.ItemBar.Visible = showItems
+
+	-- Roll button: on your turn (or when rolling for turn order), while waiting for the roll.
+	local canRoll = (myTurn and message.Stage == "Roll")
+		or (message.Stage == "OrderRoll" and message.OrderPending ~= nil and message.OrderPending[myId] == true)
 	if canRoll and not self.RollButton.Visible then
 		Theme.pop(self.RollButton)
 		ContextActionService:BindAction(ROLL_ACTION, function(_, inputState)
@@ -337,6 +416,8 @@ function BoardView:hide()
 	self.Header.Visible = false
 	self.Standings.Visible = false
 	self.RollButton.Visible = false
+	self.ItemBar.Visible = false
+	self.ItemKey = nil
 	self.Prompt.Visible = false
 	ContextActionService:UnbindAction(ROLL_ACTION)
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
@@ -354,6 +435,8 @@ function BoardView:hidePanels()
 	self.Header.Visible = false
 	self.Standings.Visible = false
 	self.RollButton.Visible = false
+	self.ItemBar.Visible = false
+	self.ItemKey = nil
 	self.Prompt.Visible = false
 	ContextActionService:UnbindAction(ROLL_ACTION)
 end

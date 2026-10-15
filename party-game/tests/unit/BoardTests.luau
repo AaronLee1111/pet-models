@@ -18,6 +18,8 @@ local CoinService = require(Server.CoinService)
 local Inventory = require(Server.Inventory)
 local BoardLayout = require(Server.Board.BoardLayout)
 local Events = require(Server.Board.Events)
+local BotBrain = require(Server.Board.BotBrain)
+local Items = require(Server.Board.Items)
 local Match = require(Server.Board.Match)
 local SpaceTypes = require(Server.Board.SpaceTypes)
 local Classic = require(Server.Board.Boards.Classic)
@@ -50,11 +52,11 @@ local function fakeParticipants(count: number)
 end
 
 -- answers[Kind] = option index (or a function(request) -> index); records every request.
-local function newMatch(answers, seed: number?)
+local function newMatch(answers, seed: number?, difficulty: string?)
 	CoinService.resetAll()
 	local asked = {}
 	local board = BoardLayout.load(Classic, SpaceTypes)
-	local match = Match.new(board, fakeParticipants(4), { Rounds = 3 }, {
+	local match = Match.new(board, fakeParticipants(4), { Rounds = 3, Difficulty = difficulty or "Hard" }, {
 		Wallet = CoinService,
 		Inventory = Inventory,
 		Rng = Random.new(seed or 7),
@@ -343,17 +345,48 @@ end)
 
 -- Shop ----------------------------------------------------------------------------------------
 
+local function pickOffer(kind)
+	return function(request)
+		for i, offer in request.Data.Items do
+			if offer.Kind == kind then
+				return i
+			end
+		end
+		return request.Default
+	end
+end
+
 test("shop sells a cosmetic and equips it", function()
-	local match, asked = newMatch({ Shop = 1 })
+	local match, asked = newMatch({ Shop = pickOffer("Cosmetic") })
 	local seat = match.Seats[1]
 	setCoins(match, seat, 50)
 	match:visitShop(seat)
 	local request = asked[1]
-	local item = request.Data.Items[1]
+	local offer = request.Data.Items[pickOffer("Cosmetic")(request)]
+	local item = Cosmetics.get(offer.Id)
 	ok(Inventory.owns(seat.Participant.Id, item.Id), "not owned")
 	eq(Inventory.getEquipped(seat.Participant.Id)[item.Slot], item.Id, "not equipped")
 	eq(match:coinsOf(seat), 50 - item.Price, "coins")
 	eq(request.Options[#request.Options], "Leave", "last option")
+end)
+
+test("shop sells board items, but not into a full bag", function()
+	local match, asked = newMatch({ Shop = pickOffer("Item") })
+	local seat = match.Seats[1]
+	setCoins(match, seat, 50)
+	match:visitShop(seat)
+	local offer = asked[1].Data.Items[1]
+	eq(offer.Kind, "Item", "first offer is an item")
+	eq(seat.Items[1], offer.Id, "item in bag")
+	eq(match:coinsOf(seat), 50 - offer.Price, "paid")
+	for _ = 1, Config.Items.MaxHeld do
+		match:giveItem(seat, "CoinShield")
+	end
+	local before = #asked
+	match:visitShop(seat)
+	for _, each in asked[before + 1].Data.Items do
+		ok(each.Kind ~= "Item", "offered an item to a full bag")
+	end
 end)
 
 test("shop refuses what you can't afford, and leaving costs nothing", function()
@@ -415,16 +448,388 @@ end)
 test("bot decisions: always buy the collectible, save coins at the shop", function()
 	local match = newMatch()
 	local seat = match.Seats[1]
-	eq(match:botDecision(seat, { Kind = "Collectible", Options = { "Buy", "Not now" }, Default = 1 }, 0.5), 1, "buy")
+	match.Round = 1
+	eq(match:botDecision(seat, { Kind = "Collectible", Options = { "Buy", "Not now" }, Default = 1 }), 1, "buy")
 	local shop = {
 		Kind = "Shop",
-		Options = { "A", "Leave" },
-		Default = 2,
-		Data = { Items = { { Price = 10 } } },
+		Options = { "Dice", "Hat", "Leave" },
+		Default = 3,
+		Data = { Items = {
+			{ Kind = "Item", Id = "DoubleDice", Price = 6 },
+			{ Kind = "Cosmetic", Id = "hat_party", Price = 6 },
+		} },
 	}
 	setCoins(match, seat, 12)
-	eq(match:botDecision(seat, shop, 1), 2, "skilled bot saves")
-	eq(match:botDecision(seat, shop, 0), 1, "sloppy bot spends")
+	eq(match:botDecision(seat, shop), 3, "hard bot saves for the Crown")
+	setCoins(match, seat, 30)
+	eq(match:botDecision(seat, shop), 1, "hard bot buys a useful item with coins to spare")
+	setCoins(match, seat, 60)
+	eq(match:botDecision(seat, shop), 1, "items beat cosmetics")
+	local profile = table.clone(BotBrain.profile("Hard"))
+	profile.SaveFactor = 0
+	setCoins(match, seat, 12)
+	eq(BotBrain.chooseShop(match, seat, shop.Data.Items, 3, profile), 1, "no saving -> spends")
+end)
+
+test("bot decisions: hard bots head for the Crown at a fork when they can pay", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	seat.SpaceId = 5 -- fork: main road (6) or shortcut (27)
+	local request = { Kind = "Path", Options = { "Main road", "Shortcut" }, Default = 1, Data = { Spaces = { 6, 27 } } }
+	setCoins(match, seat, 40)
+	match.CollectibleSpace = 20 -- far up the shortcut side
+	eq(match:botDecision(seat, request), 2, "shortcut towards the Crown")
+	match.CollectibleSpace = 7 -- right down the main road
+	eq(match:botDecision(seat, request), 1, "main road towards the Crown")
+end)
+
+test("bot decisions: easy bots sometimes choose at random", function()
+	local match = newMatch(nil, 3, "Easy")
+	local seat = match.Seats[1]
+	setCoins(match, seat, 40)
+	match.CollectibleSpace = 7
+	local request = { Kind = "Path", Options = { "Main road", "Shortcut" }, Default = 1, Data = { Spaces = { 6, 27 } } }
+	local picks = {}
+	for _ = 1, 60 do
+		picks[match:botDecision(seat, request)] = true
+	end
+	ok(picks[1] and picks[2], "easy bot never varied")
+end)
+
+test("bot items: dice towards an affordable Crown, swap into the leader's spot", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match.Round = 1
+	match.CollectibleSpace = 13
+	seat.SpaceId = 3 -- 10 moves from the Crown
+	setCoins(match, seat, 30)
+	match:giveItem(seat, "CoinShield")
+	match:giveItem(seat, "TripleDice")
+	match:beginTurn(seat)
+	local slot = match:botItemChoice(seat)
+	eq(seat.Items[slot], "TripleDice", "dice to reach the Crown")
+
+	local swapper = newMatch()
+	local me = swapper.Seats[1]
+	swapper.Round = 1
+	swapper.CollectibleSpace = 13
+	me.SpaceId = 14 -- just past the Crown: a full lap away
+	swapper.Seats[3].SpaceId = 12 -- one step before it
+	setCoins(swapper, me, 25)
+	swapper:giveItem(me, "SwapTicket")
+	swapper:beginTurn(me)
+	local swapSlot, target = swapper:botItemChoice(me)
+	eq(swapSlot, 1, "used the ticket")
+	eq(target, swapper.Seats[3], "picked the seat nearest the Crown")
+	local used = swapper:useItem(me, swapSlot, target)
+	eq(used, true, "validated like a player")
+end)
+
+test("bot items: no reason, no item", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match.Round = 1
+	setCoins(match, seat, 0)
+	match:giveItem(seat, "CoinShield")
+	match:beginTurn(seat)
+	eq(match:botItemChoice(seat), nil, "shield with nothing to protect")
+	match.Round = match.Rounds
+	setCoins(match, seat, 3)
+	eq(match:botItemChoice(seat), 1, "last round: use it up")
+end)
+
+-- Turn order --------------------------------------------------------------------------------------
+
+-- rollFor that hands out scripted rolls: script[attempt][seatIndex] = roll.
+local function scripted(script)
+	return function(seats, attempt)
+		local rolls = {}
+		for _, seat in seats do
+			rolls[seat] = script[attempt][seat.Index]
+		end
+		return rolls
+	end
+end
+
+local function orderIndexes(order)
+	local list = {}
+	for _, seat in order do
+		table.insert(list, seat.Index)
+	end
+	return table.concat(list, ",")
+end
+
+test("turn order: highest roll goes first", function()
+	local match = newMatch()
+	local order = match:decideTurnOrder(scripted({ { 2, 6, 4, 1 } }))
+	eq(orderIndexes(order), "2,3,1,4", "order")
+	eq(match.Order, order, "match uses it")
+end)
+
+test("turn order: tied seats reroll among themselves only", function()
+	local match = newMatch()
+	local order, log = match:decideTurnOrder(scripted({
+		{ 5, 5, 2, 5 }, -- seats 1, 2, 4 tie for first
+		{ 3, 6, nil, 3 }, -- seat 2 wins; 1 and 4 tie again
+		{ 1, nil, nil, 4 }, -- seat 4 beats seat 1
+	}))
+	eq(orderIndexes(order), "2,4,1,3", "order")
+	local attempts = {}
+	for _, entry in log do
+		attempts[entry.Attempt] = (attempts[entry.Attempt] or 0) + 1
+	end
+	eq(attempts[1], 4, "everyone rolled once")
+	eq(attempts[2], 3, "three tied rerolled")
+	eq(attempts[3], 2, "two tied rerolled again")
+end)
+
+test("turn order: same seed, same order; junk rolls are rerolled", function()
+	local a = orderIndexes((newMatch(nil, 99):decideTurnOrder()))
+	local b = orderIndexes((newMatch(nil, 99):decideTurnOrder()))
+	eq(a, b, "deterministic")
+	local match = newMatch()
+	local _, log = match:decideTurnOrder(function(seats)
+		local rolls = {}
+		for _, seat in seats do
+			rolls[seat] = 99 -- cheating client value
+		end
+		return rolls
+	end)
+	for _, entry in log do
+		ok(entry.Roll >= 1 and entry.Roll <= Config.Board.DieSides, "kept an illegal roll")
+	end
+end)
+
+-- Items -------------------------------------------------------------------------------------------
+
+test("every item has the fields the game needs", function()
+	for _, item in Items do
+		ok(type(item.Id) == "string" and type(item.Name) == "string", "item needs Id and Name")
+		ok(type(item.Price) == "number" and type(item.Weight) == "number", item.Id .. " needs Price and Weight")
+		ok(type(item.Use) == "function", item.Id .. " needs Use")
+		ok(BotBrain.ItemValue[item.Id], item.Id .. " has no bot shop value")
+	end
+end)
+
+test("double and triple dice roll two and three dice", function()
+	for id, count in { DoubleDice = 2, TripleDice = 3 } do
+		local match = newMatch()
+		local seat = match.Seats[1]
+		match:giveItem(seat, id)
+		match:beginTurn(seat)
+		eq(match:useItem(seat, 1), true, id .. " used")
+		eq(#seat.Items, 0, id .. " consumed")
+		for _ = 1, 50 do
+			match.Turn.Stage = "PreRoll"
+			local total, dice = match:rollTurn(seat)
+			eq(#dice, count, id .. " dice count")
+			ok(total >= count and total <= count * Config.Board.DieSides, id .. " total out of range")
+		end
+	end
+	local plain = newMatch()
+	plain:beginTurn(plain.Seats[1])
+	local _, dice = plain:rollTurn(plain.Seats[1])
+	eq(#dice, 1, "no item: one die")
+end)
+
+test("coin shield blocks exactly one loss, then breaks", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	setCoins(match, seat, 10)
+	match:giveItem(seat, "CoinShield")
+	match:beginTurn(seat)
+	eq(match:useItem(seat, 1), true, "used")
+	eq(seat.Shield, true, "shield up")
+	local delta, shielded = match:changeCoins(seat, 5)
+	eq(delta, 5, "gains still count")
+	eq(seat.Shield, true, "gain didn't break it")
+	delta, shielded = match:changeCoins(seat, -3)
+	eq(shielded, true, "blocked")
+	eq(match:coinsOf(seat), 15, "coins kept")
+	eq(seat.Shield, false, "broke")
+	match:changeCoins(seat, -3)
+	eq(match:coinsOf(seat), 12, "second loss lands")
+	seat.SpaceId = 6 -- Lose space
+	seat.Shield = true
+	ok(string.find(match:land(seat), "Shield"), "lose space mentions the shield")
+	eq(match:coinsOf(seat), 12, "lose space blocked")
+end)
+
+test("coin shield: can't stack, and purchases aren't 'losses'", function()
+	local match = newMatch({ Collectible = 1 })
+	local seat = match.Seats[1]
+	setCoins(match, seat, 30)
+	match:giveItem(seat, "CoinShield")
+	match:giveItem(seat, "CoinShield")
+	match:beginTurn(seat)
+	match:useItem(seat, 1)
+	match:beginTurn(seat)
+	local used, reason = match:useItem(seat, 1)
+	eq(used, false, "second shield")
+	ok(reason ~= nil, "reason given")
+	eq(#seat.Items, 1, "refused item kept")
+	match:offerCollectible(seat)
+	eq(match:collectiblesOf(seat), 1, "bought")
+	eq(seat.Shield, true, "spending didn't break the shield")
+end)
+
+test("swap ticket swaps with the chosen opponent", function()
+	local match = newMatch()
+	local seat, other = match.Seats[1], match.Seats[3]
+	seat.SpaceId, other.SpaceId = 4, 19
+	match:giveItem(seat, "SwapTicket")
+	match:beginTurn(seat)
+	eq(match:useItem(seat, 1, other), true, "used")
+	eq(seat.SpaceId, 19, "mover")
+	eq(other.SpaceId, 4, "target")
+	eq(seat.Stats.SpacesMoved, 0, "a swap isn't travelling")
+end)
+
+test("warp token always lands on a different real space", function()
+	for seed = 1, 30 do
+		local match = newMatch(nil, seed)
+		local seat = match.Seats[1]
+		seat.SpaceId = 9
+		match:giveItem(seat, "WarpToken")
+		match:beginTurn(seat)
+		eq(match:useItem(seat, 1), true, "used")
+		ok(seat.SpaceId ~= 9, "warped in place")
+		ok(match.Board:get(seat.SpaceId), "warped off the board")
+	end
+end)
+
+test("invalid item requests are refused and keep the item", function()
+	local match = newMatch()
+	local seat, other = match.Seats[1], match.Seats[2]
+	match:giveItem(seat, "SwapTicket")
+	match:giveItem(other, "DoubleDice")
+	local function refused(what, ...)
+		local used = match:useItem(...)
+		eq(used, false, what)
+	end
+	refused("no turn yet", seat, 1, other)
+	match:beginTurn(seat)
+	refused("someone else's turn", other, 1)
+	refused("empty slot", seat, 2, other)
+	refused("junk slot", seat, "1", other)
+	refused("fractional slot", seat, 1.5, other)
+	refused("swap with nobody", seat, 1, nil)
+	refused("swap with yourself", seat, 1, seat)
+	refused("swap with a stranger", seat, 1, { Participant = { Name = "x" } })
+	eq(#seat.Items, 1, "item kept through refusals")
+	eq(match:useItem(seat, 1, other), true, "valid use")
+	match:giveItem(seat, "DoubleDice")
+	refused("second item in a turn", seat, 1)
+	match:beginTurn(seat)
+	match:rollTurn(seat)
+	refused("after rolling", seat, 1)
+	eq(#seat.Items, 1, "dice kept")
+end)
+
+test("inventory limit: gifts, events and giveItem stop at MaxHeld", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	for _ = 1, Config.Items.MaxHeld do
+		eq(match:giveItem(seat, "WarpToken"), true, "room")
+	end
+	eq(match:giveItem(seat, "WarpToken"), false, "full")
+	eq(match:giveItem(seat, "NotAnItem"), false, "unknown")
+	eq(#seat.Items, Config.Items.MaxHeld, "held")
+	eq(match:giveRandomItem(seat), nil, "random item into a full bag")
+	withConfig(Config.Economy, "Rewards", { { Kind = "Item", Weight = 1 } }, function()
+		match:giveReward(seat)
+	end)
+	eq(#seat.Items, Config.Items.MaxHeld, "gift didn't overfill")
+	eq(match:coinsOf(seat), 5, "full bag gift becomes coins")
+end)
+
+test("item gifts and the item event fill the bag", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	withConfig(Config.Economy, "Rewards", { { Kind = "Item", Weight = 1 } }, function()
+		match:giveReward(seat)
+	end)
+	eq(#seat.Items, 1, "gift item")
+	for _, event in Events do
+		if event.Id == "ItemDrop" then
+			event.Apply(match, seat, match.Rng)
+		end
+	end
+	eq(#seat.Items, 2, "event item")
+end)
+
+test("items stay with the seat when a bot takes over", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match:giveItem(seat, "TripleDice")
+	seat.Shield = true
+	seat.Stats.SpacesMoved = 7
+	match:replaceParticipant(seat, fakeParticipants(1)[1])
+	eq(seat.Items[1], "TripleDice", "items")
+	eq(seat.Shield, true, "shield")
+	eq(seat.Stats.SpacesMoved, 7, "stats")
+end)
+
+-- Bonuses -----------------------------------------------------------------------------------------
+
+test("stats: spaces travelled, coins earned (not balance), minigame points", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match.CollectibleSpace = 30
+	match:move(seat, 2) -- lands on 3 (Gain)
+	eq(seat.Stats.SpacesMoved, 2, "spaces")
+	eq(seat.Stats.CoinsEarned, Config.Economy.GainSpaceCoins, "space coins")
+	match:changeCoins(seat, -2)
+	eq(seat.Stats.CoinsEarned, Config.Economy.GainSpaceCoins, "losses don't reduce earned")
+	match:recordMinigame(
+		{ { Participant = seat.Participant, Placement = 1 }, { Participant = match.Seats[2].Participant, Placement = 2 } },
+		{ { Id = seat.Participant.Id, Coins = 10 }, { Id = match.Seats[2].Participant.Id, Coins = 6 } }
+	)
+	eq(seat.Stats.MinigamePoints, Config.MinigamePointsByPlacement[1], "1st place points")
+	eq(match.Seats[2].Stats.MinigamePoints, Config.MinigamePointsByPlacement[2], "2nd place points")
+	eq(seat.Stats.CoinsEarned, Config.Economy.GainSpaceCoins + 10, "minigame coins")
+end)
+
+test("bonuses: one Crown each, every tied leader wins", function()
+	local match = newMatch()
+	local a, b, c, d = table.unpack(match.Seats)
+	a.Stats = { MinigamePoints = 6, CoinsEarned = 20, SpacesMoved = 10 }
+	b.Stats = { MinigamePoints = 6, CoinsEarned = 15, SpacesMoved = 12 }
+	c.Stats = { MinigamePoints = 2, CoinsEarned = 30, SpacesMoved = 12 }
+	d.Stats = { MinigamePoints = 0, CoinsEarned = 5, SpacesMoved = 3 }
+	local awarded = match:awardBonuses()
+	eq(#awarded, #Config.Bonuses, "every bonus reported")
+	eq(#awarded[1].Winners, 2, "minigame tie: both win")
+	eq(#awarded[2].Winners, 1, "coin collector")
+	eq(awarded[2].Winners[1], c, "most earned")
+	eq(#awarded[3].Winners, 2, "explorer tie")
+	eq(match:collectiblesOf(a), 1, "a")
+	eq(match:collectiblesOf(b), 2, "b")
+	eq(match:collectiblesOf(c), 2, "c")
+	eq(match:collectiblesOf(d), 0, "d")
+end)
+
+test("bonuses: ties can be configured to award nobody; zero scores win nothing", function()
+	local match = newMatch()
+	for _, seat in match.Seats do
+		seat.Stats = { MinigamePoints = 4, CoinsEarned = 0, SpacesMoved = 0 }
+	end
+	local strict = { { Id = "X", Stat = "MinigamePoints", Crowns = 1, AwardTies = false }, { Id = "Y", Stat = "CoinsEarned", Crowns = 1, AwardTies = true } }
+	local awarded = match:awardBonuses(strict)
+	eq(#awarded[1].Winners, 0, "tie, AwardTies=false")
+	eq(#awarded[2].Winners, 0, "nobody earned anything")
+	for _, seat in match.Seats do
+		eq(match:collectiblesOf(seat), 0, "no crowns handed out")
+	end
+end)
+
+test("bonus Crowns change the final standings", function()
+	local match = newMatch()
+	setCoins(match, match.Seats[1], 50)
+	match.Seats[4].Stats.SpacesMoved = 9
+	eq(match:standings()[1].Participant, match.Seats[1].Participant, "before: coins lead")
+	match:awardBonuses()
+	eq(match:standings()[1].Participant, match.Seats[4].Participant, "after: bonus Crown leads")
 end)
 
 -- Standings ---------------------------------------------------------------------------------------

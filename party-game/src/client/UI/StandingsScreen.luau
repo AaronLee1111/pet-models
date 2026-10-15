@@ -1,6 +1,9 @@
 --[[
 	StandingsScreen
-	End-of-match standings: collectibles first, coins break ties (ranked by the server).
+	End-of-match screens, in order (message.Stage):
+	  Before   standings before the bonus awards
+	  Bonus    which bonus went to whom (one Crown each)
+	  Final    final standings: collectibles first, coins break ties (ranked by the server)
 ]]
 
 local Theme = require(script.Parent.Theme)
@@ -40,16 +43,67 @@ function StandingsScreen.new(screen: ScreenGui)
 	return self
 end
 
+local function showBonuses(self, message, myId: string)
+	self.Title.Text = "Bonus awards!"
+	local plural = message.CollectiblePlural or "Crowns"
+	for index, bonus in message.Bonuses or {} do
+		local names, mine = {}, false
+		for _, winner in bonus.Winners do
+			table.insert(names, if winner.Id == myId then "You" else winner.Name)
+			mine = mine or winner.Id == myId
+		end
+		local frame = make("Frame", {
+			LayoutOrder = index,
+			Size = UDim2.fromScale(1, 0.28),
+			BackgroundColor3 = if mine then Theme.Colors.CardLight else Theme.Colors.Overlay,
+			Parent = self.List,
+		}, { Theme.corner(12), Theme.padding(6) })
+		Theme.label({
+			Size = UDim2.fromScale(0.5, 0.55),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Font = Theme.TitleFont,
+			TextColor3 = Theme.Colors.Accent,
+			Text = bonus.Name,
+			Parent = frame,
+		}, 28)
+		Theme.label({
+			Position = UDim2.fromScale(0, 0.55),
+			Size = UDim2.fromScale(0.5, 0.45),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = Theme.Colors.Muted,
+			Text = bonus.Description,
+			Parent = frame,
+		}, 18)
+		Theme.label({
+			Position = UDim2.fromScale(0.5, 0),
+			Size = UDim2.fromScale(0.5, 1),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Text = if #names > 0
+				then ("%s  +%d %s"):format(table.concat(names, ", "), bonus.Crowns, if bonus.Crowns == 1 then string.sub(plural, 1, -2) else plural)
+				else "Nobody",
+			Parent = frame,
+		}, 24)
+	end
+end
+
 function StandingsScreen:show(message, myId: string)
 	for _, child in self.List:GetChildren() do
 		if child:IsA("Frame") then
 			child:Destroy()
 		end
 	end
+	self.Root.Visible = true
+	if message.Stage == "Bonus" then
+		showBonuses(self, message, myId)
+		Theme.pop(self.Root)
+		return
+	end
 	local rows = message.Rows or {}
 	local winner = rows[1]
 	local tied = rows[2] ~= nil and rows[2].Placement == 1
-	if not winner then
+	if message.Stage == "Before" then
+		self.Title.Text = "Standings before bonuses"
+	elseif not winner then
 		self.Title.Text = "Match over"
 	elseif tied then
 		self.Title.Text = "It's a tie for 1st!"

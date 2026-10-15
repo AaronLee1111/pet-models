@@ -26,6 +26,28 @@ function Board:get(id: number)
 	return self.Spaces[id]
 end
 
+-- Fewest moves from `from` to `to` following Next (math.huge if unreachable). Cached.
+function Board:distance(from: number, to: number): number
+	self.DistanceCache = self.DistanceCache or {}
+	local row = self.DistanceCache[from]
+	if not row then
+		row = { [from] = 0 }
+		local queue, head = { from }, 1
+		while queue[head] do
+			local id = queue[head]
+			head += 1
+			for _, nextId in self.Spaces[id].Next do
+				if row[nextId] == nil then
+					row[nextId] = row[id] + 1
+					table.insert(queue, nextId)
+				end
+			end
+		end
+		self.DistanceCache[from] = row
+	end
+	return row[to] or math.huge
+end
+
 function BoardLayout.validate(data, spaceTypes): string?
 	if type(data) ~= "table" or type(data.Spaces) ~= "table" or #data.Spaces == 0 then
 		return "board has no Spaces"

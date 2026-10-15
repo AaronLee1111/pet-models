@@ -50,6 +50,20 @@ Config.Match = {
 	Board = "Classic", -- module name in PartyServer/Board/Boards
 	WaitingRoomDuration = 15, -- seconds the waiting room counts down before a match
 	StandingsDuration = 10, -- final standings screen
+	PreBonusDuration = 5, -- standings before the bonus awards
+	BonusDuration = 7, -- the bonus awards card
+	OrderRollTimeout = 10, -- players who don't roll for turn order in time roll automatically
+	-- How bots play the board at each difficulty (see Board/BotBrain).
+	--   RandomChoice    chance any decision is made at random instead of thought through
+	--   ItemUseChance   chance a bot uses an item when it has a good reason to
+	--   SaveFactor      share of the Crown price kept in reserve before shopping (0..1)
+	--   LookAhead       spaces scored down each fork branch (0 = don't look)
+	--   CosmeticSpend   only buy cosmetics with at least this many coins to spare
+	BotBehavior = {
+		Easy = { RandomChoice = 0.6, ItemUseChance = 0.3, SaveFactor = 0, LookAhead = 0, CosmeticSpend = 0 },
+		Normal = { RandomChoice = 0.2, ItemUseChance = 0.7, SaveFactor = 0.6, LookAhead = 6, CosmeticSpend = 15 },
+		Hard = { RandomChoice = 0, ItemUseChance = 1, SaveFactor = 1, LookAhead = 10, CosmeticSpend = 25 },
+	},
 }
 
 Config.Board = {
@@ -82,10 +96,34 @@ Config.Economy = {
 		{ Kind = "Coins", Amount = 10, Weight = 3 },
 		{ Kind = "Cosmetic", Weight = 2 }, -- a random cosmetic the owner doesn't have yet
 		{ Kind = "Collectible", Amount = 1, Weight = 0.5 },
+		{ Kind = "Item", Weight = 3 }, -- a random board item (Board/Items), if there's room
 	},
 	ShopOffers = 2, -- cosmetics offered per shop visit
-	-- Bots keep at least this many coins after a shop purchase, saving for the collectible.
-	BotShopReserve = 20,
+	ShopItemOffers = 1, -- board items offered per shop visit (on top of the cosmetics)
+}
+
+-- Board items (Board/Items has the list). One item may be used per turn, before rolling.
+Config.Items = {
+	MaxHeld = 3,
+	StartingItems = {}, -- item ids every seat starts a match with, e.g. { "DoubleDice" }
+}
+
+-- End-of-match bonus awards, given after the last round and before the final standings.
+--   Stat       a per-seat statistic tracked by Match (MinigamePoints, CoinsEarned, SpacesMoved)
+--   AwardTies  true: every tied leader gets it; false: a tie means nobody does
+-- Nobody wins a bonus whose best value is 0.
+Config.Bonuses = {
+	{ Id = "MinigameMaster", Name = "Minigame Master", Description = "Best minigame results", Stat = "MinigamePoints", Crowns = 1, AwardTies = true },
+	{ Id = "CoinCollector", Name = "Coin Collector", Description = "Most coins earned this match", Stat = "CoinsEarned", Crowns = 1, AwardTies = true },
+	{ Id = "Explorer", Name = "Explorer", Description = "Most board spaces travelled", Stat = "SpacesMoved", Crowns = 1, AwardTies = true },
+}
+-- Minigame Master points per minigame placement (ties share a placement).
+Config.MinigamePointsByPlacement = { 3, 2, 1, 0 }
+
+-- Permanent profile (see PartyServer/Profiles). Match coins and Crowns never go in here.
+Config.Profile = {
+	Backend = "Memory", -- "Memory" (Studio/tests, lost on shutdown) | "DataStore" (not enabled yet)
+	BankCoinsByPlacement = { 30, 20, 12, 8 }, -- permanent coins for real players by final placement
 }
 
 -- World layout -----------------------------------------------------------------

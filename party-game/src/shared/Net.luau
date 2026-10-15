@@ -58,6 +58,7 @@ Net.Input = {
 	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
 	Roll = "Roll", -- roll the die on your turn
 	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
+	UseItem = "UseItem", -- your turn, before rolling: payload.Slot = index into your items
 	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
 	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }

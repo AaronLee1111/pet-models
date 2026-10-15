@@ -48,7 +48,10 @@ return {
 		Name = "Leaky Pocket",
 		Weight = 2,
 		Apply = function(match, seat)
-			local delta = match:changeCoins(seat, -5)
+			local delta, shielded = match:changeCoins(seat, -5)
+			if shielded then
+				return ("%s's Coin Shield saved their coins and broke"):format(seat.Participant.Name)
+			end
 			return ("%s dropped %d coins"):format(seat.Participant.Name, -delta)
 		end,
 	},
@@ -80,7 +83,11 @@ return {
 			if richest == poorest or match:coinsOf(richest) == match:coinsOf(poorest) then
 				return "Everyone has the same coins, so nothing happens"
 			end
-			local given = -match:changeCoins(richest, -5)
+			local taken, shielded = match:changeCoins(richest, -5)
+			if shielded then
+				return ("%s's Coin Shield kept their coins and broke"):format(richest.Participant.Name)
+			end
+			local given = -taken
 			match:changeCoins(poorest, given)
 			return ("%s gives %d coins to %s"):format(richest.Participant.Name, given, poorest.Participant.Name)
 		end,
@@ -92,6 +99,18 @@ return {
 		Apply = function(match)
 			match:relocateCollectible()
 			return ("The %s moved to a new space!"):format(match.CollectibleName)
+		end,
+	},
+	{
+		Id = "ItemDrop",
+		Name = "Item Drop",
+		Weight = 2,
+		Apply = function(match, seat)
+			local item = match:giveRandomItem(seat)
+			if not item then
+				return ("%s's bag is full, so the item rolls away"):format(seat.Participant.Name)
+			end
+			return ("%s picked up a %s"):format(seat.Participant.Name, item.Name)
 		end,
 	},
 	{

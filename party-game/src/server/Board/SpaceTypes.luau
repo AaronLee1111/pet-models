@@ -17,8 +17,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 
-local function coinsText(name: string, delta: number): string
-	if delta == 0 then
+local function coinsText(name: string, delta: number, shielded: boolean?): string
+	if shielded then
+		return ("%s's Coin Shield blocked the loss and broke"):format(name)
+	elseif delta == 0 then
 		return ("%s has no coins to lose"):format(name)
 	end
 	return ("%s %s %d coins"):format(name, if delta > 0 then "gets" else "loses", math.abs(delta))
@@ -46,7 +48,8 @@ return {
 		Short = "-" .. Config.Economy.LoseSpaceCoins,
 		Color = Color3.fromRGB(240, 70, 70),
 		Resolve = function(match, seat)
-			return coinsText(seat.Participant.Name, match:changeCoins(seat, -Config.Economy.LoseSpaceCoins))
+			local delta, shielded = match:changeCoins(seat, -Config.Economy.LoseSpaceCoins)
+			return coinsText(seat.Participant.Name, delta, shielded)
 		end,
 	},
 	Event = {
