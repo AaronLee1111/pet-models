@@ -88,11 +88,13 @@ function Theme.label(props: { [string]: any }, maxTextSize: number?)
 	return label
 end
 
--- Bouncy "pop in" used for cards and banners.
+-- Bouncy "pop in" used for cards and banners. Ends at the element's phone HUD scale
+-- (the "HudScale" attribute set by the client main script), not always at 1.
 function Theme.pop(guiObject: GuiObject)
 	local scale = guiObject:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = guiObject })
-	scale.Scale = 0.6
-	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	local target = guiObject:GetAttribute("HudScale") or 1
+	scale.Scale = target * 0.6
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = target }):Play()
 end
 
 -- "1:05" style clock.

@@ -132,6 +132,7 @@ local function fitHudToScreen()
 			hudBasePositions[name] = base
 			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
 			uiScale.Scale = scale
+			strip:SetAttribute("HudScale", scale) -- Theme.pop animates back to this, not to 1
 			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
 		end
 	end

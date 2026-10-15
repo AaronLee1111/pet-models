@@ -113,7 +113,7 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 		Name = "BoardItems",
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -24, 1, -186),
-		Size = UDim2.fromOffset(420, 64),
+		Size = UDim2.fromOffset(520, 84),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screen,
@@ -274,7 +274,7 @@ function BoardView:setState(message)
 		for slot, item in items do
 			local button = make("TextButton", {
 				LayoutOrder = slot,
-				Size = UDim2.fromOffset(132, 64),
+				Size = UDim2.fromOffset(160, 84), -- >= 44pt tall after the phone HUD scale (0.55)
 				BackgroundColor3 = Theme.Colors.Cool,
 				Font = Theme.BodyFont,
 				TextScaled = true,
