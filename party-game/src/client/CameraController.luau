@@ -12,7 +12,8 @@
 	Modes (numbers come from Config.CameraModes, overridable per minigame):
 	  AngledOverhead  fixed angle over the arena centre, drifting toward you by `Follow`
 	  FollowBehind    chase cam behind your character
-	  SideView        side-scroller; tracks you along the arena's RightVector
+	  SideView        side-scroller; tracks you along the arena's RightVector (and up/down
+	                  too with FollowY = true)
 ]]
 
 local Players = game:GetService("Players")
@@ -183,7 +184,9 @@ local function sideView(dt: number): CFrame
 	local right = arenaOrigin.RightVector
 	local root = myRoot()
 	local along = if root then (root.Position - center):Dot(right) else 0
-	local point = smoothTowards(center + right * along, params.Smooth, dt)
+	-- FollowY = true also rises and falls with you (e.g. climbing); otherwise height is fixed.
+	local rise = if root and params.FollowY then root.Position.Y - center.Y else 0
+	local point = smoothTowards(center + right * along + Vector3.new(0, rise, 0), params.Smooth, dt)
 	-- Stand on the side the arena faces away from, so the arena's +RightVector is screen-right.
 	local eye = point - arenaOrigin.LookVector * params.Distance + Vector3.new(0, params.Height, 0)
 	return CFrame.lookAt(eye, point + Vector3.new(0, 2, 0))
