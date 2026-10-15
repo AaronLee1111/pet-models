@@ -8886,6 +8886,7 @@ local function fitHudToScreen()
 			hudBasePositions[name] = base
 			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
 			uiScale.Scale = scale
+			strip:SetAttribute("HudScale", scale) -- Theme.pop animates back to this, not to 1
 			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
 		end
 	end
@@ -9935,7 +9936,7 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 		Name = "BoardItems",
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -24, 1, -186),
-		Size = UDim2.fromOffset(420, 64),
+		Size = UDim2.fromOffset(520, 84),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screen,
@@ -10096,7 +10097,7 @@ function BoardView:setState(message)
 		for slot, item in items do
 			local button = make("TextButton", {
 				LayoutOrder = slot,
-				Size = UDim2.fromOffset(132, 64),
+				Size = UDim2.fromOffset(160, 84), -- >= 44pt tall after the phone HUD scale (0.55)
 				BackgroundColor3 = Theme.Colors.Cool,
 				Font = Theme.BodyFont,
 				TextScaled = true,
@@ -11611,11 +11612,13 @@ function Theme.label(props: { [string]: any }, maxTextSize: number?)
 	return label
 end
 
--- Bouncy "pop in" used for cards and banners.
+-- Bouncy "pop in" used for cards and banners. Ends at the element's phone HUD scale
+-- (the "HudScale" attribute set by the client main script), not always at 1.
 function Theme.pop(guiObject: GuiObject)
 	local scale = guiObject:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = guiObject })
-	scale.Scale = 0.6
-	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	local target = guiObject:GetAttribute("HudScale") or 1
+	scale.Scale = target * 0.6
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = target }):Play()
 end
 
 -- "1:05" style clock.
