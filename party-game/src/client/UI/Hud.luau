@@ -167,6 +167,15 @@ function Hud:showBanner(text: string, color: Color3?, hold: number?)
 	end)
 end
 
+-- Removes every toast at once (e.g. when the results card opens, so none peek out behind it).
+function Hud:clearToasts()
+	for _, child in self.ToastList:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+end
+
 function Hud:toast(text: string)
 	self.ToastCount += 1
 	local toast = make("Frame", {

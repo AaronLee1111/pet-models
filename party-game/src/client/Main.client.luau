@@ -267,6 +267,7 @@ phaseHandlers[Phase.Results] = function(message)
 	hideOverlays()
 	endRound() -- everyone is back in the lobby: normal camera + controls
 	hud:setStatus(nil)
+	hud:clearToasts()
 	setCardOpen(true)
 	results:show(message.Minigame, message.Results, myId)
 end
