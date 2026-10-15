@@ -1137,6 +1137,7 @@ local function publish()
 		match.CollectibleSpace,
 		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
 	)
+	current.World:setTraps(match.Traps)
 	current.StateMessage = stateMessage()
 	MinigameManager.broadcast(current.StateMessage)
 end
@@ -1343,9 +1344,9 @@ local function rollForTurnOrder()
 	current.OrderRolls = nil
 end
 
--- Uses an item for the seat whose turn it is. Players pick a target here; bots pass one in.
--- Match:useItem does all the validation for both.
-local function useItem(seat, slot, target)
+-- Uses an item for the seat whose turn it is. Players pick a target / number here; bots pass
+-- theirs in. Match:useItem does all the validation for both.
+local function useItem(seat, slot, target, choice)
 	local match = current.Match
 	local id = type(slot) == "number" and seat.Items[slot]
 	local item = id and Match.getItem(id)
@@ -1358,7 +1359,7 @@ local function useItem(seat, slot, target)
 		table.insert(labels, "Cancel")
 		local pick = ask(seat, {
 			Kind = "Target",
-			Prompt = ("%s: swap places with who?"):format(item.Name),
+			Prompt = ("%s: pick an opponent"):format(item.Name),
 			Options = labels,
 			Default = #labels,
 			Data = { Seats = opponents },
@@ -1368,7 +1369,23 @@ local function useItem(seat, slot, target)
 			return false
 		end
 	end
-	local used, text = match:useItem(seat, slot, target)
+	if item and item.Choice == "DieFace" and choice == nil then
+		local labels = {}
+		for face = 1, Config.Board.DieSides do
+			labels[face] = tostring(face)
+		end
+		table.insert(labels, "Cancel")
+		choice = ask(seat, {
+			Kind = "DieFace",
+			Prompt = ("%s: pick your roll"):format(item.Name),
+			Options = labels,
+			Default = #labels,
+		})
+		if choice > Config.Board.DieSides then
+			return false
+		end
+	end
+	local used, text = match:useItem(seat, slot, target, choice)
 	if used then
 		feed(text)
 		placeAll() -- swaps and warps move pieces
@@ -1396,8 +1413,8 @@ local function takeTurn(seat)
 
 	if participant.IsBot or isAway(participant) then
 		waitRandom(Config.Board.BotRollDelay)
-		local slot, target = match:botItemChoice(seat)
-		if slot and useItem(seat, slot, target) then
+		local slot, target, choice = match:botItemChoice(seat)
+		if slot and useItem(seat, slot, target, choice) then
 			task.wait(1)
 		end
 	else
@@ -2017,6 +2034,32 @@ function BoardWorld:setCollectible(id: number?, label: string)
 	end
 end
 
+-- Draws a small marker on every trapped space ({ [spaceId] = trap }).
+function BoardWorld:setTraps(traps)
+	self.TrapMarkers = self.TrapMarkers or {}
+	for id, marker in self.TrapMarkers do
+		if not traps[id] then
+			marker:Destroy()
+			self.TrapMarkers[id] = nil
+		end
+	end
+	for id in traps do
+		local top = self.Tops[id]
+		if top and not self.TrapMarkers[id] then
+			self.TrapMarkers[id] = part({
+				Name = "Trap" .. id,
+				Size = Vector3.new(3, 0.4, 3),
+				Position = top + Vector3.new(0, 0.2, 0),
+				Color = Color3.fromRGB(120, 40, 40),
+				Material = Enum.Material.DiamondPlate,
+				CanCollide = false,
+				CanQuery = false,
+				Parent = self.Folder,
+			})
+		end
+	end
+end
+
 function BoardWorld:destroy()
 	self.Folder:Destroy()
 end
@@ -2128,7 +2171,20 @@ local BotBrain = {}
 -- How much a bot likes landing on / passing each space type (scaled down with distance).
 BotBrain.SpaceValue = { Gain = 3, Lose = -3, Event = 0.5, Reward = 3, Shop = 1, Neutral = 0 }
 -- How much a bot wants each item in a shop.
-BotBrain.ItemValue = { DoubleDice = 3, TripleDice = 4, CoinShield = 2, SwapTicket = 3, WarpToken = 2 }
+BotBrain.ItemValue = {
+	DoubleDice = 3,
+	TripleDice = 4,
+	CoinShield = 2,
+	SwapTicket = 3,
+	WarpToken = 2,
+	LuckyDie = 3,
+	Pickpocket = 2,
+	CrownHeist = 4,
+	Snare = 1,
+}
+-- Items an opponent could hurt you with; a bot that sees one in an opponent's (public)
+-- inventory values its own Coin Shield more.
+BotBrain.Threats = { Pickpocket = true, CrownHeist = true }
 local AVERAGE_ROLL = (Config.Board.DieSides + 1) / 2
 
 function BotBrain.profile(difficulty: string?)
@@ -2231,9 +2287,47 @@ function BotBrain.bestSwap(match, seat)
 	return target, own - targetDistance
 end
 
+-- Is any opponent holding an item that could steal from this seat?
+function BotBrain.threatened(match, seat): boolean
+	for _, other in match:opponentsOf(seat) do
+		for _, id in other.Items do
+			if BotBrain.Threats[id] then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- The opponent worth robbing: most of `stat` ("Coins" or "Collectibles"), not shielded.
+function BotBrain.bestVictim(match, seat, stat: string)
+	local best, bestValue = nil, 0
+	for _, other in match:opponentsOf(seat) do
+		local value = if stat == "Coins" then match:coinsOf(other) else match:collectiblesOf(other)
+		if not other.Shield and value > bestValue then
+			best, bestValue = other, value
+		end
+	end
+	return best, bestValue
+end
+
+-- The die face that lands on the most useful space straight ahead (ignores forks).
+function BotBrain.bestFace(match, seat): (number, number)
+	local bestFace, bestValue = 1, -math.huge
+	local id = seat.SpaceId
+	for face = 1, Config.Board.DieSides do
+		id = match.Board:get(id).Next[1]
+		local value = BotBrain.SpaceValue[match.Board:get(id).Type] or 0
+		if value > bestValue then
+			bestFace, bestValue = face, value
+		end
+	end
+	return bestFace, bestValue
+end
+
 --[[
-	How much a bot wants to use item `id` right now (> 0 = worth using), and the target.
-	To teach bots a new item, add a branch here.
+	How much a bot wants to use item `id` right now (> 0 = worth using), plus the target seat
+	and die-face choice where the item needs them. To teach bots a new item, add a branch here.
 ]]
 function BotBrain.itemScore(match, seat, id: string)
 	local coins, price = match:coinsOf(seat), match.CollectiblePrice
@@ -2252,7 +2346,30 @@ function BotBrain.itemScore(match, seat, id: string)
 		if seat.Shield then
 			return 0
 		end
+		if BotBrain.threatened(match, seat) and (coins >= 6 or match:collectiblesOf(seat) > 0) then
+			return 5 -- someone is holding a steal: block it first
+		end
 		return if coins >= 6 then 2 elseif late and coins > 0 then 1 else 0
+	elseif id == "LuckyDie" then
+		if canBuy and distance >= 1 and distance <= Config.Board.DieSides then
+			return 7, nil, distance -- land exactly on the Crown
+		end
+		local face, value = BotBrain.bestFace(match, seat)
+		return (if value >= 3 then 1 elseif late then 0.5 else 0), nil, face
+	elseif id == "Pickpocket" then
+		local victim, theirCoins = BotBrain.bestVictim(match, seat, "Coins")
+		if victim and theirCoins >= 3 then
+			return math.min(theirCoins, 6) / 2 * urgency, victim
+		end
+		return 0
+	elseif id == "CrownHeist" then
+		local victim, crowns = BotBrain.bestVictim(match, seat, "Collectibles")
+		if victim and crowns >= 1 and coins >= 15 then
+			return 8 * urgency, victim
+		end
+		return 0
+	elseif id == "Snare" then
+		return if match.Traps[seat.SpaceId] then 0 else 1
 	elseif id == "SwapTicket" then
 		local target, gain = BotBrain.bestSwap(match, seat)
 		if target and gain >= 6 and coins >= price - 5 then
@@ -2268,7 +2385,7 @@ function BotBrain.itemScore(match, seat, id: string)
 	return 0
 end
 
--- Returns slot, target (seat or nil) of the item to use this turn, or nil.
+-- Returns slot, target (seat or nil) and choice (die face or nil) of the item to use, or nil.
 function BotBrain.chooseItem(match, seat, profile)
 	if #seat.Items == 0 then
 		return nil
@@ -2280,17 +2397,17 @@ function BotBrain.chooseItem(match, seat, profile)
 		end
 		local slot = rng:NextInteger(1, #seat.Items)
 		local opponents = match:opponentsOf(seat)
-		return slot, opponents[rng:NextInteger(1, #opponents)]
+		return slot, opponents[rng:NextInteger(1, #opponents)], rng:NextInteger(1, Config.Board.DieSides)
 	end
-	local bestSlot, bestScore, bestTarget = nil, 0, nil
+	local bestSlot, bestScore, bestTarget, bestChoice = nil, 0, nil, nil
 	for slot, id in seat.Items do
-		local score, target = BotBrain.itemScore(match, seat, id)
+		local score, target, choice = BotBrain.itemScore(match, seat, id)
 		if score > bestScore then
-			bestSlot, bestScore, bestTarget = slot, score, target
+			bestSlot, bestScore, bestTarget, bestChoice = slot, score, target, choice
 		end
 	end
 	if bestSlot and rng:NextNumber() < profile.ItemUseChance then
-		return bestSlot, bestTarget
+		return bestSlot, bestTarget, bestChoice
 	end
 	return nil
 end
@@ -2311,6 +2428,8 @@ function BotBrain.decide(match, seat, request, profile, _skill: number): number
 	elseif request.Kind == "Target" and request.Data and request.Data.Seats then
 		local target = BotBrain.bestSwap(match, seat)
 		return table.find(request.Data.Seats, target) or 1
+	elseif request.Kind == "DieFace" then
+		return (BotBrain.bestFace(match, seat))
 	end
 	return request.Default or 1
 end
@@ -2467,8 +2586,12 @@ return {
 	  Weight       relative chance in gifts, events and shop offers
 	  Dice         optional: roll this many dice this turn instead of one
 	  Target       optional: "Opponent" = the user picks another seat
-	  Use          function(match, seat, target) -> feed text, or nil + reason to refuse
+	  Choice       optional: "DieFace" = the user picks a number 1..DieSides
+	  Boards       optional: list of board names this item appears on (board-specific items)
+	  Use          function(match, seat, target, choice) -> feed text, or nil + reason to refuse
 	               (a refusal keeps the item in the user's inventory)
+
+	Counterplay: a Coin Shield blocks the next coin loss, coin steal, trap or Crown Heist.
 
 	To add an item: append an entry here. Teach bots when to use it in BotBrain.itemScore.
 ]]
@@ -2537,6 +2660,67 @@ return {
 			end
 			seat.SpaceId = options[match.Rng:NextInteger(1, #options)]
 			return ("%s warped to a random space"):format(seat.Participant.Name)
+		end,
+	},
+	{
+		Id = "LuckyDie",
+		Name = "Lucky Die",
+		Description = "Pick your roll",
+		Price = 9,
+		Weight = 2,
+		Choice = "DieFace",
+		Use = function(match, seat, _target, face)
+			match.Turn.Fixed = face
+			return ("%s will move exactly %d"):format(seat.Participant.Name, face)
+		end,
+	},
+	{
+		Id = "Pickpocket",
+		Name = "Pickpocket",
+		Description = "Take up to 6 coins from an opponent",
+		Price = 7,
+		Weight = 2,
+		Target = "Opponent",
+		Use = function(match, seat, target)
+			if match:coinsOf(target) == 0 then
+				return nil, "they have no coins"
+			end
+			local taken, blocked = match:stealCoins(seat, target, 6)
+			if blocked then
+				return ("%s's Coin Shield stopped %s's pickpocket"):format(target.Participant.Name, seat.Participant.Name)
+			end
+			return ("%s pickpocketed %d coins from %s"):format(seat.Participant.Name, taken, target.Participant.Name)
+		end,
+	},
+	{
+		Id = "CrownHeist",
+		Name = "Crown Heist",
+		Description = "Pay 15 coins to take a Crown from an opponent (a Coin Shield stops it)",
+		Price = 25,
+		Weight = 0.4,
+		Target = "Opponent",
+		Fee = 15,
+		Use = function(match, seat, target)
+			local result, reason = match:stealCollectible(seat, target, 15)
+			if not result then
+				return nil, reason
+			elseif result == "blocked" then
+				return ("%s's Coin Shield stopped %s's Crown Heist"):format(target.Participant.Name, seat.Participant.Name)
+			end
+			return ("%s stole a %s from %s!"):format(seat.Participant.Name, match.CollectibleName, target.Participant.Name)
+		end,
+	},
+	{
+		Id = "Snare",
+		Name = "Snare Trap",
+		Description = "Trap your space: the next opponent to land there pays you 5 coins",
+		Price = 5,
+		Weight = 2,
+		Use = function(match, seat)
+			if not match:setTrap(seat, 5) then
+				return nil, "there's already a trap here"
+			end
+			return ("%s set a trap"):format(seat.Participant.Name)
 		end,
 	},
 }
@@ -2621,7 +2805,8 @@ function Match.new(board, participants, settings, deps)
 		CollectibleSpace = nil,
 		CollectibleName = Config.Collectible.Name,
 		CollectiblePrice = Config.Collectible.Price,
-		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice }
+		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice, Fixed }
+		Traps = {}, -- [spaceId] = { Owner = seat, Coins = n }
 	}, Match)
 
 	for index, participant in participants do
@@ -2776,10 +2961,11 @@ end
 	Uses the item in `slot` of the seat's inventory. Every rule is checked here, so players
 	(via the remote) and bots go through exactly the same validation:
 	  it must be this seat's turn, before the roll, no item used yet this turn,
-	  the slot must hold a real item, and an Opponent item needs another seat as target.
+	  the slot must hold a real item, an Opponent item needs another seat as target, and a
+	  DieFace item needs a whole number 1..DieSides as `choice`.
 	Returns true + feed text, or false + reason. A refused item stays in the inventory.
 ]]
-function Match:useItem(seat, slot, target): (boolean, string)
+function Match:useItem(seat, slot, target, choice): (boolean, string)
 	local turn = self.Turn
 	if not turn or turn.Seat ~= seat then
 		return false, "not your turn"
@@ -2804,7 +2990,14 @@ function Match:useItem(seat, slot, target): (boolean, string)
 	else
 		target = nil
 	end
-	local text, reason = item.Use(self, seat, target)
+	if item.Choice == "DieFace" then
+		if type(choice) ~= "number" or choice % 1 ~= 0 or choice < 1 or choice > Config.Board.DieSides then
+			return false, "pick a number"
+		end
+	else
+		choice = nil
+	end
+	local text, reason = item.Use(self, seat, target, choice)
 	if not text then
 		return false, reason or "can't use that now"
 	end
@@ -2816,9 +3009,14 @@ function Match:useItem(seat, slot, target): (boolean, string)
 	return true, text
 end
 
--- Rolls this turn's dice (1, or more from a dice item). Returns the total and each die.
+-- Rolls this turn's dice (1, more from a dice item, or a chosen number from a Lucky Die).
+-- Returns the total and each die.
 function Match:rollTurn(seat): (number, { number })
 	local turn = self.Turn
+	if turn and turn.Seat == seat and turn.Fixed then
+		turn.Stage = "Moving"
+		return turn.Fixed, { turn.Fixed }
+	end
 	local count = if turn and turn.Seat == seat then turn.Dice else 1
 	local dice, total = {}, 0
 	for i = 1, count do
@@ -2829,6 +3027,80 @@ function Match:rollTurn(seat): (number, { number })
 		turn.Stage = "Moving"
 	end
 	return total, dice
+end
+
+-- Stealing + traps ---------------------------------------------------------------------------
+
+--[[
+	Takes up to `amount` coins from victim to thief. A Coin Shield on the victim blocks it
+	(and breaks). Returns coins taken, and whether a shield blocked it.
+]]
+function Match:stealCoins(thief, victim, amount: number): (number, boolean)
+	if victim.Shield and self:coinsOf(victim) > 0 then
+		victim.Shield = false
+		return 0, true
+	end
+	local _, delta = self.Deps.Wallet.add(victim.Participant, -amount)
+	local taken = -delta
+	if taken > 0 then
+		self:changeCoins(thief, taken)
+	end
+	return taken, false
+end
+
+--[[
+	The Crown steal: the thief pays `fee` coins, then takes one collectible from the victim.
+	A Coin Shield on the victim blocks it (the shield breaks; the fee is still paid).
+	Returns "stolen" | "blocked", or nil + reason (nothing happened).
+]]
+function Match:stealCollectible(thief, victim, fee: number): (string?, string?)
+	if self:collectiblesOf(victim) < 1 then
+		return nil, ("they have no %s"):format(Config.Collectible.Plural)
+	end
+	if not self.Deps.Wallet.spend(thief.Participant, fee) then
+		return nil, ("you need %d coins to pay for it"):format(fee)
+	end
+	if victim.Shield then
+		victim.Shield = false
+		return "blocked"
+	end
+	self.Deps.Wallet.addCollectibles(victim.Participant, -1)
+	self.Deps.Wallet.addCollectibles(thief.Participant, 1)
+	return "stolen"
+end
+
+-- Sets a trap on the seat's current space. False if one is already there.
+function Match:setTrap(seat, coins: number): boolean
+	if self.Traps[seat.SpaceId] then
+		return false
+	end
+	self.Traps[seat.SpaceId] = { Owner = seat, Coins = coins }
+	return true
+end
+
+-- An opponent landing on a trap pays its owner (a shield blocks it). Returns feed text.
+function Match:springTrap(seat): string?
+	local trap = self.Traps[seat.SpaceId]
+	if not trap or trap.Owner == seat then
+		return nil
+	end
+	self.Traps[seat.SpaceId] = nil
+	local taken, blocked = self:stealCoins(trap.Owner, seat, trap.Coins)
+	if blocked then
+		return ("%s's Coin Shield broke %s's trap"):format(seat.Participant.Name, trap.Owner.Participant.Name)
+	end
+	return ("%s stepped in %s's trap and paid %d coins"):format(seat.Participant.Name, trap.Owner.Participant.Name, taken)
+end
+
+-- Items that can appear on this board (Items with a Boards list only show up on those boards).
+function Match:itemPool()
+	local pool = {}
+	for _, item in Items do
+		if not item.Boards or table.find(item.Boards, self.Board.Name) then
+			table.insert(pool, item)
+		end
+	end
+	return pool
 end
 
 -- Opponents a Target item could be used on.
@@ -2948,9 +3220,14 @@ function Match:move(seat, steps: number, onHop, onNotice)
 end
 
 function Match:land(seat): string?
+	local trap = self:springTrap(seat)
 	local space = self.Board:get(seat.SpaceId)
 	local spaceType = SpaceTypes[space.Type]
-	return spaceType.Resolve(self, seat, space)
+	local text = spaceType.Resolve(self, seat, space)
+	if trap then
+		return if text then trap .. ". " .. text else trap
+	end
+	return text
 end
 
 -- Space helpers (used by SpaceTypes / Events) ---------------------------------------------------
@@ -2977,7 +3254,7 @@ function Match:giveRandomItem(seat)
 	if #seat.Items >= Config.Items.MaxHeld then
 		return nil
 	end
-	local item = weightedPick(self.Rng, Items)
+	local item = weightedPick(self.Rng, self:itemPool())
 	self:giveItem(seat, item.Id)
 	return item
 end
@@ -3018,7 +3295,7 @@ function Match:visitShop(seat): string
 	local name = seat.Participant.Name
 	local offers = {}
 	if #seat.Items < Config.Items.MaxHeld then
-		local pool = table.clone(Items)
+		local pool = self:itemPool()
 		for _ = 1, math.min(Config.Economy.ShopItemOffers, #pool) do
 			local item = table.remove(pool, self.Rng:NextInteger(1, #pool))
 			table.insert(offers, { Kind = "Item", Id = item.Id, Name = item.Name, Price = item.Price })
@@ -9174,7 +9451,7 @@ local HUD_STRIPS = {
 }
 local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
-local HUD_MIN_SCALE = { WaitingRoom = 0.85 }
+local HUD_MIN_SCALE = { WaitingRoom = 0.85, BoardPrompt = 0.75 }
 local hudBasePositions = {}
 
 local function fitHudToScreen()
