@@ -4,7 +4,7 @@ A 4-player party-game prototype for Roblox: lobby vote → arena → 3-2-1 → m
 results and coins → back to the lobby. Bots fill any empty seats. The server owns all game
 state, and clients only send inputs.
 
-Five placeholder minigames exercise the framework:
+Six placeholder minigames exercise the framework:
 
 | Minigame | Layout | Camera | Controls | Chips show |
 |---|---|---|---|---|
@@ -13,6 +13,7 @@ Five placeholder minigames exercise the framework:
 | Mash Dash | 2v2 | SideView | **movement locked**, **Mash** (Space / ButtonA / on-screen) | % of track |
 | Kernel Catch | FFA | AngledOverhead | move + jump, no actions | 🍿 popcorn caught |
 | Ice Dash | FFA | FollowBehind | **auto-forward**, hold **◀ / ▶** to steer (A/D, arrows, on-screen) | race bar along the top |
+| Pole Shimmy | FFA | SideView (follows you up) | **movement locked**, alternate **LEFT / RIGHT** (A / D, on-screen) | height % |
 
 ## Play it in Studio (1 real player + 3 bots)
 
