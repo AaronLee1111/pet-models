@@ -11,9 +11,10 @@
 	Match coins, Crowns, board items and stats are never written here.
 
 	A backend is any table with:
-	  read(key)        -> data table or nil (may yield; may error)
-	  write(key, data) -> () (may yield; may error)
-	MemoryBackend is used in Studio and tests; DataStoreBackend is where real saving goes.
+	  read(key)                 -> data table or nil (may yield; may error)
+	  write(key, data, release) -> () (may yield; may error). release = the player is leaving
+	MemoryBackend is used in Studio and tests; DataStoreBackend saves for real (retries,
+	session locking).
 ]]
 
 local ProfileStore = {}
@@ -86,12 +87,12 @@ function ProfileStore:get(key: string)
 	return entry and entry.Data
 end
 
-function ProfileStore:save(key: string): boolean
+function ProfileStore:save(key: string, release: boolean?): boolean
 	local entry = self.Loaded[key]
 	if not entry or not entry.CanSave then
 		return false
 	end
-	local ok, err = pcall(self.Backend.write, self.Backend, key, deepCopy(entry.Data))
+	local ok, err = pcall(self.Backend.write, self.Backend, key, deepCopy(entry.Data), release == true)
 	if not ok then
 		warn(("[Profiles] Could not save %s: %s"):format(key, tostring(err)))
 	end
@@ -100,9 +101,18 @@ end
 
 -- Saves and forgets a profile (player left).
 function ProfileStore:release(key: string): boolean
-	local saved = self:save(key)
+	local saved = self:save(key, true)
 	self.Loaded[key] = nil
 	return saved
+end
+
+-- Keys of every loaded profile (autosave / shutdown).
+function ProfileStore:keys(): { string }
+	local list = {}
+	for key in self.Loaded do
+		table.insert(list, key)
+	end
+	return list
 end
 
 -- Permanent bank coins (never negative).

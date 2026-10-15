@@ -126,7 +126,10 @@ Config.MinigamePointsByPlacement = { 3, 2, 1, 0 }
 
 -- Permanent profile (see PartyServer/Profiles). Match coins and Crowns never go in here.
 Config.Profile = {
-	Backend = "Memory", -- "Memory" (Studio/tests, lost on shutdown) | "DataStore" (not enabled yet)
+	-- "Auto": DataStore in live servers, Memory in Studio (so testing never touches real saves).
+	-- "Memory" | "DataStore" force one (DataStore in Studio needs API access turned on).
+	Backend = "Auto",
+	AutosaveInterval = 120, -- seconds between saves of every loaded profile
 	BankCoinsByPlacement = { 30, 20, 12, 8 }, -- permanent coins for real players by final placement
 }
 

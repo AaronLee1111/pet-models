@@ -9,12 +9,14 @@
 	  Profiles.addBankCoins(player, n)    permanent coins
 	  Profiles.bankCoins(player) -> number
 
-	Backend: Config.Profile.Backend ("Memory" now; "DataStore" once DataStoreBackend is done).
-	Real saving plugs in ONLY in DataStoreBackend.luau; nothing else needs to change.
+	Backend: Config.Profile.Backend ("Auto" = DataStore live, Memory in Studio). Saves happen
+	on leave (and release the session lock), every Config.Profile.AutosaveInterval, and at
+	shutdown (BindToClose). A profile that failed to load is never saved over.
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Inventory = require(script.Parent.Inventory)
@@ -27,7 +29,38 @@ local Profiles = {}
 Profiles.ProfileStore = ProfileStore
 Profiles.MemoryBackend = MemoryBackend
 
-local backend = if Config.Profile.Backend == "DataStore" then DataStoreBackend.new() else MemoryBackend.new()
+function Profiles.chooseBackend(setting: string, isStudio: boolean): string
+	if setting == "Auto" then
+		return if isStudio then "Memory" else "DataStore"
+	end
+	return if setting == "DataStore" then "DataStore" else "Memory"
+end
+
+-- When DataStores can't be reached at all (e.g. an unpublished place), every profile loads
+-- blank and is never saved: better than pretending to save, or crashing the server.
+local UnavailableBackend = {
+	read = function()
+		error("DataStores are unavailable on this server")
+	end,
+	write = function()
+		error("DataStores are unavailable on this server")
+	end,
+}
+
+Profiles.backendName = Profiles.chooseBackend(Config.Profile.Backend, RunService:IsStudio())
+local backend
+if Profiles.backendName == "DataStore" then
+	local ok, result = pcall(DataStoreBackend.new)
+	if ok then
+		backend = result
+	else
+		warn("[Profiles] DataStore unavailable, profiles won't save this session: " .. tostring(result))
+		Profiles.backendName = "Unavailable"
+		backend = UnavailableBackend
+	end
+else
+	backend = MemoryBackend.new()
+end
 Profiles.store = ProfileStore.new(backend)
 
 local function keyOf(player: Player): string
@@ -66,9 +99,27 @@ function Profiles.start()
 	Players.PlayerRemoving:Connect(function(player)
 		Profiles.store:release(keyOf(player))
 	end)
+	task.spawn(function()
+		while true do
+			task.wait(Config.Profile.AutosaveInterval)
+			for _, key in Profiles.store:keys() do
+				task.spawn(Profiles.store.save, Profiles.store, key)
+			end
+		end
+	end)
+	-- Shutdown: save and release everyone in parallel, and wait (Roblox allows ~30 s).
 	game:BindToClose(function()
-		for _, player in Players:GetPlayers() do
-			Profiles.store:save(keyOf(player))
+		local pending = 0
+		for _, key in Profiles.store:keys() do
+			pending += 1
+			task.spawn(function()
+				Profiles.store:release(key)
+				pending -= 1
+			end)
+		end
+		local started = os.clock()
+		while pending > 0 and os.clock() - started < 25 do
+			task.wait(0.1)
 		end
 	end)
 end

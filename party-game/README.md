@@ -125,15 +125,21 @@ whose drawn set doesn't match its owner's (respawns, teleports, bot takeovers al
 
 ### Profiles (permanent data)
 `src/server/Profiles/`: `ProfileStore` (data shape `{ Version, Coins, Owned, Equipped }`,
-`reconcile` for repairs/migrations), `MemoryBackend` (Studio and tests) and `DataStoreBackend`
-(**not enabled**: it refuses to read/write). `Profiles` (init) loads on join, gives the profile's
-cosmetic tables to Inventory, and saves on leave and in `BindToClose`.
+`reconcile` repairs damaged saves and is where migrations go), `MemoryBackend` (Studio and
+tests) and `DataStoreBackend` (real saving). `Profiles` (init) loads on join, hands the
+profile's cosmetic tables to Inventory, autosaves every `Config.Profile.AutosaveInterval`,
+saves and releases on leave, and saves everyone in parallel on shutdown (`BindToClose`).
 
-- Match coins, Crowns, items and stats are never stored in a profile. The only thing a match
-  writes is permanent bank coins (`Config.Profile.BankCoinsByPlacement`), added at the final standings.
-- To turn on real saving: finish `DataStoreBackend.read/write` (instructions in that file:
-  `GetAsync`/`UpdateAsync`, retries, session locking, autosave), then set
-  `Config.Profile.Backend = "DataStore"`. Nothing else changes.
+- Backend: `Config.Profile.Backend = "Auto"` uses DataStores in live servers and memory in
+  Studio, so playtests never touch real saves. `"DataStore"` forces it (Studio needs "Enable
+  Studio Access to API Services"); if DataStores can't be reached, players play unsaved
+  instead of the server crashing.
+- DataStoreBackend: `UpdateAsync` only, 4 tries with doubling backoff, and a session lock
+  (`{ Data, Session = { JobId, Time } }`). A profile held by another live server isn't loaded
+  (the player plays unsaved) and can't be saved over; a lock older than 30 minutes (crashed
+  server) is taken over.
+- Match coins, Crowns, items and stats are never stored. The only thing a match writes is
+  permanent bank coins (`Config.Profile.BankCoinsByPlacement`) at the final standings.
 
 ### Rewards and prices
 Gift-space rewards (`Config.Economy.Rewards`, weighted), coin space amounts, starting coins,

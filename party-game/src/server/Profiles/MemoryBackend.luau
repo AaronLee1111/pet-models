@@ -17,7 +17,7 @@ function MemoryBackend:read(key: string)
 	return ProfileStore.deepCopy(self.Data[key])
 end
 
-function MemoryBackend:write(key: string, data)
+function MemoryBackend:write(key: string, data, _release: boolean?)
 	self.Writes += 1
 	self.Data[key] = ProfileStore.deepCopy(data)
 end

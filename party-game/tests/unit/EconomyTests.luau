@@ -221,13 +221,124 @@ test("profiles: a failed load never saves over the real data", function()
 	eq(broken.Writes, 0, "nothing written")
 end)
 
-test("profiles: the DataStore backend is switched off", function()
-	eq(Config.Profile.Backend, "Memory", "default backend")
-	local DataStoreBackend = require(Server.Profiles.DataStoreBackend)
-	local success = pcall(function()
-		DataStoreBackend.new():write("player_1", {})
+-- DataStore layer (fake store) ---------------------------------------------------------------
+
+-- Behaves like a DataStore's UpdateAsync; `failures` makes the next N calls throw.
+local function fakeStore()
+	local store = { Data = {}, Failures = 0, Calls = 0 }
+	function store:UpdateAsync(key, transform)
+		self.Calls += 1
+		if self.Failures > 0 then
+			self.Failures -= 1
+			error("DataStore request was throttled")
+		end
+		local result = transform(ProfileStore.deepCopy(self.Data[key]))
+		if result ~= nil then
+			self.Data[key] = ProfileStore.deepCopy(result)
+		end
+		return result
+	end
+	return store
+end
+
+local DataStoreBackend = require(Server.Profiles.DataStoreBackend)
+local clock = 1000
+local function server(store, jobId)
+	return DataStoreBackend.new({
+		Store = store,
+		JobId = jobId,
+		Now = function()
+			return clock
+		end,
+		Wait = function() end,
+	})
+end
+
+test("datastore: load claims the session, save keeps it, release frees it", function()
+	local store = fakeStore()
+	local a = server(store, "A")
+	eq(a:read("player_1"), nil, "new player")
+	eq(store.Data.player_1.Session.JobId, "A", "locked by A")
+	a:write("player_1", { Coins = 5 })
+	eq(store.Data.player_1.Data.Coins, 5, "saved")
+	eq(store.Data.player_1.Session.JobId, "A", "still locked")
+	a:write("player_1", { Coins = 6 }, true)
+	eq(store.Data.player_1.Session, nil, "released")
+	local b = server(store, "B")
+	eq(b:read("player_1").Coins, 6, "another server loads the released profile")
+end)
+
+test("datastore: a live lock on another server blocks loading and saving", function()
+	local store = fakeStore()
+	server(store, "A"):read("player_2")
+	local b = server(store, "B")
+	local loaded = pcall(function()
+		b:read("player_2")
 	end)
-	eq(success, false, "DataStore writes must refuse until enabled")
+	eq(loaded, false, "B must not load while A holds the lock")
+	local saved = pcall(function()
+		b:write("player_2", { Coins = 999 })
+	end)
+	eq(saved, false, "B must not save over A")
+	eq(store.Data.player_2.Data, nil, "data untouched")
+end)
+
+test("datastore: an abandoned lock (crashed server) is taken over after expiry", function()
+	local store = fakeStore()
+	server(store, "A"):read("player_3")
+	clock += DataStoreBackend.LOCK_EXPIRY + 1
+	local b = server(store, "B")
+	b:read("player_3")
+	eq(store.Data.player_3.Session.JobId, "B", "taken over")
+	local stale = pcall(function()
+		server(store, "A"):write("player_3", { Coins = 1 })
+	end)
+	eq(stale, false, "the old server can't save over the new one")
+end)
+
+test("datastore: retries through temporary failures, gives up after RETRIES", function()
+	local store = fakeStore()
+	local a = server(store, "A")
+	store.Failures = DataStoreBackend.RETRIES - 1
+	a:read("player_4")
+	eq(store.Data.player_4.Session.JobId, "A", "loaded after retries")
+	store.Failures = DataStoreBackend.RETRIES
+	local ok = pcall(function()
+		a:write("player_4", { Coins = 3 })
+	end)
+	eq(ok, false, "gave up")
+end)
+
+test("profiles over the datastore: round trip, and a blocked load plays unsaved", function()
+	local store = fakeStore()
+	local profiles = ProfileStore.new(server(store, "A"))
+	local profile = profiles:load("player_6")
+	profile.Coins = 40
+	profile.Owned.hat_party = true
+	eq(profiles:release("player_6"), true, "saved on leave")
+	local again = ProfileStore.new(server(store, "B")):load("player_6")
+	eq(again.Coins, 40, "coins")
+	eq(again.Owned.hat_party, true, "cosmetic")
+
+	local blocked = ProfileStore.new(server(store, "C"))
+	local fresh = blocked:load("player_6") -- B still holds it
+	eq(fresh.Coins, 0, "blocked load gets a blank profile")
+	fresh.Coins = 1
+	eq(blocked:save("player_6"), false, "and never saves it")
+	eq(store.Data.player_6.Data.Coins, 40, "real data intact")
+end)
+
+test("profiles: backend choice keeps Studio off real saves", function()
+	local Profiles = require(Server.Profiles)
+	eq(Profiles.chooseBackend("Auto", true), "Memory", "Studio")
+	eq(Profiles.chooseBackend("Auto", false), "DataStore", "live")
+	eq(Profiles.chooseBackend("Memory", false), "Memory", "forced memory")
+	eq(Profiles.chooseBackend("DataStore", true), "DataStore", "forced datastore")
+	if Config.Profile.Backend == "Auto" then
+		eq(Profiles.backendName, "Memory", "this Studio session")
+	else
+		ok(table.find({ "Memory", "DataStore", "Unavailable" }, Profiles.backendName), "known backend")
+	end
 end)
 
 return function()
