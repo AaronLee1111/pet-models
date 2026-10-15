@@ -90,6 +90,20 @@ checks turn, timing, one-per-turn, ownership and the target for players and bots
 come from Gift spaces (`Kind = "Item"` reward), the Item Drop event and the shop.
 `Config.Items.StartingItems` hands everyone items at the start (handy for testing).
 
+| Item | What it does | Counterplay |
+|---|---|---|
+| Double / Triple Dice | roll 2 / 3 dice | |
+| Lucky Die | pick your roll (1..6) | |
+| Coin Shield | blocks the next coin loss, steal, trap or Crown Heist, then breaks | |
+| Swap Ticket | swap places with an opponent you pick | |
+| Warp Token | jump to a random space | |
+| Pickpocket | take up to 6 coins from an opponent | Coin Shield |
+| Crown Heist | pay 15 coins, take a Crown from an opponent (shop 25 coins, rare) | Coin Shield (the fee is still lost) |
+| Snare Trap | trap your space; the next opponent to land there pays you 5 | Coin Shield |
+
+Items can be board-specific (`Boards = { "Classic" }`). Everyone's held items are public
+(standings rows), so bots raise a Coin Shield when an opponent holds a Pickpocket or Crown Heist.
+
 ### Add an item
 1. Append to `src/server/Board/Items.luau`:
    `{ Id, Name, Description, Price, Weight, Dice?, Target? = "Opponent", Use = function(match, seat, target) return "feed text" end }`.

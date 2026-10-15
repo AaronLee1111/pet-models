@@ -11,8 +11,12 @@
 	  Weight       relative chance in gifts, events and shop offers
 	  Dice         optional: roll this many dice this turn instead of one
 	  Target       optional: "Opponent" = the user picks another seat
-	  Use          function(match, seat, target) -> feed text, or nil + reason to refuse
+	  Choice       optional: "DieFace" = the user picks a number 1..DieSides
+	  Boards       optional: list of board names this item appears on (board-specific items)
+	  Use          function(match, seat, target, choice) -> feed text, or nil + reason to refuse
 	               (a refusal keeps the item in the user's inventory)
+
+	Counterplay: a Coin Shield blocks the next coin loss, coin steal, trap or Crown Heist.
 
 	To add an item: append an entry here. Teach bots when to use it in BotBrain.itemScore.
 ]]
@@ -81,6 +85,67 @@ return {
 			end
 			seat.SpaceId = options[match.Rng:NextInteger(1, #options)]
 			return ("%s warped to a random space"):format(seat.Participant.Name)
+		end,
+	},
+	{
+		Id = "LuckyDie",
+		Name = "Lucky Die",
+		Description = "Pick your roll",
+		Price = 9,
+		Weight = 2,
+		Choice = "DieFace",
+		Use = function(match, seat, _target, face)
+			match.Turn.Fixed = face
+			return ("%s will move exactly %d"):format(seat.Participant.Name, face)
+		end,
+	},
+	{
+		Id = "Pickpocket",
+		Name = "Pickpocket",
+		Description = "Take up to 6 coins from an opponent",
+		Price = 7,
+		Weight = 2,
+		Target = "Opponent",
+		Use = function(match, seat, target)
+			if match:coinsOf(target) == 0 then
+				return nil, "they have no coins"
+			end
+			local taken, blocked = match:stealCoins(seat, target, 6)
+			if blocked then
+				return ("%s's Coin Shield stopped %s's pickpocket"):format(target.Participant.Name, seat.Participant.Name)
+			end
+			return ("%s pickpocketed %d coins from %s"):format(seat.Participant.Name, taken, target.Participant.Name)
+		end,
+	},
+	{
+		Id = "CrownHeist",
+		Name = "Crown Heist",
+		Description = "Pay 15 coins to take a Crown from an opponent (a Coin Shield stops it)",
+		Price = 25,
+		Weight = 0.4,
+		Target = "Opponent",
+		Fee = 15,
+		Use = function(match, seat, target)
+			local result, reason = match:stealCollectible(seat, target, 15)
+			if not result then
+				return nil, reason
+			elseif result == "blocked" then
+				return ("%s's Coin Shield stopped %s's Crown Heist"):format(target.Participant.Name, seat.Participant.Name)
+			end
+			return ("%s stole a %s from %s!"):format(seat.Participant.Name, match.CollectibleName, target.Participant.Name)
+		end,
+	},
+	{
+		Id = "Snare",
+		Name = "Snare Trap",
+		Description = "Trap your space: the next opponent to land there pays you 5 coins",
+		Price = 5,
+		Weight = 2,
+		Use = function(match, seat)
+			if not match:setTrap(seat, 5) then
+				return nil, "there's already a trap here"
+			end
+			return ("%s set a trap"):format(seat.Participant.Name)
 		end,
 	},
 }

@@ -118,7 +118,7 @@ local HUD_STRIPS = {
 }
 local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
-local HUD_MIN_SCALE = { WaitingRoom = 0.85 }
+local HUD_MIN_SCALE = { WaitingRoom = 0.85, BoardPrompt = 0.75 }
 local hudBasePositions = {}
 
 local function fitHudToScreen()

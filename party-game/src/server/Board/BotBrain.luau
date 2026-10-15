@@ -22,7 +22,20 @@ local BotBrain = {}
 -- How much a bot likes landing on / passing each space type (scaled down with distance).
 BotBrain.SpaceValue = { Gain = 3, Lose = -3, Event = 0.5, Reward = 3, Shop = 1, Neutral = 0 }
 -- How much a bot wants each item in a shop.
-BotBrain.ItemValue = { DoubleDice = 3, TripleDice = 4, CoinShield = 2, SwapTicket = 3, WarpToken = 2 }
+BotBrain.ItemValue = {
+	DoubleDice = 3,
+	TripleDice = 4,
+	CoinShield = 2,
+	SwapTicket = 3,
+	WarpToken = 2,
+	LuckyDie = 3,
+	Pickpocket = 2,
+	CrownHeist = 4,
+	Snare = 1,
+}
+-- Items an opponent could hurt you with; a bot that sees one in an opponent's (public)
+-- inventory values its own Coin Shield more.
+BotBrain.Threats = { Pickpocket = true, CrownHeist = true }
 local AVERAGE_ROLL = (Config.Board.DieSides + 1) / 2
 
 function BotBrain.profile(difficulty: string?)
@@ -125,9 +138,47 @@ function BotBrain.bestSwap(match, seat)
 	return target, own - targetDistance
 end
 
+-- Is any opponent holding an item that could steal from this seat?
+function BotBrain.threatened(match, seat): boolean
+	for _, other in match:opponentsOf(seat) do
+		for _, id in other.Items do
+			if BotBrain.Threats[id] then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- The opponent worth robbing: most of `stat` ("Coins" or "Collectibles"), not shielded.
+function BotBrain.bestVictim(match, seat, stat: string)
+	local best, bestValue = nil, 0
+	for _, other in match:opponentsOf(seat) do
+		local value = if stat == "Coins" then match:coinsOf(other) else match:collectiblesOf(other)
+		if not other.Shield and value > bestValue then
+			best, bestValue = other, value
+		end
+	end
+	return best, bestValue
+end
+
+-- The die face that lands on the most useful space straight ahead (ignores forks).
+function BotBrain.bestFace(match, seat): (number, number)
+	local bestFace, bestValue = 1, -math.huge
+	local id = seat.SpaceId
+	for face = 1, Config.Board.DieSides do
+		id = match.Board:get(id).Next[1]
+		local value = BotBrain.SpaceValue[match.Board:get(id).Type] or 0
+		if value > bestValue then
+			bestFace, bestValue = face, value
+		end
+	end
+	return bestFace, bestValue
+end
+
 --[[
-	How much a bot wants to use item `id` right now (> 0 = worth using), and the target.
-	To teach bots a new item, add a branch here.
+	How much a bot wants to use item `id` right now (> 0 = worth using), plus the target seat
+	and die-face choice where the item needs them. To teach bots a new item, add a branch here.
 ]]
 function BotBrain.itemScore(match, seat, id: string)
 	local coins, price = match:coinsOf(seat), match.CollectiblePrice
@@ -146,7 +197,30 @@ function BotBrain.itemScore(match, seat, id: string)
 		if seat.Shield then
 			return 0
 		end
+		if BotBrain.threatened(match, seat) and (coins >= 6 or match:collectiblesOf(seat) > 0) then
+			return 5 -- someone is holding a steal: block it first
+		end
 		return if coins >= 6 then 2 elseif late and coins > 0 then 1 else 0
+	elseif id == "LuckyDie" then
+		if canBuy and distance >= 1 and distance <= Config.Board.DieSides then
+			return 7, nil, distance -- land exactly on the Crown
+		end
+		local face, value = BotBrain.bestFace(match, seat)
+		return (if value >= 3 then 1 elseif late then 0.5 else 0), nil, face
+	elseif id == "Pickpocket" then
+		local victim, theirCoins = BotBrain.bestVictim(match, seat, "Coins")
+		if victim and theirCoins >= 3 then
+			return math.min(theirCoins, 6) / 2 * urgency, victim
+		end
+		return 0
+	elseif id == "CrownHeist" then
+		local victim, crowns = BotBrain.bestVictim(match, seat, "Collectibles")
+		if victim and crowns >= 1 and coins >= 15 then
+			return 8 * urgency, victim
+		end
+		return 0
+	elseif id == "Snare" then
+		return if match.Traps[seat.SpaceId] then 0 else 1
 	elseif id == "SwapTicket" then
 		local target, gain = BotBrain.bestSwap(match, seat)
 		if target and gain >= 6 and coins >= price - 5 then
@@ -162,7 +236,7 @@ function BotBrain.itemScore(match, seat, id: string)
 	return 0
 end
 
--- Returns slot, target (seat or nil) of the item to use this turn, or nil.
+-- Returns slot, target (seat or nil) and choice (die face or nil) of the item to use, or nil.
 function BotBrain.chooseItem(match, seat, profile)
 	if #seat.Items == 0 then
 		return nil
@@ -174,17 +248,17 @@ function BotBrain.chooseItem(match, seat, profile)
 		end
 		local slot = rng:NextInteger(1, #seat.Items)
 		local opponents = match:opponentsOf(seat)
-		return slot, opponents[rng:NextInteger(1, #opponents)]
+		return slot, opponents[rng:NextInteger(1, #opponents)], rng:NextInteger(1, Config.Board.DieSides)
 	end
-	local bestSlot, bestScore, bestTarget = nil, 0, nil
+	local bestSlot, bestScore, bestTarget, bestChoice = nil, 0, nil, nil
 	for slot, id in seat.Items do
-		local score, target = BotBrain.itemScore(match, seat, id)
+		local score, target, choice = BotBrain.itemScore(match, seat, id)
 		if score > bestScore then
-			bestSlot, bestScore, bestTarget = slot, score, target
+			bestSlot, bestScore, bestTarget, bestChoice = slot, score, target, choice
 		end
 	end
 	if bestSlot and rng:NextNumber() < profile.ItemUseChance then
-		return bestSlot, bestTarget
+		return bestSlot, bestTarget, bestChoice
 	end
 	return nil
 end
@@ -205,6 +279,8 @@ function BotBrain.decide(match, seat, request, profile, _skill: number): number
 	elseif request.Kind == "Target" and request.Data and request.Data.Seats then
 		local target = BotBrain.bestSwap(match, seat)
 		return table.find(request.Data.Seats, target) or 1
+	elseif request.Kind == "DieFace" then
+		return (BotBrain.bestFace(match, seat))
 	end
 	return request.Default or 1
 end

@@ -770,6 +770,153 @@ test("items stay with the seat when a bot takes over", function()
 	eq(seat.Stats.SpacesMoved, 7, "stats")
 end)
 
+-- Item set 2 --------------------------------------------------------------------------------------
+
+local function useOn(match, seat, id, target, choice)
+	match:giveItem(seat, id)
+	match:beginTurn(seat)
+	return match:useItem(seat, #seat.Items, target, choice)
+end
+
+test("lucky die: only a whole 1..DieSides is accepted, then you move exactly that", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match:giveItem(seat, "LuckyDie")
+	match:beginTurn(seat)
+	for _, bad in { 0, Config.Board.DieSides + 1, 2.5, "3", {} } do
+		eq((match:useItem(seat, 1, nil, bad)), false, "bad face " .. tostring(bad))
+	end
+	eq((match:useItem(seat, 1, nil, nil)), false, "no face")
+	eq(#seat.Items, 1, "kept through refusals")
+	eq((match:useItem(seat, 1, nil, 4)), true, "valid face")
+	local total, dice = match:rollTurn(seat)
+	eq(total, 4, "exact roll")
+	eq(#dice, 1, "one die shown")
+end)
+
+test("pickpocket takes up to 6, refuses an empty target, and a shield stops it", function()
+	local match = newMatch()
+	local thief, victim = match.Seats[1], match.Seats[2]
+	setCoins(match, victim, 0)
+	eq((useOn(match, thief, "Pickpocket", victim)), false, "empty victim")
+	eq(#thief.Items, 1, "item kept")
+	setCoins(match, victim, 4)
+	eq((match:useItem(thief, 1, victim)), true, "used")
+	eq(match:coinsOf(victim), 0, "took all 4")
+	eq(match:coinsOf(thief), 4, "thief got them")
+	eq(thief.Stats.CoinsEarned, 4, "counts as earned")
+	setCoins(match, victim, 20)
+	victim.Shield = true
+	eq((useOn(match, thief, "Pickpocket", victim)), true, "used into a shield")
+	eq(match:coinsOf(victim), 20, "shield kept the coins")
+	eq(victim.Shield, false, "shield broke")
+	eq(#thief.Items, 0, "pickpocket spent")
+end)
+
+test("crown heist: costs a fee, needs a target with a Crown, a shield stops it", function()
+	local match = newMatch()
+	local thief, victim = match.Seats[1], match.Seats[2]
+	setCoins(match, thief, 30)
+	eq((useOn(match, thief, "CrownHeist", victim)), false, "victim has no Crowns")
+	eq(match:coinsOf(thief), 30, "no fee taken")
+	CoinService.addCollectibles(victim.Participant, 2)
+	setCoins(match, thief, 14)
+	eq((match:useItem(thief, 1, victim)), false, "can't pay the fee")
+	eq(#thief.Items, 1, "item kept")
+	setCoins(match, thief, 20)
+	eq((match:useItem(thief, 1, victim)), true, "stolen")
+	eq(match:collectiblesOf(thief), 1, "thief +1")
+	eq(match:collectiblesOf(victim), 1, "victim -1")
+	eq(match:coinsOf(thief), 5, "fee paid")
+	setCoins(match, thief, 20)
+	victim.Shield = true
+	eq((useOn(match, thief, "CrownHeist", victim)), true, "used into a shield")
+	eq(match:collectiblesOf(victim), 1, "shield kept the Crown")
+	eq(match:coinsOf(thief), 5, "fee still paid")
+	eq(victim.Shield, false, "shield broke")
+end)
+
+test("snare trap: catches the next opponent, not its owner; one per space", function()
+	local match = newMatch()
+	local owner, other, third = match.Seats[1], match.Seats[2], match.Seats[3]
+	match.CollectibleSpace = 30
+	owner.SpaceId = 2
+	eq((useOn(match, owner, "Snare")), true, "set")
+	eq((useOn(match, owner, "Snare")), false, "second trap on the same space")
+	match:land(owner)
+	ok(match.Traps[2], "owner doesn't spring their own trap")
+	setCoins(match, other, 10)
+	other.SpaceId = 2
+	local text = match:land(other)
+	ok(string.find(text, "trap"), "feed mentions the trap")
+	eq(match:coinsOf(other), 10 - 5 + Config.Economy.GainSpaceCoins, "paid 5, then the Gain space")
+	eq(match.Traps[2], nil, "trap used up")
+	match.Traps[2] = { Owner = owner, Coins = 5 }
+	third.Shield = true
+	setCoins(match, third, 10)
+	third.SpaceId = 2
+	match:land(third)
+	eq(third.Shield, false, "shield broke on the trap")
+end)
+
+test("board-specific items only show up on their board", function()
+	local match = newMatch()
+	table.insert(Items, { Id = "TestOnlyElsewhere", Name = "X", Price = 1, Weight = 1000, Boards = { "Elsewhere" }, Use = function() return "x" end })
+	table.insert(Items, { Id = "TestOnlyClassic", Name = "Y", Price = 1, Weight = 0.001, Boards = { "Classic" }, Use = function() return "y" end })
+	local ids = {}
+	for _, item in match:itemPool() do
+		ids[item.Id] = true
+	end
+	table.remove(Items)
+	table.remove(Items)
+	eq(ids.TestOnlyElsewhere, nil, "other board's item")
+	eq(ids.TestOnlyClassic, true, "this board's item")
+	eq(ids.DoubleDice, true, "general items")
+end)
+
+test("bots: lucky die onto the Crown, shield up against a visible thief", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match.Round = 1
+	match.CollectibleSpace = 7
+	seat.SpaceId = 3 -- 4 moves away
+	setCoins(match, seat, 25)
+	match:giveItem(seat, "LuckyDie")
+	match:beginTurn(seat)
+	local slot, _, face = match:botItemChoice(seat)
+	eq(seat.Items[slot], "LuckyDie", "uses the lucky die")
+	eq(face, 4, "exact distance")
+
+	local guard = newMatch()
+	local me = guard.Seats[1]
+	guard.Round = 1
+	setCoins(guard, me, 10)
+	CoinService.addCollectibles(me.Participant, 1)
+	guard:giveItem(me, "DoubleDice")
+	guard:giveItem(me, "CoinShield")
+	guard:giveItem(guard.Seats[2], "CrownHeist")
+	guard:beginTurn(me)
+	eq(me.Items[(guard:botItemChoice(me))], "CoinShield", "shield first when someone holds a heist")
+end)
+
+test("bots: heist the Crown leader, pickpocket the richest, skip shielded targets", function()
+	local match = newMatch()
+	local me = match.Seats[1]
+	match.Round = 1
+	setCoins(match, me, 20)
+	CoinService.addCollectibles(match.Seats[2].Participant, 2)
+	CoinService.addCollectibles(match.Seats[3].Participant, 3)
+	match.Seats[3].Shield = true
+	local score, target = BotBrain.itemScore(match, me, "CrownHeist")
+	ok(score > 0, "worth a heist")
+	eq(target, match.Seats[2], "unshielded Crown holder")
+	setCoins(match, me, 10)
+	eq((BotBrain.itemScore(match, me, "CrownHeist")), 0, "can't pay the fee")
+	setCoins(match, match.Seats[4], 30)
+	local _, victim = BotBrain.itemScore(match, me, "Pickpocket")
+	eq(victim, match.Seats[4], "richest")
+end)
+
 -- Bonuses -----------------------------------------------------------------------------------------
 
 test("stats: spaces travelled, coins earned (not balance), minigame points", function()

@@ -168,6 +168,32 @@ function BoardWorld:setCollectible(id: number?, label: string)
 	end
 end
 
+-- Draws a small marker on every trapped space ({ [spaceId] = trap }).
+function BoardWorld:setTraps(traps)
+	self.TrapMarkers = self.TrapMarkers or {}
+	for id, marker in self.TrapMarkers do
+		if not traps[id] then
+			marker:Destroy()
+			self.TrapMarkers[id] = nil
+		end
+	end
+	for id in traps do
+		local top = self.Tops[id]
+		if top and not self.TrapMarkers[id] then
+			self.TrapMarkers[id] = part({
+				Name = "Trap" .. id,
+				Size = Vector3.new(3, 0.4, 3),
+				Position = top + Vector3.new(0, 0.2, 0),
+				Color = Color3.fromRGB(120, 40, 40),
+				Material = Enum.Material.DiamondPlate,
+				CanCollide = false,
+				CanQuery = false,
+				Parent = self.Folder,
+			})
+		end
+	end
+end
+
 function BoardWorld:destroy()
 	self.Folder:Destroy()
 end

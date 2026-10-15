@@ -73,7 +73,8 @@ function Match.new(board, participants, settings, deps)
 		CollectibleSpace = nil,
 		CollectibleName = Config.Collectible.Name,
 		CollectiblePrice = Config.Collectible.Price,
-		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice }
+		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice, Fixed }
+		Traps = {}, -- [spaceId] = { Owner = seat, Coins = n }
 	}, Match)
 
 	for index, participant in participants do
@@ -228,10 +229,11 @@ end
 	Uses the item in `slot` of the seat's inventory. Every rule is checked here, so players
 	(via the remote) and bots go through exactly the same validation:
 	  it must be this seat's turn, before the roll, no item used yet this turn,
-	  the slot must hold a real item, and an Opponent item needs another seat as target.
+	  the slot must hold a real item, an Opponent item needs another seat as target, and a
+	  DieFace item needs a whole number 1..DieSides as `choice`.
 	Returns true + feed text, or false + reason. A refused item stays in the inventory.
 ]]
-function Match:useItem(seat, slot, target): (boolean, string)
+function Match:useItem(seat, slot, target, choice): (boolean, string)
 	local turn = self.Turn
 	if not turn or turn.Seat ~= seat then
 		return false, "not your turn"
@@ -256,7 +258,14 @@ function Match:useItem(seat, slot, target): (boolean, string)
 	else
 		target = nil
 	end
-	local text, reason = item.Use(self, seat, target)
+	if item.Choice == "DieFace" then
+		if type(choice) ~= "number" or choice % 1 ~= 0 or choice < 1 or choice > Config.Board.DieSides then
+			return false, "pick a number"
+		end
+	else
+		choice = nil
+	end
+	local text, reason = item.Use(self, seat, target, choice)
 	if not text then
 		return false, reason or "can't use that now"
 	end
@@ -268,9 +277,14 @@ function Match:useItem(seat, slot, target): (boolean, string)
 	return true, text
 end
 
--- Rolls this turn's dice (1, or more from a dice item). Returns the total and each die.
+-- Rolls this turn's dice (1, more from a dice item, or a chosen number from a Lucky Die).
+-- Returns the total and each die.
 function Match:rollTurn(seat): (number, { number })
 	local turn = self.Turn
+	if turn and turn.Seat == seat and turn.Fixed then
+		turn.Stage = "Moving"
+		return turn.Fixed, { turn.Fixed }
+	end
 	local count = if turn and turn.Seat == seat then turn.Dice else 1
 	local dice, total = {}, 0
 	for i = 1, count do
@@ -281,6 +295,80 @@ function Match:rollTurn(seat): (number, { number })
 		turn.Stage = "Moving"
 	end
 	return total, dice
+end
+
+-- Stealing + traps ---------------------------------------------------------------------------
+
+--[[
+	Takes up to `amount` coins from victim to thief. A Coin Shield on the victim blocks it
+	(and breaks). Returns coins taken, and whether a shield blocked it.
+]]
+function Match:stealCoins(thief, victim, amount: number): (number, boolean)
+	if victim.Shield and self:coinsOf(victim) > 0 then
+		victim.Shield = false
+		return 0, true
+	end
+	local _, delta = self.Deps.Wallet.add(victim.Participant, -amount)
+	local taken = -delta
+	if taken > 0 then
+		self:changeCoins(thief, taken)
+	end
+	return taken, false
+end
+
+--[[
+	The Crown steal: the thief pays `fee` coins, then takes one collectible from the victim.
+	A Coin Shield on the victim blocks it (the shield breaks; the fee is still paid).
+	Returns "stolen" | "blocked", or nil + reason (nothing happened).
+]]
+function Match:stealCollectible(thief, victim, fee: number): (string?, string?)
+	if self:collectiblesOf(victim) < 1 then
+		return nil, ("they have no %s"):format(Config.Collectible.Plural)
+	end
+	if not self.Deps.Wallet.spend(thief.Participant, fee) then
+		return nil, ("you need %d coins to pay for it"):format(fee)
+	end
+	if victim.Shield then
+		victim.Shield = false
+		return "blocked"
+	end
+	self.Deps.Wallet.addCollectibles(victim.Participant, -1)
+	self.Deps.Wallet.addCollectibles(thief.Participant, 1)
+	return "stolen"
+end
+
+-- Sets a trap on the seat's current space. False if one is already there.
+function Match:setTrap(seat, coins: number): boolean
+	if self.Traps[seat.SpaceId] then
+		return false
+	end
+	self.Traps[seat.SpaceId] = { Owner = seat, Coins = coins }
+	return true
+end
+
+-- An opponent landing on a trap pays its owner (a shield blocks it). Returns feed text.
+function Match:springTrap(seat): string?
+	local trap = self.Traps[seat.SpaceId]
+	if not trap or trap.Owner == seat then
+		return nil
+	end
+	self.Traps[seat.SpaceId] = nil
+	local taken, blocked = self:stealCoins(trap.Owner, seat, trap.Coins)
+	if blocked then
+		return ("%s's Coin Shield broke %s's trap"):format(seat.Participant.Name, trap.Owner.Participant.Name)
+	end
+	return ("%s stepped in %s's trap and paid %d coins"):format(seat.Participant.Name, trap.Owner.Participant.Name, taken)
+end
+
+-- Items that can appear on this board (Items with a Boards list only show up on those boards).
+function Match:itemPool()
+	local pool = {}
+	for _, item in Items do
+		if not item.Boards or table.find(item.Boards, self.Board.Name) then
+			table.insert(pool, item)
+		end
+	end
+	return pool
 end
 
 -- Opponents a Target item could be used on.
@@ -400,9 +488,14 @@ function Match:move(seat, steps: number, onHop, onNotice)
 end
 
 function Match:land(seat): string?
+	local trap = self:springTrap(seat)
 	local space = self.Board:get(seat.SpaceId)
 	local spaceType = SpaceTypes[space.Type]
-	return spaceType.Resolve(self, seat, space)
+	local text = spaceType.Resolve(self, seat, space)
+	if trap then
+		return if text then trap .. ". " .. text else trap
+	end
+	return text
 end
 
 -- Space helpers (used by SpaceTypes / Events) ---------------------------------------------------
@@ -429,7 +522,7 @@ function Match:giveRandomItem(seat)
 	if #seat.Items >= Config.Items.MaxHeld then
 		return nil
 	end
-	local item = weightedPick(self.Rng, Items)
+	local item = weightedPick(self.Rng, self:itemPool())
 	self:giveItem(seat, item.Id)
 	return item
 end
@@ -470,7 +563,7 @@ function Match:visitShop(seat): string
 	local name = seat.Participant.Name
 	local offers = {}
 	if #seat.Items < Config.Items.MaxHeld then
-		local pool = table.clone(Items)
+		local pool = self:itemPool()
 		for _ = 1, math.min(Config.Economy.ShopItemOffers, #pool) do
 			local item = table.remove(pool, self.Rng:NextInteger(1, #pool))
 			table.insert(offers, { Kind = "Item", Id = item.Id, Name = item.Name, Price = item.Price })

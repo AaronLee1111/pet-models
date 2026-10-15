@@ -138,6 +138,7 @@ local function publish()
 		match.CollectibleSpace,
 		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
 	)
+	current.World:setTraps(match.Traps)
 	current.StateMessage = stateMessage()
 	MinigameManager.broadcast(current.StateMessage)
 end
@@ -344,9 +345,9 @@ local function rollForTurnOrder()
 	current.OrderRolls = nil
 end
 
--- Uses an item for the seat whose turn it is. Players pick a target here; bots pass one in.
--- Match:useItem does all the validation for both.
-local function useItem(seat, slot, target)
+-- Uses an item for the seat whose turn it is. Players pick a target / number here; bots pass
+-- theirs in. Match:useItem does all the validation for both.
+local function useItem(seat, slot, target, choice)
 	local match = current.Match
 	local id = type(slot) == "number" and seat.Items[slot]
 	local item = id and Match.getItem(id)
@@ -359,7 +360,7 @@ local function useItem(seat, slot, target)
 		table.insert(labels, "Cancel")
 		local pick = ask(seat, {
 			Kind = "Target",
-			Prompt = ("%s: swap places with who?"):format(item.Name),
+			Prompt = ("%s: pick an opponent"):format(item.Name),
 			Options = labels,
 			Default = #labels,
 			Data = { Seats = opponents },
@@ -369,7 +370,23 @@ local function useItem(seat, slot, target)
 			return false
 		end
 	end
-	local used, text = match:useItem(seat, slot, target)
+	if item and item.Choice == "DieFace" and choice == nil then
+		local labels = {}
+		for face = 1, Config.Board.DieSides do
+			labels[face] = tostring(face)
+		end
+		table.insert(labels, "Cancel")
+		choice = ask(seat, {
+			Kind = "DieFace",
+			Prompt = ("%s: pick your roll"):format(item.Name),
+			Options = labels,
+			Default = #labels,
+		})
+		if choice > Config.Board.DieSides then
+			return false
+		end
+	end
+	local used, text = match:useItem(seat, slot, target, choice)
 	if used then
 		feed(text)
 		placeAll() -- swaps and warps move pieces
@@ -397,8 +414,8 @@ local function takeTurn(seat)
 
 	if participant.IsBot or isAway(participant) then
 		waitRandom(Config.Board.BotRollDelay)
-		local slot, target = match:botItemChoice(seat)
-		if slot and useItem(seat, slot, target) then
+		local slot, target, choice = match:botItemChoice(seat)
+		if slot and useItem(seat, slot, target, choice) then
 			task.wait(1)
 		end
 	else
