@@ -62,6 +62,20 @@ Config.Match = {
 	Board = "Classic", -- module name in PartyServer/Board/Boards
 	WaitingRoomDuration = 15, -- seconds the waiting room counts down before a match
 	StandingsDuration = 10, -- final standings screen
+	PreBonusDuration = 5, -- standings before the bonus awards
+	BonusDuration = 7, -- the bonus awards card
+	OrderRollTimeout = 10, -- players who don't roll for turn order in time roll automatically
+	-- How bots play the board at each difficulty (see Board/BotBrain).
+	--   RandomChoice    chance any decision is made at random instead of thought through
+	--   ItemUseChance   chance a bot uses an item when it has a good reason to
+	--   SaveFactor      share of the Crown price kept in reserve before shopping (0..1)
+	--   LookAhead       spaces scored down each fork branch (0 = don't look)
+	--   CosmeticSpend   only buy cosmetics with at least this many coins to spare
+	BotBehavior = {
+		Easy = { RandomChoice = 0.6, ItemUseChance = 0.3, SaveFactor = 0, LookAhead = 0, CosmeticSpend = 0 },
+		Normal = { RandomChoice = 0.2, ItemUseChance = 0.7, SaveFactor = 0.6, LookAhead = 6, CosmeticSpend = 15 },
+		Hard = { RandomChoice = 0, ItemUseChance = 1, SaveFactor = 1, LookAhead = 10, CosmeticSpend = 25 },
+	},
 }
 
 Config.Board = {
@@ -94,10 +108,34 @@ Config.Economy = {
 		{ Kind = "Coins", Amount = 10, Weight = 3 },
 		{ Kind = "Cosmetic", Weight = 2 }, -- a random cosmetic the owner doesn't have yet
 		{ Kind = "Collectible", Amount = 1, Weight = 0.5 },
+		{ Kind = "Item", Weight = 3 }, -- a random board item (Board/Items), if there's room
 	},
 	ShopOffers = 2, -- cosmetics offered per shop visit
-	-- Bots keep at least this many coins after a shop purchase, saving for the collectible.
-	BotShopReserve = 20,
+	ShopItemOffers = 1, -- board items offered per shop visit (on top of the cosmetics)
+}
+
+-- Board items (Board/Items has the list). One item may be used per turn, before rolling.
+Config.Items = {
+	MaxHeld = 3,
+	StartingItems = {}, -- item ids every seat starts a match with, e.g. { "DoubleDice" }
+}
+
+-- End-of-match bonus awards, given after the last round and before the final standings.
+--   Stat       a per-seat statistic tracked by Match (MinigamePoints, CoinsEarned, SpacesMoved)
+--   AwardTies  true: every tied leader gets it; false: a tie means nobody does
+-- Nobody wins a bonus whose best value is 0.
+Config.Bonuses = {
+	{ Id = "MinigameMaster", Name = "Minigame Master", Description = "Best minigame results", Stat = "MinigamePoints", Crowns = 1, AwardTies = true },
+	{ Id = "CoinCollector", Name = "Coin Collector", Description = "Most coins earned this match", Stat = "CoinsEarned", Crowns = 1, AwardTies = true },
+	{ Id = "Explorer", Name = "Explorer", Description = "Most board spaces travelled", Stat = "SpacesMoved", Crowns = 1, AwardTies = true },
+}
+-- Minigame Master points per minigame placement (ties share a placement).
+Config.MinigamePointsByPlacement = { 3, 2, 1, 0 }
+
+-- Permanent profile (see PartyServer/Profiles). Match coins and Crowns never go in here.
+Config.Profile = {
+	Backend = "Memory", -- "Memory" (Studio/tests, lost on shutdown) | "DataStore" (not enabled yet)
+	BankCoinsByPlacement = { 30, 20, 12, 8 }, -- permanent coins for real players by final placement
 }
 
 -- World layout -----------------------------------------------------------------
@@ -606,6 +644,7 @@ Net.Input = {
 	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
 	Roll = "Roll", -- roll the die on your turn
 	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
+	UseItem = "UseItem", -- your turn, before rolling: payload.Slot = index into your items
 	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
 	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }
@@ -995,12 +1034,24 @@ local function layoutMessage(board)
 	return { Type = Net.Message.BoardLayout, Name = board.Name, Spaces = spaces, Legend = legend }
 end
 
+local function describeItems(seat)
+	local list = {}
+	for _, id in seat.Items do
+		local item = Match.getItem(id)
+		table.insert(list, { Id = id, Name = item.Name, Description = item.Description })
+	end
+	return list
+end
+
 local function stateMessage()
 	local match = current.Match
 	local seats = {}
 	for orderIndex, seat in match.Order do
 		local participant = seat.Participant
 		table.insert(seats, {
+			Items = describeItems(seat),
+			Shield = seat.Shield,
+			OrderRolls = current.OrderRolls and current.OrderRolls[seat],
 			Id = participant.Id,
 			Name = participant.Name,
 			IsBot = participant.IsBot,
@@ -1012,7 +1063,17 @@ local function stateMessage()
 		})
 	end
 	local turn = current.Turn
+	local pending = {}
+	for player, pressed in current.OrderWaiting or {} do
+		if not pressed then
+			pending["player_" .. player.UserId] = true
+		end
+	end
 	return {
+		OrderPending = pending,
+		Dice = match.Turn and match.Turn.Dice,
+		ItemUsed = match.Turn and match.Turn.ItemUsed,
+		MaxItems = Config.Items.MaxHeld,
 		Type = Net.Message.BoardState,
 		Round = match.Round,
 		Rounds = match.Rounds,
@@ -1188,10 +1249,105 @@ end
 
 -- Turns -------------------------------------------------------------------------------------------
 
+-- Turn order: everyone rolls once before round 1; ties roll again among themselves.
+local function rollForTurnOrder()
+	local match = current.Match
+	current.Stage = "OrderRoll"
+	current.OrderRolls = {}
+	current.Text = "Everyone rolls for turn order!"
+
+	local function rollFor(seats, attempt)
+		current.OrderWaiting = {}
+		for _, seat in seats do
+			local participant = seat.Participant
+			if not participant.IsBot and not isAway(participant) then
+				current.OrderWaiting[participant.Player] = false
+			end
+		end
+		current.RollEndsAt = now() + Config.Match.OrderRollTimeout
+		if attempt > 1 then
+			current.Text = "Tie! Tied players roll again"
+		end
+		publish()
+		task.wait(1) -- bots "roll" after a beat
+		while now() < current.RollEndsAt do
+			local waiting = false
+			for player, pressed in current.OrderWaiting do
+				if not pressed and player.Parent then
+					waiting = true
+				end
+			end
+			if not waiting then
+				break
+			end
+			task.wait(0.05)
+		end
+		current.OrderWaiting = nil
+		current.RollEndsAt = nil
+		local rolls = {}
+		for _, seat in seats do
+			rolls[seat] = match:roll()
+			current.OrderRolls[seat] = current.OrderRolls[seat] or {}
+			table.insert(current.OrderRolls[seat], rolls[seat])
+		end
+		publish()
+		task.wait(1.5)
+		return rolls
+	end
+
+	local order = match:decideTurnOrder(rollFor)
+	local names = {}
+	for index, seat in order do
+		table.insert(names, ("%d. %s"):format(index, seat.Participant.Name))
+	end
+	current.Stage = "OrderDone"
+	feed("Turn order: " .. table.concat(names, "   "))
+	publish()
+	task.wait(2.5)
+	current.OrderRolls = nil
+end
+
+-- Uses an item for the seat whose turn it is. Players pick a target here; bots pass one in.
+-- Match:useItem does all the validation for both.
+local function useItem(seat, slot, target)
+	local match = current.Match
+	local id = type(slot) == "number" and seat.Items[slot]
+	local item = id and Match.getItem(id)
+	if item and item.Target == "Opponent" and target == nil then
+		local opponents = match:opponentsOf(seat)
+		local labels = {}
+		for i, other in opponents do
+			labels[i] = other.Participant.Name
+		end
+		table.insert(labels, "Cancel")
+		local pick = ask(seat, {
+			Kind = "Target",
+			Prompt = ("%s: swap places with who?"):format(item.Name),
+			Options = labels,
+			Default = #labels,
+			Data = { Seats = opponents },
+		})
+		target = opponents[pick]
+		if not target then
+			return false
+		end
+	end
+	local used, text = match:useItem(seat, slot, target)
+	if used then
+		feed(text)
+		placeAll() -- swaps and warps move pieces
+	elseif seat.Participant.Player and seat.Participant.Player.Parent then
+		MinigameManager.sendTo(seat.Participant.Player, { Type = Net.Message.Toast, Text = "Can't use that: " .. text })
+	end
+	publish()
+	return used
+end
+
 local function takeTurn(seat)
 	refreshSeats()
 	local match = current.Match
 	local participant = seat.Participant
+	match:beginTurn(seat)
 	current.Turn = seat
 	current.Stage = "Roll"
 	current.Roll = nil
@@ -1199,24 +1355,39 @@ local function takeTurn(seat)
 	current.RollEndsAt = now() + Config.Board.RollTimeout
 	current.Text = ("%s's turn"):format(participant.Name)
 	current.RollRequested = false
+	current.ItemRequest = nil
 	publish()
 
 	if participant.IsBot or isAway(participant) then
 		waitRandom(Config.Board.BotRollDelay)
+		local slot, target = match:botItemChoice(seat)
+		if slot and useItem(seat, slot, target) then
+			task.wait(1)
+		end
 	else
 		current.RollWaiting = participant.Player
 		while not current.RollRequested and now() < current.RollEndsAt and not isAway(participant) do
+			local request = current.ItemRequest
+			if request then
+				current.ItemRequest = nil
+				if useItem(seat, request.Slot) then
+					current.RollEndsAt = math.max(current.RollEndsAt, now() + 5)
+					publish()
+				end
+			end
 			task.wait(0.05)
 		end
 		current.RollWaiting = nil
 	end
 
-	local roll = match:roll()
+	local roll, dice = match:rollTurn(seat)
 	current.Stage = "Moving"
 	current.Roll = roll
 	current.Remaining = roll
 	current.RollEndsAt = nil
-	current.Text = ("%s rolled a %d"):format(seat.Participant.Name, roll)
+	current.Text = if #dice > 1
+		then ("%s rolled %s = %d"):format(seat.Participant.Name, table.concat(dice, " + "), roll)
+		else ("%s rolled a %d"):format(seat.Participant.Name, roll)
 	publish()
 	task.wait(0.8)
 
@@ -1234,11 +1405,30 @@ local function takeTurn(seat)
 	current.Stage = "Landed"
 	local space = match.Board:get(seat.SpaceId)
 	feed(landing or ("%s landed on a %s"):format(seat.Participant.Name, SpaceTypes[space.Type].Name))
+	match:endTurn()
 	publish()
 	task.wait(Config.Board.LandPause)
 end
 
 -- Match -------------------------------------------------------------------------------------------
+
+local function describeBonuses(awarded)
+	local list = {}
+	for _, entry in awarded do
+		local winners = {}
+		for _, seat in entry.Winners do
+			table.insert(winners, { Id = seat.Participant.Id, Name = seat.Participant.Name })
+		end
+		table.insert(list, {
+			Name = entry.Bonus.Name,
+			Description = entry.Bonus.Description,
+			Crowns = entry.Bonus.Crowns or 1,
+			Value = entry.Value,
+			Winners = winners,
+		})
+	end
+	return list
+end
 
 local function describeRows(rows)
 	local list = {}
@@ -1263,7 +1453,7 @@ function BoardGame.play(participants, settings)
 		World = BoardWorld.build(board, SpaceTypes, Config.Board.Origin),
 		Stage = "Start",
 	}
-	current.Match = Match.new(board, participants, { Rounds = settings.Rounds }, {
+	current.Match = Match.new(board, participants, { Rounds = settings.Rounds, Difficulty = settings.Difficulty }, {
 		Wallet = CoinService,
 		Inventory = Inventory,
 		Rng = rng,
@@ -1272,6 +1462,9 @@ function BoardGame.play(participants, settings)
 	local match = current.Match
 	for _, seat in match.Seats do
 		CoinService.add(seat.Participant, Config.Economy.StartingCoins)
+		for _, itemId in Config.Items.StartingItems do
+			match:giveItem(seat, itemId)
+		end
 	end
 	current.LayoutMessage = layoutMessage(board)
 	MinigameManager.broadcast(current.LayoutMessage)
@@ -1287,6 +1480,9 @@ function BoardGame.play(participants, settings)
 		placeAll()
 		publish()
 		task.wait(1.5)
+		if round == 1 then
+			rollForTurnOrder()
+		end
 
 		for _, seat in match.Order do
 			takeTurn(seat)
@@ -1298,22 +1494,43 @@ function BoardGame.play(participants, settings)
 		publish()
 		task.wait(1)
 		refreshSeats()
-		local ok, err = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
-		if not ok then
-			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(err))
+		local ok, results, rows = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
+		if ok then
+			match:recordMinigame(results, rows)
+		else
+			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(results))
 			MinigameManager.abort("Minigame crashed, back to the board!")
 		end
 	end
 
+	-- Standings before bonuses -> bonus awards -> final standings.
 	refreshSeats()
+	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Before",
+		Rows = describeRows(match:standings()),
+		CollectiblePlural = Config.Collectible.Plural,
+		EndsAt = now() + Config.Match.PreBonusDuration,
+	})
+	ensureBodies()
+	placeAll()
+	task.wait(Config.Match.PreBonusDuration)
+
+	local awarded = match:awardBonuses()
+	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Bonus",
+		Bonuses = describeBonuses(awarded),
+		CollectiblePlural = Config.Collectible.Plural,
+		EndsAt = now() + Config.Match.BonusDuration,
+	})
+	task.wait(Config.Match.BonusDuration)
+
 	local rows = match:standings()
 	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Final",
 		Rows = describeRows(rows),
 		CollectiblePlural = Config.Collectible.Plural,
 		EndsAt = now() + Config.Match.StandingsDuration,
 	})
-	ensureBodies()
-	placeAll()
 	task.wait(Config.Match.StandingsDuration)
 	BoardGame.cleanup()
 	return rows
@@ -1350,6 +1567,14 @@ function BoardGame.handleInput(player: Player, payload): boolean
 	if kind == Net.Input.Roll then
 		if current and current.RollWaiting == player then
 			current.RollRequested = true
+		elseif current and current.OrderWaiting and current.OrderWaiting[player] == false then
+			current.OrderWaiting[player] = true
+		end
+		return true
+	elseif kind == Net.Input.UseItem then
+		-- Only queued here; takeTurn hands it to Match:useItem, which checks everything.
+		if current and current.RollWaiting == player and not current.ItemRequest then
+			current.ItemRequest = { Slot = payload.Slot }
 		end
 		return true
 	elseif kind == Net.Input.Choice then
@@ -1445,6 +1670,28 @@ end
 
 function Board:get(id: number)
 	return self.Spaces[id]
+end
+
+-- Fewest moves from `from` to `to` following Next (math.huge if unreachable). Cached.
+function Board:distance(from: number, to: number): number
+	self.DistanceCache = self.DistanceCache or {}
+	local row = self.DistanceCache[from]
+	if not row then
+		row = { [from] = 0 }
+		local queue, head = { from }, 1
+		while queue[head] do
+			local id = queue[head]
+			head += 1
+			for _, nextId in self.Spaces[id].Next do
+				if row[nextId] == nil then
+					row[nextId] = row[id] + 1
+					table.insert(queue, nextId)
+				end
+			end
+		end
+		self.DistanceCache[from] = row
+	end
+	return row[to] or math.huge
 end
 
 function BoardLayout.validate(data, spaceTypes): string?
@@ -1809,6 +2056,224 @@ return {
         </Item>
         <Item class="ModuleScript" referent="16">
           <Properties>
+            <string name="Name">BotBrain</string>
+            <string name="Source"><![CDATA[--[[
+	BotBrain
+	How bots play the board. Pure functions of what any player could see on screen (board,
+	coins, Crown position, standings, round): bots never peek at upcoming dice or rewards.
+
+	Difficulty profiles live in Config.Match.BotBehavior:
+	  RandomChoice   chance a decision is made at random (Easy bots blunder a lot)
+	  ItemUseChance  chance a bot actually uses an item it has a good reason to use
+	  SaveFactor     share of the Crown price kept back before shopping
+	  LookAhead      spaces scored down each fork branch (0 = pick at random)
+	  CosmeticSpend  coins to spare before buying a cosmetic (they don't help win)
+
+	Space and item values below are the tuning knobs for the "thinking" part.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local BotBrain = {}
+
+-- How much a bot likes landing on / passing each space type (scaled down with distance).
+BotBrain.SpaceValue = { Gain = 3, Lose = -3, Event = 0.5, Reward = 3, Shop = 1, Neutral = 0 }
+-- How much a bot wants each item in a shop.
+BotBrain.ItemValue = { DoubleDice = 3, TripleDice = 4, CoinShield = 2, SwapTicket = 3, WarpToken = 2 }
+local AVERAGE_ROLL = (Config.Board.DieSides + 1) / 2
+
+function BotBrain.profile(difficulty: string?)
+	return Config.Match.BotBehavior[difficulty or ""] or Config.Match.BotBehavior.Normal
+end
+
+local function isLastRound(match): boolean
+	return match.Round >= match.Rounds
+end
+
+local function crownDistance(match, spaceId: number): number
+	return match.Board:distance(spaceId, match.CollectibleSpace)
+end
+
+-- True if this seat has fewer collectibles than the leader.
+local function isBehind(match, seat): boolean
+	local mine = match:collectiblesOf(seat)
+	for _, other in match.Seats do
+		if match:collectiblesOf(other) > mine then
+			return true
+		end
+	end
+	return false
+end
+
+-- Paths -----------------------------------------------------------------------------------------
+
+-- Score of heading down the branch that starts at `startId`.
+function BotBrain.branchScore(match, seat, startId: number, profile): number
+	local score = 0
+	local id = startId
+	for step = 0, profile.LookAhead - 1 do
+		local space = match.Board:get(id)
+		score += (BotBrain.SpaceValue[space.Type] or 0) * 0.85 ^ step
+		id = space.Next[1]
+	end
+	-- The Crown matters most when you can (nearly) pay for it.
+	local coins, price = match:coinsOf(seat), match.CollectiblePrice
+	local weight = if coins >= price then 4 elseif coins >= price - 6 then 1.5 else 0.3
+	local distance = math.min(crownDistance(match, startId), 20)
+	return score + weight * (20 - distance) * 0.5
+end
+
+function BotBrain.choosePath(match, seat, spaces, profile): number
+	if profile.LookAhead <= 0 then
+		return match.Rng:NextInteger(1, #spaces)
+	end
+	local best, bestScore = 1, -math.huge
+	for i, id in spaces do
+		local score = BotBrain.branchScore(match, seat, id, profile)
+		if score > bestScore then
+			best, bestScore = i, score
+		end
+	end
+	return best
+end
+
+-- Shop ------------------------------------------------------------------------------------------
+
+-- Coins a bot keeps back for the Crown before buying anything.
+function BotBrain.reserve(match, seat, profile): number
+	local reserve = match.CollectiblePrice * profile.SaveFactor
+	if isLastRound(match) and crownDistance(match, seat.SpaceId) > 2 * AVERAGE_ROLL + 2 then
+		reserve = 0 -- can't reach the Crown again anyway: spend
+	end
+	return reserve
+end
+
+function BotBrain.chooseShop(match, seat, offers, default: number, profile): number
+	local coins = match:coinsOf(seat)
+	local reserve = BotBrain.reserve(match, seat, profile)
+	local best, bestValue = default, 0
+	for i, offer in offers do
+		local left = coins - offer.Price
+		local value
+		if offer.Kind == "Item" then
+			value = if left >= reserve and #seat.Items < Config.Items.MaxHeld then BotBrain.ItemValue[offer.Id] or 1 else 0
+		else
+			value = if left >= reserve + profile.CosmeticSpend then 0.5 else 0
+		end
+		if value > bestValue then
+			best, bestValue = i, value
+		end
+	end
+	return best
+end
+
+-- Items -----------------------------------------------------------------------------------------
+
+-- The opponent nearest the Crown (the best seat to swap into), and how many moves closer it is.
+function BotBrain.bestSwap(match, seat)
+	local own = crownDistance(match, seat.SpaceId)
+	local target, targetDistance = nil, math.huge
+	for _, other in match:opponentsOf(seat) do
+		local distance = crownDistance(match, other.SpaceId)
+		if distance < targetDistance then
+			target, targetDistance = other, distance
+		end
+	end
+	return target, own - targetDistance
+end
+
+--[[
+	How much a bot wants to use item `id` right now (> 0 = worth using), and the target.
+	To teach bots a new item, add a branch here.
+]]
+function BotBrain.itemScore(match, seat, id: string)
+	local coins, price = match:coinsOf(seat), match.CollectiblePrice
+	local canBuy = coins >= price
+	local distance = crownDistance(match, seat.SpaceId)
+	local late = isLastRound(match)
+	local urgency = if isBehind(match, seat) then 1.3 else 1
+
+	if id == "DoubleDice" or id == "TripleDice" then
+		local dice = if id == "TripleDice" then 3 else 2
+		if canBuy and distance > Config.Board.DieSides and distance <= Config.Board.DieSides * dice then
+			return (3 + dice) * urgency
+		end
+		return if late then 1 else 0 -- use it up before the match ends
+	elseif id == "CoinShield" then
+		if seat.Shield then
+			return 0
+		end
+		return if coins >= 6 then 2 elseif late and coins > 0 then 1 else 0
+	elseif id == "SwapTicket" then
+		local target, gain = BotBrain.bestSwap(match, seat)
+		if target and gain >= 6 and coins >= price - 5 then
+			return 4 * urgency, target
+		end
+		return (if late and target and gain > 0 then 0.5 else 0), target
+	elseif id == "WarpToken" then
+		if distance >= 14 then
+			return 2 * urgency
+		end
+		return if late then 0.5 else 0
+	end
+	return 0
+end
+
+-- Returns slot, target (seat or nil) of the item to use this turn, or nil.
+function BotBrain.chooseItem(match, seat, profile)
+	if #seat.Items == 0 then
+		return nil
+	end
+	local rng = match.Rng
+	if rng:NextNumber() < profile.RandomChoice then
+		if rng:NextNumber() < 0.5 then
+			return nil
+		end
+		local slot = rng:NextInteger(1, #seat.Items)
+		local opponents = match:opponentsOf(seat)
+		return slot, opponents[rng:NextInteger(1, #opponents)]
+	end
+	local bestSlot, bestScore, bestTarget = nil, 0, nil
+	for slot, id in seat.Items do
+		local score, target = BotBrain.itemScore(match, seat, id)
+		if score > bestScore then
+			bestSlot, bestScore, bestTarget = slot, score, target
+		end
+	end
+	if bestSlot and rng:NextNumber() < profile.ItemUseChance then
+		return bestSlot, bestTarget
+	end
+	return nil
+end
+
+-- Ask requests ----------------------------------------------------------------------------------
+
+function BotBrain.decide(match, seat, request, profile, _skill: number): number
+	local count = #request.Options
+	if count > 1 and match.Rng:NextNumber() < profile.RandomChoice then
+		return match.Rng:NextInteger(1, count)
+	end
+	if request.Kind == "Collectible" then
+		return 1 -- always buy: it's what wins
+	elseif request.Kind == "Path" and request.Data and request.Data.Spaces then
+		return BotBrain.choosePath(match, seat, request.Data.Spaces, profile)
+	elseif request.Kind == "Shop" and request.Data and request.Data.Items then
+		return BotBrain.chooseShop(match, seat, request.Data.Items, request.Default, profile)
+	elseif request.Kind == "Target" and request.Data and request.Data.Seats then
+		local target = BotBrain.bestSwap(match, seat)
+		return table.find(request.Data.Seats, target) or 1
+	end
+	return request.Default or 1
+end
+
+return BotBrain
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="17">
+          <Properties>
             <string name="Name">Events</string>
             <string name="Source"><![CDATA[--[[
 	Events
@@ -1860,7 +2325,10 @@ return {
 		Name = "Leaky Pocket",
 		Weight = 2,
 		Apply = function(match, seat)
-			local delta = match:changeCoins(seat, -5)
+			local delta, shielded = match:changeCoins(seat, -5)
+			if shielded then
+				return ("%s's Coin Shield saved their coins and broke"):format(seat.Participant.Name)
+			end
 			return ("%s dropped %d coins"):format(seat.Participant.Name, -delta)
 		end,
 	},
@@ -1892,7 +2360,11 @@ return {
 			if richest == poorest or match:coinsOf(richest) == match:coinsOf(poorest) then
 				return "Everyone has the same coins, so nothing happens"
 			end
-			local given = -match:changeCoins(richest, -5)
+			local taken, shielded = match:changeCoins(richest, -5)
+			if shielded then
+				return ("%s's Coin Shield kept their coins and broke"):format(richest.Participant.Name)
+			end
+			local given = -taken
 			match:changeCoins(poorest, given)
 			return ("%s gives %d coins to %s"):format(richest.Participant.Name, given, poorest.Participant.Name)
 		end,
@@ -1904,6 +2376,18 @@ return {
 		Apply = function(match)
 			match:relocateCollectible()
 			return ("The %s moved to a new space!"):format(match.CollectibleName)
+		end,
+	},
+	{
+		Id = "ItemDrop",
+		Name = "Item Drop",
+		Weight = 2,
+		Apply = function(match, seat)
+			local item = match:giveRandomItem(seat)
+			if not item then
+				return ("%s's bag is full, so the item rolls away"):format(seat.Participant.Name)
+			end
+			return ("%s picked up a %s"):format(seat.Participant.Name, item.Name)
 		end,
 	},
 	{
@@ -1920,7 +2404,99 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">Items</string>
+            <string name="Source"><![CDATA[--[[
+	Items
+	Board items. A seat holds up to Config.Items.MaxHeld and may use one per turn, before
+	rolling. Match:useItem checks ownership, timing and the target, then calls Use.
+
+	Each item:
+	  Id           unique, never rename
+	  Name         shown to players
+	  Description  one line for the item buttons / shop
+	  Price        coins at a shop
+	  Weight       relative chance in gifts, events and shop offers
+	  Dice         optional: roll this many dice this turn instead of one
+	  Target       optional: "Opponent" = the user picks another seat
+	  Use          function(match, seat, target) -> feed text, or nil + reason to refuse
+	               (a refusal keeps the item in the user's inventory)
+
+	To add an item: append an entry here. Teach bots when to use it in BotBrain.itemScore.
+]]
+
+return {
+	{
+		Id = "DoubleDice",
+		Name = "Double Dice",
+		Description = "Roll two dice and move the total",
+		Price = 6,
+		Weight = 3,
+		Dice = 2,
+		Use = function(_match, seat)
+			return ("%s will roll two dice!"):format(seat.Participant.Name)
+		end,
+	},
+	{
+		Id = "TripleDice",
+		Name = "Triple Dice",
+		Description = "Roll three dice and move the total",
+		Price = 10,
+		Weight = 1,
+		Dice = 3,
+		Use = function(_match, seat)
+			return ("%s will roll three dice!"):format(seat.Participant.Name)
+		end,
+	},
+	{
+		Id = "CoinShield",
+		Name = "Coin Shield",
+		Description = "Blocks the next coin loss, then breaks",
+		Price = 5,
+		Weight = 2,
+		Use = function(_match, seat)
+			if seat.Shield then
+				return nil, "already shielded"
+			end
+			seat.Shield = true
+			return ("%s raised a Coin Shield"):format(seat.Participant.Name)
+		end,
+	},
+	{
+		Id = "SwapTicket",
+		Name = "Swap Ticket",
+		Description = "Swap places with an opponent you pick",
+		Price = 8,
+		Weight = 2,
+		Target = "Opponent",
+		Use = function(_match, seat, target)
+			seat.SpaceId, target.SpaceId = target.SpaceId, seat.SpaceId
+			return ("%s swapped places with %s"):format(seat.Participant.Name, target.Participant.Name)
+		end,
+	},
+	{
+		Id = "WarpToken",
+		Name = "Warp Token",
+		Description = "Jump to a random space",
+		Price = 6,
+		Weight = 2,
+		Use = function(match, seat)
+			local options = {}
+			for _, id in match.Board.Order do
+				if id ~= seat.SpaceId then
+					table.insert(options, id)
+				end
+			end
+			seat.SpaceId = options[match.Rng:NextInteger(1, #options)]
+			return ("%s warped to a random space"):format(seat.Participant.Name)
+		end,
+	},
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Match</string>
             <string name="Source"><![CDATA[--[[
@@ -1929,28 +2505,38 @@ return {
 	be tested on its own. BoardGame drives it and draws the results.
 
 	  Match.new(board, participants, settings, deps)
-	    settings  { Rounds }
+	    settings  { Rounds, Difficulty }
 	    deps      {
 	      Wallet     CoinService-like: get, add, spend, getCollectibles, addCollectibles, transfer
 	      Inventory  Inventory-like: grant, equip, getEquipped, unowned
 	      Rng        Random
 	      Ask        function(seat, request) -> option index; may yield. request =
-	                 { Kind = "Path"|"Collectible"|"Shop", Prompt, Options = {labels}, Default, Data }
+	                 { Kind = "Path"|"Collectible"|"Shop"|"Target", Prompt, Options = {labels}, Default, Data }
 	    }
 
-	A seat: { Index, Participant, SpaceId }. Seats keep their place in the turn order even
-	when a bot takes over from a player who left (replaceParticipant).
+	A seat: { Index, Participant, SpaceId, Items = {item ids}, Shield, Stats }. Seats keep
+	their place in the turn order, inventory and stats when a bot takes over from a player
+	who left (replaceParticipant).
+
+	A turn: beginTurn(seat) -> [useItem(seat, slot, target)] -> rollTurn(seat) -> move(...) -> endTurn().
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
+local BotBrain = require(script.Parent.BotBrain)
 local Events = require(script.Parent.Events)
+local Items = require(script.Parent.Items)
 local SpaceTypes = require(script.Parent.SpaceTypes)
 
 local Match = {}
 Match.__index = Match
+
+local itemsById = {}
+for _, item in Items do
+	itemsById[item.Id] = item
+end
 
 local function weightedPick(rng: Random, list)
 	local total = 0
@@ -1967,29 +2553,41 @@ local function weightedPick(rng: Random, list)
 	return list[#list]
 end
 
+local function isDieValue(value): boolean
+	return type(value) == "number" and value % 1 == 0 and value >= 1 and value <= Config.Board.DieSides
+end
+
+function Match.getItem(id: string)
+	return itemsById[id]
+end
+
 function Match.new(board, participants, settings, deps)
 	local self = setmetatable({
 		Board = board,
 		Deps = deps,
 		Rng = deps.Rng or Random.new(),
 		Rounds = settings.Rounds or Config.Match.BoardRounds,
+		Difficulty = settings.Difficulty or Config.Match.BotDifficulty,
 		Round = 0,
 		Seats = {},
-		Order = {},
+		Order = {}, -- seat order until decideTurnOrder runs
 		CollectibleSpace = nil,
 		CollectibleName = Config.Collectible.Name,
 		CollectiblePrice = Config.Collectible.Price,
+		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice }
 	}, Match)
 
 	for index, participant in participants do
-		local seat = { Index = index, Participant = participant, SpaceId = board.Start }
+		local seat = {
+			Index = index,
+			Participant = participant,
+			SpaceId = board.Start,
+			Items = {},
+			Shield = false,
+			Stats = { MinigamePoints = 0, CoinsEarned = 0, SpacesMoved = 0 },
+		}
 		table.insert(self.Seats, seat)
 		table.insert(self.Order, seat)
-	end
-	-- Random turn order, fixed for the whole match.
-	for i = #self.Order, 2, -1 do
-		local j = self.Rng:NextInteger(1, i)
-		self.Order[i], self.Order[j] = self.Order[j], self.Order[i]
 	end
 	self:relocateCollectible()
 	return self
@@ -2012,6 +2610,15 @@ function Match:seatOf(participant)
 	return nil
 end
 
+function Match:seatById(id: string?)
+	for _, seat in self.Seats do
+		if seat.Participant.Id == id then
+			return seat
+		end
+	end
+	return nil
+end
+
 function Match:coinsOf(seat): number
 	return self.Deps.Wallet.get(seat.Participant)
 end
@@ -2020,22 +2627,172 @@ function Match:collectiblesOf(seat): number
 	return self.Deps.Wallet.getCollectibles(seat.Participant)
 end
 
--- Adds/removes coins (never below 0). Returns the change that actually happened.
-function Match:changeCoins(seat, amount: number): number
+--[[
+	Adds/removes coins (never below 0) as a board effect. A Coin Shield blocks the next loss.
+	Returns the change that actually happened and whether a shield blocked it.
+	Gains count towards the Coin Collector bonus. (Purchases use Wallet.spend instead.)
+]]
+function Match:changeCoins(seat, amount: number): (number, boolean)
+	if amount < 0 and seat.Shield and self:coinsOf(seat) > 0 then
+		seat.Shield = false
+		return 0, true
+	end
 	local _, delta = self.Deps.Wallet.add(seat.Participant, amount)
-	return delta
+	if delta > 0 then
+		seat.Stats.CoinsEarned += delta
+	end
+	return delta, false
 end
+
+-- Turn order -----------------------------------------------------------------------------------
+
+--[[
+	Everyone rolls once; highest goes first. Tied seats roll again among themselves (and again,
+	until nobody is tied). rollFor(seats, attempt) -> { [seat] = roll } lets BoardGame wait for
+	players to press ROLL; by default the match's Rng rolls. Invalid rolls are re-rolled here.
+	Sets self.Order and returns it with a log: { { Seat, Roll, Attempt } }.
+]]
+function Match:decideTurnOrder(rollFor)
+	local log = {}
+	rollFor = rollFor or function(seats)
+		local rolls = {}
+		for _, seat in seats do
+			rolls[seat] = self:roll()
+		end
+		return rolls
+	end
+
+	local function resolve(group, attempt)
+		local rolls = rollFor(group, attempt) or {}
+		for _, seat in group do
+			if not isDieValue(rolls[seat]) then
+				rolls[seat] = self:roll()
+			end
+			table.insert(log, { Seat = seat, Roll = rolls[seat], Attempt = attempt })
+		end
+		local sorted = table.clone(group)
+		table.sort(sorted, function(a, b)
+			if rolls[a] ~= rolls[b] then
+				return rolls[a] > rolls[b]
+			end
+			return a.Index < b.Index
+		end)
+		local result = {}
+		local i = 1
+		while i <= #sorted do
+			local j = i
+			while sorted[j + 1] and rolls[sorted[j + 1]] == rolls[sorted[i]] do
+				j += 1
+			end
+			if j > i then
+				for _, seat in resolve(table.move(sorted, i, j, 1, {}), attempt + 1) do
+					table.insert(result, seat)
+				end
+			else
+				table.insert(result, sorted[i])
+			end
+			i = j + 1
+		end
+		return result
+	end
+
+	self.Order = resolve(table.clone(self.Seats), 1)
+	return self.Order, log
+end
+
+-- Dice -----------------------------------------------------------------------------------------
 
 function Match:roll(): number
 	return self.Rng:NextInteger(1, Config.Board.DieSides)
 end
 
-function Match:ask(seat, request): number
-	local pick = self.Deps.Ask(seat, request)
-	if type(pick) ~= "number" or pick % 1 ~= 0 or pick < 1 or pick > #request.Options then
-		return request.Default or 1
+-- Turns + items --------------------------------------------------------------------------------
+
+function Match:beginTurn(seat)
+	self.Turn = { Seat = seat, Stage = "PreRoll", ItemUsed = false, Dice = 1 }
+end
+
+function Match:endTurn()
+	self.Turn = nil
+end
+
+-- Adds an item to a seat's inventory. False if unknown or the inventory is full.
+function Match:giveItem(seat, itemId: string): boolean
+	if not itemsById[itemId] or #seat.Items >= Config.Items.MaxHeld then
+		return false
 	end
-	return pick
+	table.insert(seat.Items, itemId)
+	return true
+end
+
+--[[
+	Uses the item in `slot` of the seat's inventory. Every rule is checked here, so players
+	(via the remote) and bots go through exactly the same validation:
+	  it must be this seat's turn, before the roll, no item used yet this turn,
+	  the slot must hold a real item, and an Opponent item needs another seat as target.
+	Returns true + feed text, or false + reason. A refused item stays in the inventory.
+]]
+function Match:useItem(seat, slot, target): (boolean, string)
+	local turn = self.Turn
+	if not turn or turn.Seat ~= seat then
+		return false, "not your turn"
+	end
+	if turn.Stage ~= "PreRoll" then
+		return false, "items are used before rolling"
+	end
+	if turn.ItemUsed then
+		return false, "one item per turn"
+	end
+	if type(slot) ~= "number" or slot % 1 ~= 0 or not seat.Items[slot] then
+		return false, "you don't have that item"
+	end
+	local item = itemsById[seat.Items[slot]]
+	if not item then
+		return false, "unknown item"
+	end
+	if item.Target == "Opponent" then
+		if type(target) ~= "table" or target == seat or not table.find(self.Seats, target) then
+			return false, "pick an opponent"
+		end
+	else
+		target = nil
+	end
+	local text, reason = item.Use(self, seat, target)
+	if not text then
+		return false, reason or "can't use that now"
+	end
+	table.remove(seat.Items, slot)
+	turn.ItemUsed = true
+	if item.Dice then
+		turn.Dice = item.Dice
+	end
+	return true, text
+end
+
+-- Rolls this turn's dice (1, or more from a dice item). Returns the total and each die.
+function Match:rollTurn(seat): (number, { number })
+	local turn = self.Turn
+	local count = if turn and turn.Seat == seat then turn.Dice else 1
+	local dice, total = {}, 0
+	for i = 1, count do
+		dice[i] = self:roll()
+		total += dice[i]
+	end
+	if turn then
+		turn.Stage = "Moving"
+	end
+	return total, dice
+end
+
+-- Opponents a Target item could be used on.
+function Match:opponentsOf(seat)
+	local list = {}
+	for _, other in self.Seats do
+		if other ~= seat then
+			table.insert(list, other)
+		end
+	end
+	return list
 end
 
 -- Collectible --------------------------------------------------------------------------------
@@ -2088,6 +2845,14 @@ function Match:offerCollectible(seat): string
 	return ("%s passed on the %s"):format(name, self.CollectibleName)
 end
 
+function Match:ask(seat, request): number
+	local pick = self.Deps.Ask(seat, request)
+	if type(pick) ~= "number" or pick % 1 ~= 0 or pick < 1 or pick > #request.Options then
+		return request.Default or 1
+	end
+	return pick
+end
+
 -- Movement ------------------------------------------------------------------------------------
 
 -- One space forward. At a fork the mover chooses.
@@ -2100,9 +2865,16 @@ function Match:step(seat): number
 		for i, id in options do
 			labels[i] = if space.Paths then space.Paths[i] else ("Space %d"):format(id)
 		end
-		nextId = options[self:ask(seat, { Kind = "Path", Prompt = "Which way?", Options = labels, Default = 1 })]
+		nextId = options[self:ask(seat, {
+			Kind = "Path",
+			Prompt = "Which way?",
+			Options = labels,
+			Default = 1,
+			Data = { Spaces = options },
+		})]
 	end
 	seat.SpaceId = nextId
+	seat.Stats.SpacesMoved += 1
 	return nextId
 end
 
@@ -2153,9 +2925,26 @@ function Match:grantCosmetic(seat, itemId: string): boolean
 	return true
 end
 
+-- A random board item into the seat's inventory. Returns the item, or nil if it's full.
+function Match:giveRandomItem(seat)
+	if #seat.Items >= Config.Items.MaxHeld then
+		return nil
+	end
+	local item = weightedPick(self.Rng, Items)
+	self:giveItem(seat, item.Id)
+	return item
+end
+
 function Match:giveReward(seat): string
 	local name = seat.Participant.Name
 	local reward = weightedPick(self.Rng, Config.Economy.Rewards)
+	if reward.Kind == "Item" then
+		local item = self:giveRandomItem(seat)
+		if item then
+			return ("%s unwrapped a %s!"):format(name, item.Name)
+		end
+		reward = { Kind = "Coins", Amount = 5 } -- bag is full
+	end
 	if reward.Kind == "Cosmetic" then
 		local unowned = self.Deps.Inventory.unowned(seat.Participant.Id)
 		if #unowned > 0 then
@@ -2173,43 +2962,112 @@ function Match:giveReward(seat): string
 	return ("%s unwrapped %d coins"):format(name, delta)
 end
 
+--[[
+	Shop: up to Config.Economy.ShopItemOffers board items (if there's room in the bag) and
+	Config.Economy.ShopOffers cosmetics the visitor doesn't own. Data.Items lists each offer
+	as { Kind = "Item"|"Cosmetic", Id, Name, Price }.
+]]
 function Match:visitShop(seat): string
 	local name = seat.Participant.Name
-	local unowned = self.Deps.Inventory.unowned(seat.Participant.Id)
-	if #unowned == 0 then
-		return ("%s already owns everything in the shop"):format(name)
-	end
 	local offers = {}
+	if #seat.Items < Config.Items.MaxHeld then
+		local pool = table.clone(Items)
+		for _ = 1, math.min(Config.Economy.ShopItemOffers, #pool) do
+			local item = table.remove(pool, self.Rng:NextInteger(1, #pool))
+			table.insert(offers, { Kind = "Item", Id = item.Id, Name = item.Name, Price = item.Price })
+		end
+	end
+	local unowned = self.Deps.Inventory.unowned(seat.Participant.Id)
 	for _ = 1, math.min(Config.Economy.ShopOffers, #unowned) do
 		local item = table.remove(unowned, self.Rng:NextInteger(1, #unowned))
-		table.insert(offers, item)
+		table.insert(offers, { Kind = "Cosmetic", Id = item.Id, Name = item.Name, Price = item.Price })
+	end
+	if #offers == 0 then
+		return ("%s already owns everything in the shop"):format(name)
 	end
 	local labels = {}
-	for i, item in offers do
-		labels[i] = ("%s (%d coins)"):format(item.Name, item.Price)
+	for i, offer in offers do
+		labels[i] = ("%s (%d coins)"):format(offer.Name, offer.Price)
 	end
 	table.insert(labels, "Leave")
 	local pick = self:ask(seat, {
 		Kind = "Shop",
-		Prompt = "Shop: buy a cosmetic?",
+		Prompt = "Shop: buy something?",
 		Options = labels,
 		Default = #labels,
 		Data = { Items = offers },
 	})
-	local item = offers[pick]
-	if not item then
+	local offer = offers[pick]
+	if not offer then
 		return ("%s left the shop"):format(name)
 	end
-	if not self.Deps.Wallet.spend(seat.Participant, item.Price) then
-		return ("%s can't afford the %s"):format(name, item.Name)
+	if offer.Kind == "Item" and #seat.Items >= Config.Items.MaxHeld then
+		return ("%s has no room for the %s"):format(name, offer.Name)
 	end
-	self:grantCosmetic(seat, item.Id)
-	return ("%s bought a %s"):format(name, item.Name)
+	if not self.Deps.Wallet.spend(seat.Participant, offer.Price) then
+		return ("%s can't afford the %s"):format(name, offer.Name)
+	end
+	if offer.Kind == "Item" then
+		self:giveItem(seat, offer.Id)
+	else
+		self:grantCosmetic(seat, offer.Id)
+	end
+	return ("%s bought a %s"):format(name, offer.Name)
+end
+
+-- Minigames + bonuses ---------------------------------------------------------------------------
+
+--[[
+	Records a minigame for the bonus stats. results: MinigameManager's normalized results
+	({ Participant, Placement }); rows: the coin rows ({ Id, Coins }).
+]]
+function Match:recordMinigame(results, rows)
+	local coinsById = {}
+	for _, row in rows or {} do
+		coinsById[row.Id] = row.Coins
+	end
+	for _, result in results or {} do
+		local seat = self:seatOf(result.Participant)
+		if seat then
+			seat.Stats.MinigamePoints += Config.MinigamePointsByPlacement[result.Placement] or 0
+			seat.Stats.CoinsEarned += coinsById[result.Participant.Id] or 0
+		end
+	end
+end
+
+--[[
+	Hands out Config.Bonuses. Returns { { Bonus, Winners = {seats}, Value } } in config order.
+	A bonus nobody scored on (best value 0) goes to nobody.
+]]
+function Match:awardBonuses(bonuses)
+	local awarded = {}
+	for _, bonus in bonuses or Config.Bonuses do
+		local best = 0
+		for _, seat in self.Seats do
+			best = math.max(best, seat.Stats[bonus.Stat] or 0)
+		end
+		local winners = {}
+		if best > 0 then
+			for _, seat in self.Seats do
+				if (seat.Stats[bonus.Stat] or 0) == best then
+					table.insert(winners, seat)
+				end
+			end
+			if #winners > 1 and not bonus.AwardTies then
+				winners = {}
+			end
+		end
+		for _, seat in winners do
+			self.Deps.Wallet.addCollectibles(seat.Participant, bonus.Crowns or 1)
+		end
+		table.insert(awarded, { Bonus = bonus, Winners = winners, Value = best })
+	end
+	return awarded
 end
 
 -- Seats -----------------------------------------------------------------------------------------
 
--- A bot takes over a seat (its player left). Coins and collectibles carry over.
+-- A bot takes over a seat (its player left). Coins, collectibles, items and stats carry over.
 function Match:replaceParticipant(seat, newParticipant)
 	self.Deps.Wallet.transfer(seat.Participant, newParticipant)
 	seat.Participant = newParticipant
@@ -2218,23 +3076,13 @@ end
 -- Bots ------------------------------------------------------------------------------------------
 
 -- What a bot picks for an Ask request. `skill` is 0..1.
-function Match:botDecision(seat, request, skill: number): number
-	if request.Kind == "Collectible" then
-		return 1 -- always buy: it's what wins
-	elseif request.Kind == "Shop" then
-		local coins = self:coinsOf(seat)
-		-- Better bots keep enough coins for the collectible.
-		local reserve = Config.Economy.BotShopReserve * skill
-		for i, item in request.Data.Items do
-			if coins - item.Price >= reserve then
-				return i
-			end
-		end
-		return request.Default
-	elseif request.Kind == "Path" then
-		return self.Rng:NextInteger(1, #request.Options)
-	end
-	return request.Default or 1
+function Match:botDecision(seat, request, skill: number?): number
+	return BotBrain.decide(self, seat, request, BotBrain.profile(self.Difficulty), skill or 0.5)
+end
+
+-- Which item (slot, target seat) a bot uses before rolling, or nil.
+function Match:botItemChoice(seat)
+	return BotBrain.chooseItem(self, seat, BotBrain.profile(self.Difficulty))
 end
 
 -- Standings -------------------------------------------------------------------------------------
@@ -2282,7 +3130,7 @@ return Match
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">SpaceTypes</string>
             <string name="Source"><![CDATA[--[[
@@ -2304,8 +3152,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 
-local function coinsText(name: string, delta: number): string
-	if delta == 0 then
+local function coinsText(name: string, delta: number, shielded: boolean?): string
+	if shielded then
+		return ("%s's Coin Shield blocked the loss and broke"):format(name)
+	elseif delta == 0 then
 		return ("%s has no coins to lose"):format(name)
 	end
 	return ("%s %s %d coins"):format(name, if delta > 0 then "gets" else "loses", math.abs(delta))
@@ -2333,7 +3183,8 @@ return {
 		Short = "-" .. Config.Economy.LoseSpaceCoins,
 		Color = Color3.fromRGB(240, 70, 70),
 		Resolve = function(match, seat)
-			return coinsText(seat.Participant.Name, match:changeCoins(seat, -Config.Economy.LoseSpaceCoins))
+			local delta, shielded = match:changeCoins(seat, -Config.Economy.LoseSpaceCoins)
+			return coinsText(seat.Participant.Name, delta, shielded)
 		end,
 	},
 	Event = {
@@ -2365,7 +3216,7 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="19">
+      <Item class="ModuleScript" referent="21">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -2644,7 +3495,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="20">
+      <Item class="ModuleScript" referent="22">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -2784,7 +3635,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="21">
+      <Item class="ModuleScript" referent="23">
         <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
@@ -2893,7 +3744,7 @@ return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="22">
+      <Item class="Script" referent="24">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -2982,7 +3833,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="23">
+      <Item class="ModuleScript" referent="25">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -3113,7 +3964,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="24">
+      <Item class="ModuleScript" referent="26">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -3778,11 +4629,11 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="25">
+      <Item class="Folder" referent="27">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -4095,7 +4946,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -4591,7 +5442,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -5264,7 +6115,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -5774,7 +6625,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -5931,7 +6782,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -6348,7 +7199,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -6474,7 +7325,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="33">
+      <Item class="ModuleScript" referent="35">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -6618,7 +7469,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="34">
+      <Item class="ModuleScript" referent="36">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -6734,7 +7585,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="35">
+      <Item class="ModuleScript" referent="37">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -6859,7 +7710,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="36">
+      <Item class="ModuleScript" referent="38">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -6963,19 +7814,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="37">
+  <Item class="StarterPlayer" referent="39">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="38">
+    <Item class="StarterPlayerScripts" referent="40">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="39">
+      <Item class="Folder" referent="41">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -7198,7 +8049,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -7309,7 +8160,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="42">
+        <Item class="LocalScript" referent="44">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -7427,6 +8278,7 @@ local HUD_STRIPS = {
 	"BoardStandings",
 	"BoardRoll",
 	"BoardPrompt",
+	"BoardItems",
 	"WaitingRoom",
 }
 local HUD_DESIGN_HEIGHT = 720
@@ -7677,11 +8529,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="43">
+        <Item class="Folder" referent="45">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="44">
+          <Item class="ModuleScript" referent="46">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -7966,7 +8818,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="45">
+          <Item class="ModuleScript" referent="47">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -8222,11 +9074,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="46">
+        <Item class="Folder" referent="48">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="47">
+          <Item class="ModuleScript" referent="49">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -8374,7 +9226,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="48">
+          <Item class="ModuleScript" referent="50">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -8407,6 +9259,15 @@ local CAMERA_BIND = "PartyBoardCamera"
 local CAMERA_OFFSET = Vector3.new(0, 42, 34)
 
 local myId = "player_" .. Players.LocalPlayer.UserId
+
+-- A key that changes whenever the item list does (so buttons are only rebuilt then).
+local function itemKeyOf(items): string
+	local ids = {}
+	for _, item in items do
+		table.insert(ids, item.Id)
+	end
+	return table.concat(ids, ",")
+end
 
 -- send(payload) fires the input remote.
 function BoardView.new(screen: ScreenGui, send: (any) -> ())
@@ -8478,6 +9339,25 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 		self:roll()
 	end)
 
+	-- Item buttons (above the roll button, your turn only, before rolling)
+	self.ItemBar = make("Frame", {
+		Name = "BoardItems",
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -24, 1, -186),
+		Size = UDim2.fromOffset(420, 64),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Right,
+			Padding = UDim.new(0, 8),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	self.ItemKey = nil
+
 	-- Prompt (bottom centre)
 	self.Prompt = make("Frame", {
 		Name = "BoardPrompt",
@@ -8547,10 +9427,15 @@ function BoardView:setState(message)
 	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
 	self.Title.Text = ("Round %d / %d%s"):format(message.Round or 0, message.Rounds or 0, if who then "  ·  " .. who .. " turn" else "")
 	local sub = message.Text or ""
-	if message.Stage == "Moving" and message.Remaining then
+	if message.Stage == "OrderRoll" then
+		self.Title.Text = ("Round %d / %d  ·  Turn order"):format(message.Round or 0, message.Rounds or 0)
+		sub = if message.OrderPending and message.OrderPending[myId] then "Tap ROLL! Highest roll goes first" else (message.Text or "")
+	elseif message.Stage == "Moving" and message.Remaining then
 		sub = ("Rolled %d  ·  %d move%s left"):format(message.Roll or 0, message.Remaining, if message.Remaining == 1 then "" else "s")
 	elseif message.Stage == "Roll" and myTurn then
-		sub = "Tap ROLL to roll the die!"
+		sub = if (message.Dice or 1) > 1
+			then ("Tap ROLL to roll %d dice!"):format(message.Dice)
+			else "Use an item, or tap ROLL to roll the die!"
 	end
 	self.Subtitle.Text = sub
 
@@ -8580,19 +9465,65 @@ function BoardView:setState(message)
 			Text = (if isTurn then "▶ " else "") .. (if isMe then "YOU" else seat.Name) .. (if seat.IsBot then " (bot)" else ""),
 			Parent = row,
 		}, 22)
+		local line = seatLine(seat, message.CollectiblePlural or "Crowns")
+		if seat.OrderRolls and #seat.OrderRolls > 0 then
+			line = "Rolled " .. table.concat(seat.OrderRolls, ", then ")
+		else
+			line ..= ("  ·  %d item%s"):format(#(seat.Items or {}), if #(seat.Items or {}) == 1 then "" else "s")
+			if seat.Shield then
+				line ..= "  ·  shield"
+			end
+		end
 		Theme.label({
 			Position = UDim2.fromOffset(10, 30),
 			Size = UDim2.new(1, -20, 0, 20),
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextColor3 = Theme.Colors.Accent,
-			Text = seatLine(seat, message.CollectiblePlural or "Crowns"),
+			Text = line,
 			Parent = row,
 		}, 18)
 		table.insert(self.Rows, row)
 	end
 
-	-- Roll button: only on your turn, while waiting for the roll.
-	local canRoll = myTurn and message.Stage == "Roll"
+	-- Item buttons: your turn, before rolling, no item used yet.
+	local mySeat
+	for _, seat in message.Seats do
+		if seat.Id == myId then
+			mySeat = seat
+		end
+	end
+	local items = mySeat and mySeat.Items or {}
+	local showItems = myTurn and message.Stage == "Roll" and not message.ItemUsed and #items > 0
+	local itemKey = if showItems then itemKeyOf(items) else nil
+	if itemKey ~= self.ItemKey then
+		self.ItemKey = itemKey
+		for _, child in self.ItemBar:GetChildren() do
+			if child:IsA("GuiButton") then
+				child:Destroy()
+			end
+		end
+		for slot, item in items do
+			local button = make("TextButton", {
+				LayoutOrder = slot,
+				Size = UDim2.fromOffset(132, 64),
+				BackgroundColor3 = Theme.Colors.Cool,
+				Font = Theme.BodyFont,
+				TextScaled = true,
+				TextColor3 = Theme.Colors.Overlay,
+				Text = item.Name,
+				Parent = self.ItemBar,
+			}, { Theme.corner(14), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 10 }) })
+			button.Activated:Connect(function()
+				self.ItemBar.Visible = false
+				self.Send({ Kind = "UseItem", Slot = slot })
+			end)
+		end
+	end
+	self.ItemBar.Visible = showItems
+
+	-- Roll button: on your turn (or when rolling for turn order), while waiting for the roll.
+	local canRoll = (myTurn and message.Stage == "Roll")
+		or (message.Stage == "OrderRoll" and message.OrderPending ~= nil and message.OrderPending[myId] == true)
 	if canRoll and not self.RollButton.Visible then
 		Theme.pop(self.RollButton)
 		ContextActionService:BindAction(ROLL_ACTION, function(_, inputState)
@@ -8716,6 +9647,8 @@ function BoardView:hide()
 	self.Header.Visible = false
 	self.Standings.Visible = false
 	self.RollButton.Visible = false
+	self.ItemBar.Visible = false
+	self.ItemKey = nil
 	self.Prompt.Visible = false
 	ContextActionService:UnbindAction(ROLL_ACTION)
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
@@ -8733,6 +9666,8 @@ function BoardView:hidePanels()
 	self.Header.Visible = false
 	self.Standings.Visible = false
 	self.RollButton.Visible = false
+	self.ItemBar.Visible = false
+	self.ItemKey = nil
 	self.Prompt.Visible = false
 	ContextActionService:UnbindAction(ROLL_ACTION)
 end
@@ -8748,7 +9683,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="49">
+          <Item class="ModuleScript" referent="51">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -8973,7 +9908,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="50">
+          <Item class="ModuleScript" referent="52">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -9120,7 +10055,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="51">
+          <Item class="ModuleScript" referent="53">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -9287,7 +10222,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="52">
+          <Item class="ModuleScript" referent="54">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -9402,7 +10337,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="53">
+          <Item class="ModuleScript" referent="55">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -9539,7 +10474,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -9657,7 +10592,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -9746,12 +10681,15 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
 	StandingsScreen
-	End-of-match standings: collectibles first, coins break ties (ranked by the server).
+	End-of-match screens, in order (message.Stage):
+	  Before   standings before the bonus awards
+	  Bonus    which bonus went to whom (one Crown each)
+	  Final    final standings: collectibles first, coins break ties (ranked by the server)
 ]]
 
 local Theme = require(script.Parent.Theme)
@@ -9791,16 +10729,67 @@ function StandingsScreen.new(screen: ScreenGui)
 	return self
 end
 
+local function showBonuses(self, message, myId: string)
+	self.Title.Text = "Bonus awards!"
+	local plural = message.CollectiblePlural or "Crowns"
+	for index, bonus in message.Bonuses or {} do
+		local names, mine = {}, false
+		for _, winner in bonus.Winners do
+			table.insert(names, if winner.Id == myId then "You" else winner.Name)
+			mine = mine or winner.Id == myId
+		end
+		local frame = make("Frame", {
+			LayoutOrder = index,
+			Size = UDim2.fromScale(1, 0.28),
+			BackgroundColor3 = if mine then Theme.Colors.CardLight else Theme.Colors.Overlay,
+			Parent = self.List,
+		}, { Theme.corner(12), Theme.padding(6) })
+		Theme.label({
+			Size = UDim2.fromScale(0.5, 0.55),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Font = Theme.TitleFont,
+			TextColor3 = Theme.Colors.Accent,
+			Text = bonus.Name,
+			Parent = frame,
+		}, 28)
+		Theme.label({
+			Position = UDim2.fromScale(0, 0.55),
+			Size = UDim2.fromScale(0.5, 0.45),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = Theme.Colors.Muted,
+			Text = bonus.Description,
+			Parent = frame,
+		}, 18)
+		Theme.label({
+			Position = UDim2.fromScale(0.5, 0),
+			Size = UDim2.fromScale(0.5, 1),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Text = if #names > 0
+				then ("%s  +%d %s"):format(table.concat(names, ", "), bonus.Crowns, if bonus.Crowns == 1 then string.sub(plural, 1, -2) else plural)
+				else "Nobody",
+			Parent = frame,
+		}, 24)
+	end
+end
+
 function StandingsScreen:show(message, myId: string)
 	for _, child in self.List:GetChildren() do
 		if child:IsA("Frame") then
 			child:Destroy()
 		end
 	end
+	self.Root.Visible = true
+	if message.Stage == "Bonus" then
+		showBonuses(self, message, myId)
+		Theme.pop(self.Root)
+		return
+	end
 	local rows = message.Rows or {}
 	local winner = rows[1]
 	local tied = rows[2] ~= nil and rows[2].Placement == 1
-	if not winner then
+	if message.Stage == "Before" then
+		self.Title.Text = "Standings before bonuses"
+	elseif not winner then
 		self.Title.Text = "Match over"
 	elseif tied then
 		self.Title.Text = "It's a tie for 1st!"
@@ -9863,7 +10852,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -9981,7 +10970,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -10158,18 +11147,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="59">
+  <Item class="Workspace" referent="61">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="60">
+    <Item class="Model" referent="62">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="61">
+      <Item class="Part" referent="63">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -10189,7 +11178,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="62">
+      <Item class="SpawnLocation" referent="64">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
