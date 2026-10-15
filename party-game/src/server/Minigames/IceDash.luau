@@ -47,6 +47,10 @@ local STEP_SLACK = 3 -- studs of slack on any single report's movement
 local WALL_SLACK = 1 -- studs a report may poke past a wall or into a barrier
 local RESPAWN_GRACE = 1.5 -- extra seconds a client gets to reappear at its checkpoint after falling
 
+-- Start/checkpoint/finish arches. Tall enough that the chase camera (Height 12) passes
+-- under the beam instead of having it fill the top of the screen after you finish.
+local GATE_HEIGHT = 20
+
 IceDash.Info = {
 	Name = "Ice Dash",
 	Description = "Slide down the ice ❄! You move on your own, so just steer. Dodge bumpers and snow, don't slip off the edge. First to the flag wins!",
@@ -188,8 +192,8 @@ function IceDash:_buildTrack(layout)
 		for _, side in { -1, 1 } do
 			self:_part({
 				Name = name .. "Post",
-				Size = Vector3.new(1.5, 14, 1.5),
-				CFrame = self:_at(side * (HALF_WIDTH + 0.75), 7.5, at),
+				Size = Vector3.new(1.5, GATE_HEIGHT, 1.5),
+				CFrame = self:_at(side * (HALF_WIDTH + 0.75), GATE_HEIGHT / 2 + 0.5, at),
 				Material = Enum.Material.Neon,
 				Color = color,
 			})
@@ -197,7 +201,7 @@ function IceDash:_buildTrack(layout)
 		self:_part({
 			Name = name .. "Beam",
 			Size = Vector3.new(width + 3, 1.5, 1.5),
-			CFrame = self:_at(0, 14.5, at),
+			CFrame = self:_at(0, GATE_HEIGHT + 0.5, at),
 			Material = Enum.Material.Neon,
 			Color = color,
 		})
