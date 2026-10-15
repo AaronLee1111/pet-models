@@ -1,0 +1,9 @@
+{
+  "name": "UnitTests",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": { "PartyShared": { "$path": "../src/shared" } },
+    "ServerScriptService": { "PartyServer": { "$path": "../src/server" } },
+    "ServerStorage": { "PartyTests": { "$path": "unit" } }
+  }
+}

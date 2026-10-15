@@ -33,6 +33,61 @@ Config.ResultsDuration = 8
 -- Coins awarded by placement. Ties share a placement, so two 1st places both get 10.
 Config.CoinsByPlacement = { 10, 6, 3, 1 }
 
+-- Match (board game) ------------------------------------------------------------
+
+Config.Match = {
+	-- Defaults; the host can change these in the waiting room.
+	BoardRounds = 5, -- each round = every seat takes one turn, then one minigame
+	BoardRoundChoices = { 3, 5, 8, 12 },
+	BotDifficulty = "Normal",
+	-- bot.Skill is rolled in this range (0..1). Minigame bots and board decisions both use it.
+	BotDifficulties = {
+		Easy = { 0.1, 0.45 },
+		Normal = { 0.35, 0.85 },
+		Hard = { 0.75, 1 },
+	},
+	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
+	Board = "Classic", -- module name in PartyServer/Board/Boards
+	WaitingRoomDuration = 15, -- seconds the waiting room counts down before a match
+	StandingsDuration = 10, -- final standings screen
+}
+
+Config.Board = {
+	Origin = Vector3.new(0, 0, -300), -- far from the lobby (0,0,0) and the arenas
+	SpaceSpacing = 12, -- studs between grid cells in board layouts
+	DieSides = 6,
+	RollTimeout = 12, -- a player who doesn't roll in time rolls automatically
+	ChoiceTimeout = 10, -- unanswered prompts take their default option
+	HopTime = 0.35, -- seconds per space moved
+	BotRollDelay = { 0.8, 1.6 },
+	BotChoiceDelay = { 0.6, 1.4 },
+	LandPause = 1.5, -- beat after landing so everyone can read what happened
+}
+
+-- The primary collectible (wins the match; coins only break ties). Placeholder name.
+Config.Collectible = {
+	Name = "Crown",
+	Plural = "Crowns",
+	Price = 20, -- coins
+}
+
+-- All coin amounts the board hands out or takes, in one place.
+Config.Economy = {
+	StartingCoins = 10,
+	GainSpaceCoins = 3,
+	LoseSpaceCoins = 3,
+	-- Reward spaces roll one of these (Weight is relative).
+	Rewards = {
+		{ Kind = "Coins", Amount = 5, Weight = 6 },
+		{ Kind = "Coins", Amount = 10, Weight = 3 },
+		{ Kind = "Cosmetic", Weight = 2 }, -- a random cosmetic the owner doesn't have yet
+		{ Kind = "Collectible", Amount = 1, Weight = 0.5 },
+	},
+	ShopOffers = 2, -- cosmetics offered per shop visit
+	-- Bots keep at least this many coins after a shop purchase, saving for the collectible.
+	BotShopReserve = 20,
+}
+
 -- World layout -----------------------------------------------------------------
 
 -- Arenas are built here, far away from the lobby so they never overlap it.
