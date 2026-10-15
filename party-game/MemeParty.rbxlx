@@ -59,7 +59,11 @@ Config.Match = {
 		Hard = { 0.75, 1 },
 	},
 	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
-	Board = "Classic", -- module name in PartyServer/Board/Boards
+	Board = "Classic", -- default board: module name in PartyServer/Board/Boards
+	Boards = { "Classic" }, -- boards the host can pick (in this order)
+	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
+	Mode = "Board",
+	Modes = { "Board", "Minigames" },
 	WaitingRoomDuration = 15, -- seconds the waiting room counts down before a match
 	StandingsDuration = 10, -- final standings screen
 	PreBonusDuration = 5, -- standings before the bonus awards
@@ -4055,8 +4059,9 @@ return Inventory
           <string name="Source"><![CDATA[--[[
 	Main (server entry point)
 	The match loop: waiting room (host picks settings) -> seat 4 participants (real players
-	first, bots fill the rest) -> BoardGame.play (board turns + a minigame every round ->
-	final standings) -> back to the waiting room.
+	first, bots fill the rest) -> the chosen mode -> back to the waiting room.
+	  Board mode       BoardGame.play (board turns + a minigame every round -> bonuses -> standings)
+	  Minigames mode   MinigameMode.play (back-to-back minigames, most coins wins)
 ]]
 
 local Players = game:GetService("Players")
@@ -4068,6 +4073,7 @@ local BoardGame = require(script.Parent.Board.BoardGame)
 local BotService = require(script.Parent.BotService)
 local CosmeticService = require(script.Parent.CosmeticService)
 local MinigameManager = require(script.Parent.MinigameManager)
+local MinigameMode = require(script.Parent.MinigameMode)
 local Participant = require(script.Parent.Participant)
 local Profiles = require(script.Parent.Profiles)
 local WaitingRoom = require(script.Parent.WaitingRoom)
@@ -4134,7 +4140,8 @@ while true do
 	BotService.setSkillRange(Config.Match.BotDifficulties[settings.Difficulty])
 
 	local participants = buildParticipants()
-	local ok, err = xpcall(BoardGame.play, debug.traceback, participants, settings)
+	local play = if settings.Mode == "Minigames" then MinigameMode.play else BoardGame.play
+	local ok, err = xpcall(play, debug.traceback, participants, settings)
 	if not ok then
 		warn("[Party] Match crashed, returning to the waiting room:\n" .. tostring(err))
 		MinigameManager.abort("Match crashed, back to the lobby!")
@@ -4940,11 +4947,146 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="28">
+      <Item class="ModuleScript" referent="28">
+        <Properties>
+          <string name="Name">MinigameMode</string>
+          <string name="Source"><![CDATA[--[[
+	MinigameMode
+	The "Minigames" match mode: no board, just back-to-back minigames (vote -> play ->
+	results) for the chosen number of rounds. Most coins wins; ties share a place. Real
+	players get bank coins by placement, same as the board party.
+
+	  MinigameMode.play(participants, settings)   yields for the whole match; returns ranked rows
+	  MinigameMode.rank(participants, wallet)     pure ranking (tested)
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local Arena = require(script.Parent.Arena)
+local BotService = require(script.Parent.BotService)
+local CoinService = require(script.Parent.CoinService)
+local CosmeticService = require(script.Parent.CosmeticService)
+local Inventory = require(script.Parent.Inventory)
+local MinigameManager = require(script.Parent.MinigameManager)
+local Participant = require(script.Parent.Participant)
+local Profiles = require(script.Parent.Profiles)
+
+local MinigameMode = {}
+
+local function isAway(participant): boolean
+	return participant.Left or (not participant.IsBot and (not participant.Player or participant.Player.Parent == nil))
+end
+
+-- Ranks by coins (most first); equal coins share a placement. Stable by seat order.
+function MinigameMode.rank(participants, wallet)
+	local rows = {}
+	for index, participant in participants do
+		table.insert(rows, { Participant = participant, SeatIndex = index, Coins = wallet.get(participant) })
+	end
+	table.sort(rows, function(a, b)
+		if a.Coins ~= b.Coins then
+			return a.Coins > b.Coins
+		end
+		return a.SeatIndex < b.SeatIndex
+	end)
+	for i, row in rows do
+		local previous = rows[i - 1]
+		row.Placement = if previous and previous.Coins == row.Coins then previous.Placement else i
+	end
+	return rows
+end
+
+-- A bot takes over the seat of anyone who left (keeping their coins).
+local function replaceLeavers(participants)
+	for index, participant in participants do
+		if not isAway(participant) then
+			continue
+		end
+		participant.Left = true
+		local seated = {}
+		local count = 0
+		for _, other in participants do
+			if other.IsBot then
+				seated[other.Bot] = other
+				count += 1
+			end
+		end
+		local newcomer
+		for _, bot in BotService.getBots(count + 1, Arena.lobbySpot) do
+			if seated[bot] then
+				bot.Participant = seated[bot] -- getBots clears these
+			else
+				newcomer = bot
+			end
+		end
+		if newcomer then
+			local replacement = Participant.fromBot(newcomer)
+			CoinService.transfer(participant, replacement)
+			participants[index] = replacement
+			MinigameManager.broadcast({
+				Type = Net.Message.Toast,
+				Text = ("%s left, %s takes over their seat"):format(participant.Name, replacement.Name),
+			})
+		end
+	end
+end
+
+function MinigameMode.play(participants, settings)
+	CoinService.resetAll()
+	Inventory.resetBots()
+	participants = table.clone(participants)
+	local rounds = settings.Rounds or Config.Match.BoardRounds
+
+	for round = 1, rounds do
+		replaceLeavers(participants)
+		MinigameManager.showLobby(("Minigame %d of %d"):format(round, rounds), Config.IntermissionDuration)
+		local ok, err = xpcall(MinigameManager.runRound, debug.traceback, participants)
+		if not ok then
+			warn("[MinigameMode] Minigame crashed, carrying on:\n" .. tostring(err))
+			MinigameManager.abort("Minigame crashed, on to the next one!")
+		end
+	end
+
+	replaceLeavers(participants)
+	local rows = MinigameMode.rank(participants, CoinService)
+	local described = {}
+	for _, row in rows do
+		local entry = row.Participant:Describe()
+		entry.Placement = row.Placement
+		entry.Coins = row.Coins
+		entry.Collectibles = 0
+		local player = row.Participant.Player
+		local bank = Config.Profile.BankCoinsByPlacement[row.Placement] or 0
+		if player and player.Parent and not row.Participant.Left and bank > 0 then
+			Profiles.addBankCoins(player, bank)
+			entry.BankCoins = bank
+			CosmeticService.sendInventory(player)
+		end
+		table.insert(described, entry)
+	end
+	MinigameManager.setPhase(Net.Phase.Standings, {
+		Stage = "Final",
+		Mode = "Minigames",
+		Rows = described,
+		EndsAt = Workspace:GetServerTimeNow() + Config.Match.StandingsDuration,
+	})
+	task.wait(Config.Match.StandingsDuration)
+	CoinService.resetAll()
+	return rows
+end
+
+return MinigameMode
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="29">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -5257,7 +5399,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -5753,7 +5895,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -6426,7 +6568,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -6936,7 +7078,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -7093,7 +7235,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -7510,7 +7652,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -7636,7 +7778,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="36">
+      <Item class="ModuleScript" referent="37">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -7780,7 +7922,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="37">
+      <Item class="ModuleScript" referent="38">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -7861,7 +8003,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -7902,7 +8044,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -7933,7 +8075,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -8058,7 +8200,7 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="41">
+      <Item class="ModuleScript" referent="42">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -8174,7 +8316,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="42">
+      <Item class="ModuleScript" referent="43">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -8299,7 +8441,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="43">
+      <Item class="ModuleScript" referent="44">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -8308,8 +8450,9 @@ return RoundContext
 	the server) pick the match settings or start early. Empty seats are filled with bots
 	when the match starts, so one player is enough.
 
-	  WaitingRoom.run(getHost) -> settings { Rounds, Difficulty, Board } (yields)
+	  WaitingRoom.run(getHost) -> settings { Mode, Rounds, Difficulty, Board } (yields)
 	  WaitingRoom.handleInput(player, payload) -> true if it was a waiting-room input
+	  WaitingRoom.applySetting(key, value) -> true if it was a legal choice (and applied it)
 ]]
 
 local Players = game:GetService("Players")
@@ -8324,10 +8467,21 @@ local WaitingRoom = {}
 
 -- Kept between matches, so the host doesn't have to pick again.
 local settings = {
+	Mode = Config.Match.Mode,
 	Rounds = Config.Match.BoardRounds,
 	Difficulty = Config.Match.BotDifficulty,
 	Board = Config.Match.Board,
 }
+
+-- Every setting the host can change, and its legal values.
+local function choices()
+	return {
+		Mode = Config.Match.Modes,
+		Rounds = Config.Match.BoardRoundChoices,
+		Difficulty = Config.Match.BotDifficultyOrder,
+		Board = Config.Match.Boards,
+	}
+end
 
 local open = false
 local changed = false
@@ -8341,10 +8495,7 @@ local function publish(endsAt: number)
 		EndsAt = endsAt,
 		WaitingRoom = true,
 		Settings = table.clone(settings),
-		Choices = {
-			Rounds = Config.Match.BoardRoundChoices,
-			Difficulty = Config.Match.BotDifficultyOrder,
-		},
+		Choices = choices(),
 		HostId = host and host.UserId,
 		HostName = host and host.DisplayName,
 		PlayerCount = math.min(#Players:GetPlayers(), Config.PlayersPerMatch),
@@ -8387,13 +8538,18 @@ function WaitingRoom.handleInput(player: Player, payload): boolean
 	end
 	if kind == Net.Input.StartMatch then
 		startNow = true
-	elseif payload.Key == "Rounds" and table.find(Config.Match.BoardRoundChoices, payload.Value) then
-		settings.Rounds = payload.Value
-		changed = true
-	elseif payload.Key == "Difficulty" and table.find(Config.Match.BotDifficultyOrder, payload.Value) then
-		settings.Difficulty = payload.Value
+	elseif WaitingRoom.applySetting(payload.Key, payload.Value) then
 		changed = true
 	end
+	return true
+end
+
+function WaitingRoom.applySetting(key, value): boolean
+	local legal = type(key) == "string" and choices()[key]
+	if not legal or not table.find(legal, value) then
+		return false
+	end
+	settings[key] = value
 	return true
 end
 
@@ -8403,19 +8559,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="44">
+  <Item class="StarterPlayer" referent="45">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="45">
+    <Item class="StarterPlayerScripts" referent="46">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="46">
+      <Item class="Folder" referent="47">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -8638,7 +8794,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -8749,7 +8905,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="49">
+        <Item class="LocalScript" referent="50">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -8871,6 +9027,8 @@ local HUD_STRIPS = {
 	"WaitingRoom",
 }
 local HUD_DESIGN_HEIGHT = 720
+-- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
+local HUD_MIN_SCALE = { WaitingRoom = 0.85 }
 local hudBasePositions = {}
 
 local function fitHudToScreen()
@@ -8878,9 +9036,10 @@ local function fitHudToScreen()
 	if not camera then
 		return
 	end
-	local scale = math.clamp(camera.ViewportSize.Y / HUD_DESIGN_HEIGHT, 0.55, 1)
+	local baseScale = math.clamp(camera.ViewportSize.Y / HUD_DESIGN_HEIGHT, 0.55, 1)
 	for _, name in HUD_STRIPS do
 		local strip = screen:FindFirstChild(name)
+		local scale = math.max(baseScale, HUD_MIN_SCALE[name] or 0)
 		if strip and strip:IsA("GuiObject") then
 			local base = hudBasePositions[name] or strip.Position
 			hudBasePositions[name] = base
@@ -9121,11 +9280,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="50">
+        <Item class="Folder" referent="51">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="51">
+          <Item class="ModuleScript" referent="52">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -9410,7 +9569,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="52">
+          <Item class="ModuleScript" referent="53">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -9666,11 +9825,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="53">
+        <Item class="Folder" referent="54">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="55">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -9818,7 +9977,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -10275,7 +10434,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -10500,7 +10659,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -10647,7 +10806,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -10674,7 +10833,7 @@ function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
 		Name = "WaitingRoom",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.fromOffset(640, 256),
+		Size = UDim2.fromOffset(640, 316),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.05,
 		Visible = false,
@@ -10865,9 +11024,13 @@ function LobbyPanel:show(message)
 	end
 	local settings = message.Settings or {}
 	local choices = message.Choices or {}
+	settingRow(self, 0, "Mode", "Mode", choices.Mode or {}, settings.Mode, isHost)
 	settingRow(self, 1, "Rounds", "Rounds", choices.Rounds or {}, settings.Rounds, isHost)
 	settingRow(self, 2, "Bots", "Difficulty", choices.Difficulty or {}, settings.Difficulty, isHost)
-	wardrobeRow(self, 3)
+	if choices.Board and #choices.Board > 1 and settings.Mode == "Board" then
+		settingRow(self, 3, "Board", "Board", choices.Board, settings.Board, isHost)
+	end
+	wardrobeRow(self, 4)
 	self.StartButton.Visible = isHost
 	if not self.Root.Visible then
 		self.Root.Visible = true
@@ -10889,7 +11052,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -11004,7 +11167,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -11141,7 +11304,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11259,7 +11422,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="62">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -11348,7 +11511,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11496,7 +11659,7 @@ function StandingsScreen:show(message, myId: string)
 			Size = UDim2.fromScale(0.22, 1),
 			Font = Theme.TitleFont,
 			TextColor3 = Theme.Colors.Accent,
-			Text = ("%d %s"):format(row.Collectibles, plural),
+			Text = if message.Mode == "Minigames" then "" else ("%d %s"):format(row.Collectibles, plural),
 			Parent = frame,
 		}, 26)
 		Theme.label({
@@ -11519,7 +11682,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -11639,7 +11802,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11816,18 +11979,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="66">
+  <Item class="Workspace" referent="67">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="67">
+    <Item class="Model" referent="68">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="68">
+      <Item class="Part" referent="69">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -11847,7 +12010,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="69">
+      <Item class="SpawnLocation" referent="70">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
