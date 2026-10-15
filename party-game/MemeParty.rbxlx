@@ -545,17 +545,136 @@ return Net
 ]]></string>
         </Properties>
       </Item>
+      <Item class="ModuleScript" referent="5">
+        <Properties>
+          <string name="Name">PoleShimmySim</string>
+          <string name="Source"><![CDATA[--[[
+	PoleShimmySim
+	The climbing rules for Pole Shimmy, shared by server and client so both get exactly the
+	same answer from the same presses:
+
+	  * the server runs every climber with it (players from their timestamped presses, bots
+	    from their own) and its result is the one that counts
+	  * your client runs your climber with it too, so a press moves you on the very next frame
+
+	A climber is plain data. Time is "race time" in seconds since that climber's GO.
+]]
+
+local Sim = {}
+
+-- Tuning ----------------------------------------------------------------------------------
+
+Sim.POLE_HEIGHT = 60 -- studs from the bottom to the bell
+Sim.CLIMB_PER_PRESS = 0.9 -- studs a correctly alternated press is worth, before the rhythm bonus
+Sim.RHYTHM_WINDOW = { 0.1, 0.5 } -- seconds between presses that count as climbing in rhythm
+Sim.RHYTHM_TOLERANCE = 0.35 -- a beat is "steady" if within 35% of the previous gap
+Sim.STREAK_BONUS = 0.08 -- extra multiplier per steady beat in a row ...
+Sim.STREAK_MAX = 10 -- ... up to this many beats
+Sim.BASE_MULTIPLIER = 0.7 -- multiplier with no streak (first press, or after a pause)
+Sim.SPEED_CAP = 5 -- studs/s: nobody climbs faster than this, however fast they tap
+Sim.POOL_MAX = 2.5 -- studs of climb that can be banked ahead of the cap
+Sim.PAUSE_GRACE = 0.5 -- seconds without a press before the banked climb starts to fade ...
+Sim.DECAY = 4 -- ... at this rate (per second, exponential)
+-- Presses closer together than the window's lower edge are ignored (anti-autoclicker).
+Sim.MIN_PRESS_INTERVAL = Sim.RHYTHM_WINDOW[1]
+
+local STEP = 1 / 60 -- integration step; fixed so server and client agree
+
+-- Climbers -------------------------------------------------------------------------------------
+
+function Sim.newClimber()
+	return {
+		Time = 0, -- race time this state is at
+		Height = 0,
+		Pool = 0, -- climb earned but not yet climbed (drained at SPEED_CAP)
+		Streak = 0,
+		LastKey = nil, -- "Left" | "Right"
+		LastPressAt = -math.huge,
+		LastInterval = nil,
+		Speed = 0, -- studs/s over the last step (for animation)
+		FinishedAt = nil, -- race time the bell was reached
+	}
+end
+
+-- Moves a climber forward in time to `toTime` (never backwards).
+function Sim.advance(climber, toTime: number)
+	while climber.Time < toTime - 1e-6 do
+		local dt = math.min(STEP, toTime - climber.Time)
+		if climber.FinishedAt then
+			climber.Time += dt
+			climber.Speed = 0
+			continue
+		end
+		if climber.Time - climber.LastPressAt > Sim.PAUSE_GRACE then
+			climber.Pool *= math.exp(-Sim.DECAY * dt)
+		end
+		local climb = math.min(climber.Pool, Sim.SPEED_CAP * dt)
+		climber.Pool -= climb
+		climber.Speed = climb / dt
+		if climber.Height + climb >= Sim.POLE_HEIGHT then
+			-- Reached the bell part-way through this step.
+			local needed = Sim.POLE_HEIGHT - climber.Height
+			climber.FinishedAt = climber.Time + (if climb > 0 then dt * needed / climb else 0)
+			climber.Height = Sim.POLE_HEIGHT
+			climber.Pool = 0
+		else
+			climber.Height += climb
+		end
+		climber.Time += dt
+	end
+end
+
+--[[
+	A press of `key` ("Left" or "Right") at race time `t`. Advances the climber to `t` first.
+	Returns what happened: "climb", "same" (same hand twice), "fast" (too soon after the last
+	press), or "done" (already at the top).
+]]
+function Sim.press(climber, key: string, t: number): string
+	Sim.advance(climber, t)
+	if climber.FinishedAt then
+		return "done"
+	end
+	if key == climber.LastKey then
+		return "same"
+	end
+	local interval = t - climber.LastPressAt
+	if interval < Sim.MIN_PRESS_INTERVAL then
+		return "fast"
+	end
+
+	if interval > Sim.RHYTHM_WINDOW[2] then
+		climber.Streak = 0 -- lost the rhythm: start over
+	elseif
+		climber.LastInterval and math.abs(interval - climber.LastInterval) <= Sim.RHYTHM_TOLERANCE * climber.LastInterval
+	then
+		climber.Streak = math.min(climber.Streak + 1, Sim.STREAK_MAX)
+	else
+		climber.Streak = math.max(climber.Streak - 1, 0) -- uneven beat
+	end
+	local multiplier = Sim.BASE_MULTIPLIER + climber.Streak * Sim.STREAK_BONUS
+	climber.Pool = math.min(Sim.POOL_MAX, climber.Pool + Sim.CLIMB_PER_PRESS * multiplier)
+
+	climber.LastKey = key
+	climber.LastPressAt = t
+	climber.LastInterval = if interval <= Sim.RHYTHM_WINDOW[2] then interval else nil
+	return "climb"
+end
+
+return Sim
+]]></string>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="5">
+  <Item class="ServerScriptService" referent="6">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="6">
+    <Item class="Folder" referent="7">
       <Properties>
         <string name="Name">PartyServer</string>
       </Properties>
-      <Item class="ModuleScript" referent="7">
+      <Item class="ModuleScript" referent="8">
         <Properties>
           <string name="Name">Arena</string>
           <string name="Source"><![CDATA[--[[
@@ -686,7 +805,7 @@ return Arena
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="8">
+      <Item class="ModuleScript" referent="9">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -956,7 +1075,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -1018,7 +1137,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="10">
+      <Item class="Script" referent="11">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -1095,7 +1214,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -1226,7 +1345,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -1865,11 +1984,11 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="13">
+      <Item class="Folder" referent="14">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -2182,7 +2301,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="16">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -2678,7 +2797,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -3347,7 +3466,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -3857,7 +3976,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -4014,7 +4133,424 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
+          <Properties>
+            <string name="Name">PoleShimmy</string>
+            <string name="Source"><![CDATA[--[[
+	Pole Shimmy (FFA, race)
+	Four poles side by side. Alternate left and right (A / D, or the two on-screen buttons) to
+	shimmy up yours. Only alternating counts, a steady rhythm climbs faster, and pausing lets
+	your momentum fade. First to ring the bell wins; everyone else ranks by height.
+
+	Who decides what (so it is fair and smooth on a laggy connection):
+	  * The climbing rules live in PartyShared.PoleShimmySim, shared with the client.
+	  * Each player's client stamps every press with its own race clock and sends it here
+	    (client/Minigames/PoleShimmy). The server replays those presses through the rules and
+	    its result is the only one that counts: heights, finish times, placements.
+	    Using the client's timestamps means network jitter can't ruin your rhythm; the server
+	    still refuses timestamps from the future, out-of-order presses and too-fast tapping.
+	  * Bots press on the server's own clock.
+	  * ~20 times a second the server broadcasts every climber's height. Clients draw other
+	    climbers by interpolating between those, and their own climber from local prediction
+	    that is nudged back onto the server's numbers.
+
+	Climbing tuning is at the top of PartyShared.PoleShimmySim. Round, network, anti-cheat
+	and bot tuning is below.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local Sim = require(ReplicatedStorage.PartyShared.PoleShimmySim)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local PoleShimmy = {}
+
+-- Tuning ----------------------------------------------------------------------------------
+
+local ROUND_DURATION = 25
+local POLE_SPACING = 7 -- studs between neighbouring poles
+local POLE_RADIUS = 0.8
+local CLING_OFFSET = 1.6 -- how far in front of the pole (towards the camera) climbers hang
+
+-- Networking
+local SNAPSHOT_RATE = 20 -- height snapshots sent to clients per second
+local FALLBACK_PLACE_RATE = 2 -- times per second the server itself moves the bodies
+
+-- Anti-cheat
+local CLOCK_SLACK = 0.3 -- seconds a client's race clock may run ahead of the server's
+local MAX_PRESSES_PER_SECOND = 14 -- presses arriving faster than this (per player) are dropped
+local DEFAULT_DELAY = 0.3 -- assumed client delay until its first press tells us better
+local DELAY_MARGIN = 0.05 -- extra seconds the server waits so presses arrive before they're due
+local MAX_DELAY = 1.0 -- delays above this are treated as this (very laggy clients just lag)
+
+-- Bots: seconds between presses { sloppiest, sharpest }, wobble per press, stumbles
+local BOT_GAP = { 0.36, 0.21 }
+local BOT_WOBBLE = { 0.3, 0.06 } -- random +/- share of the gap on each press
+local BOT_STUMBLE_CHANCE = { 0.07, 0.015 } -- per press
+local BOT_STUMBLE_PAUSE = { 0.5, 1.3 } -- seconds a stumble costs (or a wasted same-hand press)
+
+PoleShimmy.Info = {
+	Name = "Pole Shimmy",
+	Description = "Alternate LEFT and RIGHT to shimmy up your pole! Keep a steady rhythm to climb faster. First to ring the bell wins 🔔",
+	Duration = ROUND_DURATION,
+	Layout = Config.Layouts.FFA,
+	Camera = { Mode = "SideView", Distance = 26, Height = 3, Smooth = 7, FollowY = true },
+	Controls = {
+		Move = false,
+		Jump = false,
+		Actions = {
+			{ Action = "Left", Label = "LEFT", Key = "A", Gamepad = "ButtonX", Side = "Left" },
+			{ Action = "Right", Label = "RIGHT", Key = "D", Gamepad = "ButtonB" },
+		},
+	},
+	ProgressLabel = "Height",
+	ClientModule = "PoleShimmy", -- client/Minigames/PoleShimmy: press timing + smooth drawing
+}
+
+local function lerp(range, alpha: number): number
+	return range[1] + (range[2] - range[1]) * alpha
+end
+
+-- Setup -----------------------------------------------------------------------------------
+
+function PoleShimmy:_part(properties)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Material = Enum.Material.SmoothPlastic
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	for key, value in properties do
+		part[key] = value
+	end
+	part.Parent = self.Arena.Folder
+	return part
+end
+
+-- Base CFrame of pole `index` (on the ground, facing the same way as the arena).
+function PoleShimmy:_poleBase(index: number): CFrame
+	local offset = (index - (#self.Participants + 1) / 2) * POLE_SPACING
+	return self.Arena.Origin * CFrame.new(offset, 0, 0)
+end
+
+function PoleShimmy:Setup(arena, participants, _round)
+	self.Connections = {}
+	self.Climbers = {}
+	self.Anchored = {}
+	self.FinishCount = 0
+	local top = Sim.POLE_HEIGHT
+
+	self:_part({
+		Name = "Ground",
+		Size = Vector3.new(POLE_SPACING * (#participants + 1), 1, 14),
+		CFrame = arena.Origin * CFrame.new(0, -0.5, 0),
+		Color = Color3.fromRGB(255, 170, 210),
+		CanCollide = true,
+	})
+
+	local colors = {
+		Color3.fromRGB(255, 220, 60),
+		Color3.fromRGB(255, 90, 140),
+		Color3.fromRGB(90, 220, 255),
+		Color3.fromRGB(120, 255, 140),
+	}
+	local spawns = {}
+	for index, participant in participants do
+		local base = self:_poleBase(index)
+		local color = colors[(index - 1) % #colors + 1]
+		self:_part({
+			Name = "Pole",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(top + 6, POLE_RADIUS * 2, POLE_RADIUS * 2),
+			CFrame = base * CFrame.new(0, (top + 6) / 2, 0) * CFrame.Angles(0, 0, math.rad(90)),
+			Material = Enum.Material.Metal,
+			Color = Color3.fromRGB(220, 225, 235),
+		})
+		-- Height marks every 10 studs, in the pole's colour.
+		for mark = 10, top - 1, 10 do
+			self:_part({
+				Name = "Mark",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(0.4, POLE_RADIUS * 2 + 0.3, POLE_RADIUS * 2 + 0.3),
+				CFrame = base * CFrame.new(0, mark + 3, 0) * CFrame.Angles(0, 0, math.rad(90)),
+				Material = Enum.Material.Neon,
+				Color = color,
+			})
+		end
+		self:_part({
+			Name = "Bell",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(2.6, 2.6, 2.6),
+			CFrame = base * CFrame.new(0, top + 7.5, 0),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(255, 215, 0),
+		})
+
+		self.Climbers[participant] = {
+			Sim = Sim.newClimber(),
+			Index = index,
+			IsBot = participant.IsBot,
+			RideHeight = 3.5,
+			-- Players: how far behind the server their race clock runs (measured from presses).
+			Delay = DEFAULT_DELAY,
+			DelaySamples = {},
+			LastPressT = -math.huge,
+			Arrivals = {},
+			Rejected = 0,
+			-- Bots
+			NextPressAt = nil,
+			NextKey = "Left",
+		}
+		spawns[index] = base * CFrame.new(0, 4, CLING_OFFSET)
+	end
+	return spawns
+end
+
+-- Climbing --------------------------------------------------------------------------------------
+
+function PoleShimmy:_heightText(climber): string
+	if climber.Sim.FinishedAt then
+		return ("🏁 %.1fs"):format(climber.Sim.FinishedAt)
+	end
+	return ("%d%%"):format(math.clamp(climber.Sim.Height / Sim.POLE_HEIGHT, 0, 0.99) * 100)
+end
+
+-- Race time this climber's state should be at right now.
+function PoleShimmy:_clockFor(climber): number
+	local elapsed = os.clock() - self.StartedAt
+	return if climber.IsBot then elapsed else math.max(0, elapsed - climber.Delay)
+end
+
+function PoleShimmy:_place(participant, climber)
+	local character = participant:GetCharacter()
+	if character then
+		character:PivotTo(
+			self:_poleBase(climber.Index) * CFrame.new(0, climber.RideHeight + climber.Sim.Height, CLING_OFFSET)
+		)
+	end
+end
+
+function PoleShimmy:_checkFinish(participant, climber)
+	if climber.Sim.FinishedAt and not climber.Finished then
+		climber.Finished = true
+		self.FinishCount += 1
+		self.Round:Toast(("🔔 %s rang the bell in %.1fs"):format(participant.Name, climber.Sim.FinishedAt))
+		self.Round:ReportProgress(participant, self:_heightText(climber))
+	end
+end
+
+-- A press from a player's client, stamped with that client's race clock.
+function PoleShimmy:_playerPress(participant, climber, key, t)
+	if (key ~= "Left" and key ~= "Right") or type(t) ~= "number" or t ~= t then
+		return
+	end
+	local elapsed = os.clock() - self.StartedAt
+	-- Rate limit by arrival: autoclickers and floods get dropped before anything else.
+	local now = os.clock()
+	local arrivals = climber.Arrivals
+	while arrivals[1] and now - arrivals[1] > 1 do
+		table.remove(arrivals, 1)
+	end
+	if #arrivals >= MAX_PRESSES_PER_SECOND then
+		climber.Rejected += 1
+		return
+	end
+	table.insert(arrivals, now)
+	-- No pressing in the future, and no rewriting the past.
+	if t > elapsed + CLOCK_SLACK or t < climber.LastPressT then
+		climber.Rejected += 1
+		return
+	end
+	climber.LastPressT = t
+
+	-- The server works this climber out a little behind real time, far enough back that
+	-- presses normally arrive *before* the moment they were pressed comes up (the slowest
+	-- recent arrival, plus a margin). Then every press lands at its own timestamp and the
+	-- server's numbers match what the player's own client predicted.
+	table.insert(climber.DelaySamples, elapsed - t)
+	if #climber.DelaySamples > 20 then
+		table.remove(climber.DelaySamples, 1)
+	end
+	local delay = 0
+	for _, sample in climber.DelaySamples do
+		delay = math.max(delay, sample)
+	end
+	climber.Delay = math.clamp(delay + DELAY_MARGIN, 0, MAX_DELAY)
+
+	-- A press can't land before the state we have already worked out (a late packet).
+	Sim.press(climber.Sim, key, math.max(t, climber.Sim.Time))
+	self:_checkFinish(participant, climber)
+end
+
+-- Bots: a press every so often, with wobble and the odd stumble.
+function PoleShimmy:_updateBot(participant, climber, elapsed: number)
+	local bot = participant.Bot
+	if climber.Sim.FinishedAt or not bot then
+		return
+	end
+	local skill = bot.Skill
+	local gap = lerp(BOT_GAP, skill)
+	if not climber.NextPressAt then
+		-- Everyone reacts to GO at a slightly different moment.
+		climber.NextPressAt = elapsed + 0.15 + math.random() * (0.5 - skill * 0.35)
+	end
+	if elapsed < climber.NextPressAt then
+		return
+	end
+	local key = climber.NextKey
+	if math.random() < lerp(BOT_STUMBLE_CHANCE, skill) then
+		-- Stumble: either a fumbled same-hand press, or a moment to regrip.
+		if math.random() < 0.5 then
+			key = if key == "Left" then "Right" else "Left"
+		end
+		climber.NextPressAt = elapsed + lerp(BOT_STUMBLE_PAUSE, math.random())
+	else
+		local wobble = lerp(BOT_WOBBLE, skill)
+		climber.NextPressAt = elapsed + gap * (1 + (math.random() * 2 - 1) * wobble)
+	end
+	climber.NextKey = if key == "Left" then "Right" else "Left"
+	bot:Input(key) -- same validated path as player inputs; arrives in OnInput
+end
+
+-- Interface -----------------------------------------------------------------------------
+
+function PoleShimmy:Start()
+	local round = self.Round
+	self.StartedAt = os.clock()
+	local nextSnapshot, nextPlace, nextReport = 0, 0, 0
+
+	local describe = {}
+	for _, participant in self.Participants do
+		local climber = self.Climbers[participant]
+		local character = participant:GetCharacter()
+		local root = participant:GetRoot()
+		if character and root then
+			local base = self:_poleBase(climber.Index)
+			climber.RideHeight = base:PointToObjectSpace(character:GetPivot().Position).Y
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.Anchored = true
+			table.insert(self.Anchored, root)
+		end
+		table.insert(describe, {
+			Id = participant.Id,
+			Character = character,
+			Base = self:_poleBase(climber.Index) * CFrame.new(0, 0, CLING_OFFSET),
+			RideHeight = climber.RideHeight,
+		})
+	end
+	Net.minigameRemote():FireAllClients({ Type = "Setup", Climbers = describe })
+	round:SetStatus("Alternate LEFT + RIGHT!")
+
+	table.insert(
+		self.Connections,
+		RunService.Heartbeat:Connect(function()
+			if round.Ended then
+				return
+			end
+			local clock = os.clock()
+			local elapsed = clock - self.StartedAt
+			for _, participant in round:GetAlive() do
+				local climber = self.Climbers[participant]
+				if climber.IsBot then
+					self:_updateBot(participant, climber, elapsed)
+				end
+				-- A player's climber waits for their first press, so that press (and the
+				-- delay it reveals) decides where their timeline starts.
+				if climber.IsBot or climber.LastPressT > -math.huge then
+					Sim.advance(climber.Sim, self:_clockFor(climber))
+				end
+				self:_checkFinish(participant, climber)
+			end
+
+			if clock >= nextSnapshot then
+				nextSnapshot = clock + 1 / SNAPSHOT_RATE
+				local list = {}
+				for _, participant in self.Participants do
+					local state = self.Climbers[participant].Sim
+					table.insert(list, { participant.Id, state.Height, state.Time, state.LastKey == "Left" })
+				end
+				Net.minigameFastRemote():FireAllClients({ T = clock, R = list })
+			end
+			if clock >= nextPlace then
+				nextPlace = clock + 1 / FALLBACK_PLACE_RATE
+				for _, participant in round:GetAlive() do
+					self:_place(participant, self.Climbers[participant])
+				end
+			end
+			if clock >= nextReport then
+				nextReport = clock + 0.1
+				for _, participant in self.Participants do
+					round:ReportProgress(participant, self:_heightText(self.Climbers[participant]))
+				end
+			end
+			if self.FinishCount >= #round:GetAlive() then
+				round:End("Finish")
+			end
+		end)
+	)
+end
+
+-- Bot presses (and a player's, if their client code isn't running) arrive here, on server time.
+function PoleShimmy:OnInput(participant, action)
+	local climber = self.Climbers[participant]
+	if not climber or (action ~= "Left" and action ~= "Right") then
+		return
+	end
+	if climber.IsBot then
+		Sim.press(climber.Sim, action, os.clock() - self.StartedAt)
+		self:_checkFinish(participant, climber)
+	else
+		self:_playerPress(participant, climber, action, self:_clockFor(climber))
+	end
+end
+
+-- Timestamped presses from client/Minigames/PoleShimmy.
+function PoleShimmy:OnClientMessage(participant, message)
+	local climber = self.Climbers[participant]
+	if climber and not climber.IsBot and type(message) == "table" and message.Type == "Press" then
+		self:_playerPress(participant, climber, message.Key, message.T)
+	end
+end
+
+function PoleShimmy:OnRoundEnding(_reason)
+	for _, participant in self.Participants do
+		local climber = self.Climbers[participant]
+		self:_place(participant, climber)
+		if climber.Rejected > 0 then
+			print(("[PoleShimmy] %s: %d press(es) rejected"):format(participant.Name, climber.Rejected))
+		end
+	end
+end
+
+function PoleShimmy:GetResults()
+	return ResultsUtil.fromScores(self.Participants, function(participant)
+		local state = self.Climbers[participant].Sim
+		-- Bell-ringers beat everyone still climbing; earlier = better.
+		return if state.FinishedAt then 1e6 - state.FinishedAt else state.Height
+	end)
+end
+
+function PoleShimmy:Cleanup()
+	for _, connection in self.Connections do
+		connection:Disconnect()
+	end
+	for _, root in self.Anchored do
+		if root.Parent then
+			root.Anchored = false
+		end
+	end
+end
+
+return PoleShimmy
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -4140,7 +4676,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="20">
+      <Item class="ModuleScript" referent="22">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -4284,7 +4820,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="21">
+      <Item class="ModuleScript" referent="23">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -4400,7 +4936,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="24">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -4527,19 +5063,19 @@ return RoundContext
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="23">
+  <Item class="StarterPlayer" referent="25">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="24">
+    <Item class="StarterPlayerScripts" referent="26">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="25">
+      <Item class="Folder" referent="27">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -4556,7 +5092,8 @@ return RoundContext
 	Modes (numbers come from Config.CameraModes, overridable per minigame):
 	  AngledOverhead  fixed angle over the arena centre, drifting toward you by `Follow`
 	  FollowBehind    chase cam behind your character
-	  SideView        side-scroller; tracks you along the arena's RightVector
+	  SideView        side-scroller; tracks you along the arena's RightVector (and up/down
+	                  too with FollowY = true)
 ]]
 
 local Players = game:GetService("Players")
@@ -4727,7 +5264,9 @@ local function sideView(dt: number): CFrame
 	local right = arenaOrigin.RightVector
 	local root = myRoot()
 	local along = if root then (root.Position - center):Dot(right) else 0
-	local point = smoothTowards(center + right * along, params.Smooth, dt)
+	-- FollowY = true also rises and falls with you (e.g. climbing); otherwise height is fixed.
+	local rise = if root and params.FollowY then root.Position.Y - center.Y else 0
+	local point = smoothTowards(center + right * along + Vector3.new(0, rise, 0), params.Smooth, dt)
 	-- Stand on the side the arena faces away from, so the arena's +RightVector is screen-right.
 	local eye = point - arenaOrigin.LookVector * params.Distance + Vector3.new(0, params.Height, 0)
 	return CFrame.lookAt(eye, point + Vector3.new(0, 2, 0))
@@ -4759,7 +5298,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -4870,7 +5409,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="28">
+        <Item class="LocalScript" referent="30">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -5179,11 +5718,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="29">
+        <Item class="Folder" referent="31">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="30">
+          <Item class="ModuleScript" referent="32">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -5468,12 +6007,267 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
+          <Item class="ModuleScript" referent="33">
+            <Properties>
+              <string name="Name">PoleShimmy</string>
+              <string name="Source"><![CDATA[--[[
+	Pole Shimmy (client side)
+	  * Stamps each LEFT / RIGHT press with this client's race clock and sends it to the server,
+	    which replays it through the shared rules (PartyShared.PoleShimmySim) and decides
+	    everything that counts.
+	  * Meanwhile runs the same rules locally so your climber moves on the very next frame,
+	    and nudges it back onto the server's heights whenever they disagree (a dropped press,
+	    say).
+	  * Draws everyone else a moment in the past, gliding between the server's snapshots.
+
+	Main starts and stops this module (Info.ClientModule = "PoleShimmy").
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("PartyShared")
+local Net = require(Shared:WaitForChild("Net"))
+local Sim = require(Shared:WaitForChild("PoleShimmySim"))
+
+local PoleShimmyClient = {}
+
+-- Tuning ----------------------------------------------------------------------------------
+
+local INTERPOLATION_DELAY = 0.15 -- seconds in the past other climbers are drawn
+local MAX_EXTRAPOLATION = 0.25 -- seconds to keep a climber moving when snapshots stop
+local CORRECTION_RATE = 0.5 -- share of a disagreement with the server fixed per snapshot ...
+local MAX_CORRECTION = 0.25 -- ... but never more than this many studs at once, so it can't jump
+local SWAY = 0.12 -- radians of side-to-side lean per hand
+local SNAPSHOT_HISTORY = 40
+local BIND_NAME = "PartyPoleShimmyClient"
+
+local myId = "player_" .. Players.LocalPlayer.UserId
+
+local running = false
+local connections = {}
+local bodies = {} -- [id] = { Character, Base, RideHeight }
+local mine = nil -- my climber (local prediction), nil if I'm only watching
+local raceTime = 0
+local history = {} -- my predicted { T = race time, H = height }, oldest first
+local snapshots = {} -- { T = server clock, R = { [id] = { H, Time, Left } } }
+local playback = nil
+local lastStepAt = 0
+
+local function place(body, height: number, leftHand: boolean?)
+	local character = body.Character
+	if character and character.Parent then
+		local sway = if leftHand == nil then 0 elseif leftHand then SWAY else -SWAY
+		character:PivotTo(body.Base * CFrame.new(0, body.RideHeight + height, 0) * CFrame.Angles(0, 0, sway))
+	end
+end
+
+-- Height of climber `id` at server time `t`, blending the snapshots around it.
+local function sample(id: string, t: number)
+	local before, after
+	for index = #snapshots, 1, -1 do
+		local snapshot = snapshots[index]
+		if snapshot.R[id] then
+			if snapshot.T <= t then
+				before = snapshot
+				break
+			end
+			after = snapshot
+		end
+	end
+	if before and after then
+		local a, b = before.R[id], after.R[id]
+		local alpha = (t - before.T) / math.max(after.T - before.T, 1e-3)
+		return a.H + (b.H - a.H) * alpha, if alpha < 0.5 then a.Left else b.Left
+	end
+	if before then
+		-- No newer news: keep going at the last known climbing speed for a moment.
+		local previous
+		for index = #snapshots, 1, -1 do
+			if snapshots[index] ~= before and snapshots[index].T < before.T and snapshots[index].R[id] then
+				previous = snapshots[index]
+				break
+			end
+		end
+		local state = before.R[id]
+		if previous then
+			local speed = (state.H - previous.R[id].H) / math.max(before.T - previous.T, 1e-3)
+			return math.min(Sim.POLE_HEIGHT, state.H + speed * math.min(t - before.T, MAX_EXTRAPOLATION)), state.Left
+		end
+		return state.H, state.Left
+	end
+	if after then
+		return after.R[id].H, after.R[id].Left
+	end
+	return nil
+end
+
+-- My predicted height at race time `t` (from the recent history).
+local function predictedAt(t: number): number?
+	for index = #history, 2, -1 do
+		local a, b = history[index - 1], history[index]
+		if a.T <= t and t <= b.T then
+			return a.H + (b.H - a.H) * (t - a.T) / math.max(b.T - a.T, 1e-4)
+		end
+	end
+	return nil
+end
+
+local function step(dt: number)
+	if not running or not next(bodies) then
+		return
+	end
+	dt = math.min(dt, 0.1)
+	lastStepAt = os.clock()
+
+	-- Everyone else: a steady clock trailing the newest snapshot.
+	local newest = snapshots[#snapshots]
+	if newest then
+		local target = newest.T - INTERPOLATION_DELAY
+		if not playback or math.abs(target - playback) > 0.5 then
+			playback = target
+		else
+			playback += dt
+			playback += (target - playback) * math.min(1, dt * 2)
+		end
+		for id, body in bodies do
+			if not (mine and id == myId) then
+				local height, leftHand = sample(id, playback)
+				if height then
+					place(body, height, leftHand)
+				end
+			end
+		end
+	end
+
+	-- Me: predicted right here.
+	if mine then
+		raceTime += dt
+		Sim.advance(mine, raceTime)
+		table.insert(history, { T = raceTime, H = mine.Height })
+		while history[1] and raceTime - history[1].T > 3 do
+			table.remove(history, 1)
+		end
+		local body = bodies[myId]
+		if body then
+			place(body, mine.Height, if mine.LastKey then mine.LastKey == "Left" else nil)
+		end
+	end
+end
+
+local function onSetup(message)
+	bodies = {}
+	mine = nil
+	for _, climber in message.Climbers do
+		bodies[climber.Id] = { Character = climber.Character, Base = climber.Base, RideHeight = climber.RideHeight }
+		if climber.Id == myId then
+			mine = Sim.newClimber()
+		end
+	end
+	raceTime = 0
+	history = {}
+end
+
+local function onSnapshot(message)
+	if type(message) ~= "table" or type(message.T) ~= "number" or type(message.R) ~= "table" then
+		return
+	end
+	local newest = snapshots[#snapshots]
+	if newest and message.T <= newest.T then
+		return -- out of order
+	end
+	local climbers = {}
+	for _, entry in message.R do
+		climbers[entry[1]] = { H = entry[2], Time = entry[3], Left = entry[4] }
+	end
+	table.insert(snapshots, { T = message.T, R = climbers })
+	if #snapshots > SNAPSHOT_HISTORY then
+		table.remove(snapshots, 1)
+	end
+
+	-- Keep my prediction honest: compare with what the server had for the same race time.
+	local official = mine and climbers[myId]
+	if official and not mine.FinishedAt then
+		local predicted = predictedAt(official.Time)
+		if predicted then
+			local error = official.H - predicted
+			if math.abs(error) > 0.05 then
+				local nudge = math.clamp(error * CORRECTION_RATE, -MAX_CORRECTION, MAX_CORRECTION)
+				mine.Height = math.clamp(mine.Height + nudge, 0, Sim.POLE_HEIGHT)
+			end
+		end
+	end
+end
+
+-- Interface (called by Main) -------------------------------------------------------------------
+
+function PoleShimmyClient.start()
+	PoleShimmyClient.stop()
+	running = true
+	bodies = {}
+	mine = nil
+	snapshots = {}
+	playback = nil
+	table.insert(
+		connections,
+		Net.minigameRemote().OnClientEvent:Connect(function(message)
+			if type(message) == "table" and message.Type == "Setup" then
+				onSetup(message)
+			end
+		end)
+	)
+	table.insert(connections, Net.minigameFastRemote().OnClientEvent:Connect(onSnapshot))
+	RunService:BindToRenderStep(BIND_NAME, Enum.RenderPriority.Camera.Value - 5, step)
+	-- Keep the clock running even while the window isn't being drawn.
+	table.insert(
+		connections,
+		RunService.Heartbeat:Connect(function(dt)
+			if os.clock() - lastStepAt > 0.25 then
+				step(dt)
+			end
+		end)
+	)
+end
+
+function PoleShimmyClient.stop()
+	if not running then
+		return
+	end
+	running = false
+	RunService:UnbindFromRenderStep(BIND_NAME)
+	for _, connection in connections do
+		connection:Disconnect()
+	end
+	table.clear(connections)
+	bodies = {}
+	mine = nil
+	snapshots = {}
+	history = {}
+end
+
+-- LEFT / RIGHT pressed. Returns true: handled here (sent with a timestamp below).
+function PoleShimmyClient.onAction(action: string): boolean
+	if action ~= "Left" and action ~= "Right" then
+		return false
+	end
+	if mine then
+		Sim.press(mine, action, raceTime)
+		Net.minigameRemote():FireServer({ Type = "Press", Key = action, T = raceTime })
+	end
+	return true
+end
+
+return PoleShimmyClient
+]]></string>
+            </Properties>
+          </Item>
         </Item>
-        <Item class="Folder" referent="31">
+        <Item class="Folder" referent="34">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="32">
+          <Item class="ModuleScript" referent="35">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -5621,7 +6415,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="33">
+          <Item class="ModuleScript" referent="36">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -5837,7 +6631,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="34">
+          <Item class="ModuleScript" referent="37">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -5984,7 +6778,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="35">
+          <Item class="ModuleScript" referent="38">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -6099,7 +6893,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="36">
+          <Item class="ModuleScript" referent="39">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -6236,7 +7030,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="37">
+          <Item class="ModuleScript" referent="40">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -6354,7 +7148,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="38">
+          <Item class="ModuleScript" referent="41">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -6443,7 +7237,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="39">
+          <Item class="ModuleScript" referent="42">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -6561,7 +7355,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="40">
+          <Item class="ModuleScript" referent="43">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -6738,18 +7532,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="41">
+  <Item class="Workspace" referent="44">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="42">
+    <Item class="Model" referent="45">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="43">
+      <Item class="Part" referent="46">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -6769,7 +7563,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="44">
+      <Item class="SpawnLocation" referent="47">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
