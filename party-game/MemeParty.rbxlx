@@ -218,8 +218,11 @@ return Config
 	  Slot    one equipped item per slot (Cosmetics.Slots)
 	  Price   coins at a shop space
 	  Rarity  "Common" | "Rare" | "Epic" (for the later visual pass)
+	  Visual  placeholder look, drawn by PartyServer.CosmeticService:
+	            { Kind = "Hat", Shape = "Block"|"Ball"|"Cylinder", Size = {x, y, z}, Color = {r, g, b} }
+	            { Kind = "Trail", Colors = { {r, g, b}, {r, g, b} } }
+	            { Kind = "Sparkles", Color = {r, g, b} }   (emotes: an aura until real emotes exist)
 
-	Placeholders: nothing is drawn on the character yet (see BACKLOG.md).
 	To add one, append an entry; shops and reward spaces pick it up automatically.
 ]]
 
@@ -228,13 +231,34 @@ local Cosmetics = {}
 Cosmetics.Slots = { "Hat", "Trail", "Emote" }
 
 Cosmetics.Items = {
-	{ Id = "hat_party", Name = "Party Hat", Slot = "Hat", Price = 6, Rarity = "Common" },
-	{ Id = "hat_crown_paper", Name = "Paper Crown", Slot = "Hat", Price = 10, Rarity = "Rare" },
-	{ Id = "hat_propeller", Name = "Propeller Cap", Slot = "Hat", Price = 14, Rarity = "Epic" },
-	{ Id = "trail_confetti", Name = "Confetti Trail", Slot = "Trail", Price = 8, Rarity = "Common" },
-	{ Id = "trail_rainbow", Name = "Rainbow Trail", Slot = "Trail", Price = 14, Rarity = "Epic" },
-	{ Id = "emote_wave", Name = "Big Wave", Slot = "Emote", Price = 5, Rarity = "Common" },
-	{ Id = "emote_spin", Name = "Victory Spin", Slot = "Emote", Price = 9, Rarity = "Rare" },
+	{
+		Id = "hat_party", Name = "Party Hat", Slot = "Hat", Price = 6, Rarity = "Common",
+		Visual = { Kind = "Hat", Shape = "Cylinder", Size = { 1.4, 1.1, 1.1 }, Color = { 255, 90, 160 } },
+	},
+	{
+		Id = "hat_crown_paper", Name = "Paper Crown", Slot = "Hat", Price = 10, Rarity = "Rare",
+		Visual = { Kind = "Hat", Shape = "Block", Size = { 1.5, 0.5, 1.5 }, Color = { 255, 210, 60 } },
+	},
+	{
+		Id = "hat_propeller", Name = "Propeller Cap", Slot = "Hat", Price = 14, Rarity = "Epic",
+		Visual = { Kind = "Hat", Shape = "Ball", Size = { 1.5, 1.5, 1.5 }, Color = { 80, 160, 255 } },
+	},
+	{
+		Id = "trail_confetti", Name = "Confetti Trail", Slot = "Trail", Price = 8, Rarity = "Common",
+		Visual = { Kind = "Trail", Colors = { { 255, 220, 60 }, { 255, 90, 160 } } },
+	},
+	{
+		Id = "trail_rainbow", Name = "Rainbow Trail", Slot = "Trail", Price = 14, Rarity = "Epic",
+		Visual = { Kind = "Trail", Colors = { { 255, 80, 80 }, { 80, 140, 255 } } },
+	},
+	{
+		Id = "emote_wave", Name = "Big Wave", Slot = "Emote", Price = 5, Rarity = "Common",
+		Visual = { Kind = "Sparkles", Color = { 120, 255, 140 } },
+	},
+	{
+		Id = "emote_spin", Name = "Victory Spin", Slot = "Emote", Price = 9, Rarity = "Rare",
+		Visual = { Kind = "Sparkles", Color = { 255, 215, 0 } },
+	},
 }
 
 local byId = {}
@@ -635,6 +659,7 @@ Net.Message = {
 	BoardLayout = "BoardLayout", -- the board's spaces (sent once per match and to late joiners)
 	BoardState = "BoardState", -- seats, coins, collectibles, whose turn, dice, moves left
 	Prompt = "Prompt", -- to one player: pick an option (fork, buy, shop); Prompt = nil closes it
+	Inventory = "Inventory", -- to one player: owned cosmetics, what's equipped, bank coins
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -645,6 +670,8 @@ Net.Input = {
 	Roll = "Roll", -- roll the die on your turn
 	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
 	UseItem = "UseItem", -- your turn, before rolling: payload.Slot = index into your items
+	Equip = "Equip", -- payload.ItemId: wear a cosmetic you own
+	Unequip = "Unequip", -- payload.Slot: take off whatever is in that slot
 	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
 	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }
@@ -3369,6 +3396,7 @@ local function respawn(bot, cframe: CFrame)
 		bot.Model:Destroy()
 	end
 	local model = buildBody(bot.Name)
+	model:SetAttribute("PartyId", bot.Id) -- CosmeticService finds the bot's cosmetics by this
 	model:PivotTo(cframe)
 	model.Parent = getFolder()
 
@@ -3637,17 +3665,262 @@ return CoinService
       </Item>
       <Item class="ModuleScript" referent="23">
         <Properties>
+          <string name="Name">CosmeticService</string>
+          <string name="Source"><![CDATA[--[[
+	CosmeticService
+	Makes equipped cosmetics (Inventory) visible on characters, players and bots alike, and
+	handles equip / unequip requests from clients.
+
+	Drawing is self-healing: every REFRESH_INTERVAL it compares each character's drawn
+	cosmetics with what its owner has equipped and redraws on any difference. That covers
+	respawns, resets, board <-> minigame teleports, bot respawns and bot takeovers without
+	hooking each one. Placeholder looks come from Cosmetics.Items[].Visual.
+
+	Clients can only ask; requestEquip checks ownership through Inventory.equip.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
+local Net = require(ReplicatedStorage.PartyShared.Net)
+local Inventory = require(script.Parent.Inventory)
+
+local CosmeticService = {}
+
+local REFRESH_INTERVAL = 0.5
+local TAG = "PartyCosmetic" -- name prefix of everything we add to a character
+local KEY_ATTRIBUTE = "PartyCosmeticKey"
+
+local sendToPlayer: ((Player, any) -> ())? = nil
+local bankCoinsOf: ((Player) -> number)? = nil
+
+local function color(rgb): Color3
+	return Color3.fromRGB(rgb[1], rgb[2], rgb[3])
+end
+
+-- Stable text describing an equipped set, e.g. "Hat=hat_party;Trail=trail_rainbow".
+function CosmeticService.keyOf(equipped): string
+	local parts = {}
+	for _, slot in Cosmetics.Slots do
+		if equipped[slot] then
+			table.insert(parts, slot .. "=" .. equipped[slot])
+		end
+	end
+	return table.concat(parts, ";")
+end
+
+local function clear(character: Model)
+	for _, descendant in character:GetDescendants() do
+		if string.sub(descendant.Name, 1, #TAG) == TAG then
+			descendant:Destroy()
+		end
+	end
+end
+
+local function drawHat(character: Model, visual)
+	local head = character:FindFirstChild("Head") :: BasePart?
+	if not head then
+		return
+	end
+	local size = Vector3.new(visual.Size[1], visual.Size[2], visual.Size[3])
+	local hat = Instance.new("Part")
+	hat.Name = TAG .. "_Hat"
+	hat.Shape = Enum.PartType[visual.Shape] or Enum.PartType.Block
+	hat.Size = size
+	hat.Color = color(visual.Color)
+	hat.Material = Enum.Material.SmoothPlastic
+	hat.CanCollide = false
+	hat.CanQuery = false
+	hat.CanTouch = false
+	hat.Massless = true
+	-- Cylinders run along X: stand them up.
+	local height = if hat.Shape == Enum.PartType.Cylinder then size.X else size.Y
+	local tilt = if hat.Shape == Enum.PartType.Cylinder then CFrame.Angles(0, 0, math.pi / 2) else CFrame.identity
+	hat.CFrame = head.CFrame * CFrame.new(0, head.Size.Y / 2 + height / 2 - 0.1, 0) * tilt
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = head
+	weld.Part1 = hat
+	weld.Parent = hat
+	hat.Parent = character
+end
+
+local function drawTrail(character: Model, visual)
+	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+	local top = Instance.new("Attachment")
+	top.Name = TAG .. "_TrailTop"
+	top.Position = Vector3.new(0, 0.8, 0)
+	top.Parent = root
+	local bottom = Instance.new("Attachment")
+	bottom.Name = TAG .. "_TrailBottom"
+	bottom.Position = Vector3.new(0, -0.8, 0)
+	bottom.Parent = root
+	local trail = Instance.new("Trail")
+	trail.Name = TAG .. "_Trail"
+	trail.Attachment0 = top
+	trail.Attachment1 = bottom
+	trail.Lifetime = 0.45
+	trail.Color = ColorSequence.new(color(visual.Colors[1]), color(visual.Colors[2]))
+	trail.Transparency = NumberSequence.new(0.2, 1)
+	trail.Parent = root
+end
+
+local function drawSparkles(character: Model, visual)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return
+	end
+	local sparkles = Instance.new("Sparkles")
+	sparkles.Name = TAG .. "_Sparkles"
+	sparkles.SparkleColor = color(visual.Color)
+	sparkles.Parent = root
+end
+
+local drawers = { Hat = drawHat, Trail = drawTrail, Sparkles = drawSparkles }
+
+-- Redraws a character's cosmetics to match `equipped` ({ [slot] = itemId }).
+function CosmeticService.apply(character: Model, equipped)
+	clear(character)
+	for _, slot in Cosmetics.Slots do
+		local item = equipped[slot] and Cosmetics.get(equipped[slot])
+		local draw = item and item.Visual and drawers[item.Visual.Kind]
+		if draw then
+			draw(character, item.Visual)
+		end
+	end
+	character:SetAttribute(KEY_ATTRIBUTE, CosmeticService.keyOf(equipped))
+end
+
+local function refresh(character: Model?, ownerId: string)
+	if not character or not character.Parent or not character:FindFirstChild("Head") then
+		return
+	end
+	local equipped = Inventory.getEquipped(ownerId)
+	if character:GetAttribute(KEY_ATTRIBUTE) ~= CosmeticService.keyOf(equipped) then
+		CosmeticService.apply(character, equipped)
+	end
+end
+
+function CosmeticService.refreshAll()
+	for _, player in Players:GetPlayers() do
+		refresh(player.Character, "player_" .. player.UserId)
+	end
+	local bots = Workspace:FindFirstChild("PartyBots")
+	for _, model in if bots then bots:GetChildren() else {} do
+		local id = model:GetAttribute("PartyId")
+		if model:IsA("Model") and type(id) == "string" then
+			refresh(model, id)
+		end
+	end
+end
+
+-- Equip requests -----------------------------------------------------------------------------
+
+-- Equip an owned cosmetic. Anything unowned or unknown is refused (returns false).
+function CosmeticService.requestEquip(ownerId: string, itemId): boolean
+	if type(itemId) ~= "string" then
+		return false
+	end
+	return Inventory.equip(ownerId, itemId)
+end
+
+function CosmeticService.requestUnequip(ownerId: string, slot): boolean
+	if type(slot) ~= "string" or not table.find(Cosmetics.Slots, slot) then
+		return false
+	end
+	Inventory.unequip(ownerId, slot)
+	return true
+end
+
+-- What a player's client needs for the wardrobe.
+function CosmeticService.inventoryMessage(player: Player)
+	local ownerId = "player_" .. player.UserId
+	local owned = {}
+	for _, itemId in Inventory.getOwned(ownerId) do
+		local item = Cosmetics.get(itemId)
+		if item then
+			table.insert(owned, { Id = item.Id, Name = item.Name, Slot = item.Slot })
+		end
+	end
+	return {
+		Type = Net.Message.Inventory,
+		Owned = owned,
+		Equipped = Inventory.getEquipped(ownerId),
+		BankCoins = if bankCoinsOf then bankCoinsOf(player) else 0,
+	}
+end
+
+function CosmeticService.sendInventory(player: Player)
+	if sendToPlayer and player.Parent then
+		sendToPlayer(player, CosmeticService.inventoryMessage(player))
+	end
+end
+
+function CosmeticService.handleInput(player: Player, payload): boolean
+	local ownerId = "player_" .. player.UserId
+	if payload.Kind == Net.Input.Equip then
+		CosmeticService.requestEquip(ownerId, payload.ItemId)
+	elseif payload.Kind == Net.Input.Unequip then
+		CosmeticService.requestUnequip(ownerId, payload.Slot)
+	else
+		return false
+	end
+	CosmeticService.sendInventory(player) -- also corrects a client that guessed wrong
+	return true
+end
+
+--[[
+	Starts the redraw loop and wires messages. send(player, message) delivers to one client;
+	getBankCoins(player) -> number shows permanent coins in the wardrobe (Profiles).
+]]
+function CosmeticService.start(send: (Player, any) -> (), getBankCoins: ((Player) -> number)?)
+	sendToPlayer = send
+	bankCoinsOf = getBankCoins
+	Inventory.onChanged(function(ownerId)
+		local userId = tonumber(string.match(ownerId, "^player_(%d+)$"))
+		local player = userId and Players:GetPlayerByUserId(userId)
+		if player then
+			CosmeticService.sendInventory(player)
+		end
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		Inventory.forget("player_" .. player.UserId)
+	end)
+	task.spawn(function()
+		while true do
+			local ok, err = pcall(CosmeticService.refreshAll)
+			if not ok then
+				warn("[CosmeticService] " .. tostring(err))
+			end
+			task.wait(REFRESH_INTERVAL)
+		end
+	end)
+end
+
+return CosmeticService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="24">
+        <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
 	Inventory
 	Who owns which cosmetic (PartyShared.Cosmetics) and what each owner has equipped.
 	Server-authoritative; owners are participant Ids ("player_123", "bot_4").
 
-	Session only: real players keep their items across matches until they leave the
-	server; bots lose theirs at the end of every match (resetBots). No saving yet.
+	Players' records are their permanent profile tables (Profiles attaches them on join), so
+	what they own and wear is saved with the profile. Bots get plain records that are wiped
+	at the end of every match (resetBots).
+
+	Inventory.onChanged(fn(ownerId)) fires after anything changes (CosmeticService redraws
+	characters and tells the owner's client).
 ]]
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
@@ -3655,6 +3928,7 @@ local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
 local Inventory = {}
 
 local owners: { [string]: { Owned: { [string]: boolean }, Equipped: { [string]: string } } } = {}
+local listeners: { (string) -> () } = {}
 
 local function entry(ownerId: string)
 	local record = owners[ownerId]
@@ -3663,6 +3937,23 @@ local function entry(ownerId: string)
 		owners[ownerId] = record
 	end
 	return record
+end
+
+local function changed(ownerId: string)
+	for _, listener in listeners do
+		task.spawn(listener, ownerId)
+	end
+end
+
+function Inventory.onChanged(fn: (string) -> ())
+	table.insert(listeners, fn)
+end
+
+-- Uses `owned` / `equipped` (a player's profile tables) as this owner's record, so every
+-- change lands straight in the profile.
+function Inventory.attach(ownerId: string, owned: { [string]: boolean }, equipped: { [string]: string })
+	owners[ownerId] = { Owned = owned, Equipped = equipped }
+	changed(ownerId)
 end
 
 function Inventory.owns(ownerId: string, itemId: string): boolean
@@ -3676,6 +3967,7 @@ function Inventory.grant(ownerId: string, itemId: string): boolean
 		return false
 	end
 	entry(ownerId).Owned[itemId] = true
+	changed(ownerId)
 	return true
 end
 
@@ -3686,13 +3978,15 @@ function Inventory.equip(ownerId: string, itemId: string): boolean
 		return false
 	end
 	entry(ownerId).Equipped[item.Slot] = itemId
+	changed(ownerId)
 	return true
 end
 
 function Inventory.unequip(ownerId: string, slot: string)
 	local record = owners[ownerId]
-	if record then
+	if record and record.Equipped[slot] then
 		record.Equipped[slot] = nil
+		changed(ownerId)
 	end
 end
 
@@ -3732,19 +4026,16 @@ function Inventory.resetBots()
 	for ownerId in owners do
 		if string.sub(ownerId, 1, 4) == "bot_" then
 			owners[ownerId] = nil
+			changed(ownerId)
 		end
 	end
 end
-
-Players.PlayerRemoving:Connect(function(player)
-	Inventory.forget("player_" .. player.UserId)
-end)
 
 return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="24">
+      <Item class="Script" referent="25">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -3762,14 +4053,19 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local Arena = require(script.Parent.Arena)
 local BoardGame = require(script.Parent.Board.BoardGame)
 local BotService = require(script.Parent.BotService)
+local CosmeticService = require(script.Parent.CosmeticService)
 local MinigameManager = require(script.Parent.MinigameManager)
 local Participant = require(script.Parent.Participant)
 local WaitingRoom = require(script.Parent.WaitingRoom)
 
 Arena.ensureLobby()
 MinigameManager.init()
+CosmeticService.start(MinigameManager.sendTo)
+MinigameManager.onReady(CosmeticService.sendInventory)
 MinigameManager.setInputHandler(function(player, payload)
-	return WaitingRoom.handleInput(player, payload) or BoardGame.handleInput(player, payload)
+	return WaitingRoom.handleInput(player, payload)
+		or BoardGame.handleInput(player, payload)
+		or CosmeticService.handleInput(player, payload)
 end)
 
 -- First come, first seated: track join order so seats are fair when >4 players are on.
@@ -3833,7 +4129,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="25">
+      <Item class="ModuleScript" referent="26">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -3964,7 +4260,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="26">
+      <Item class="ModuleScript" referent="27">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -4629,11 +4925,11 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="27">
+      <Item class="Folder" referent="28">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="29">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -4946,7 +5242,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="30">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -5442,7 +5738,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -6115,7 +6411,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -6625,7 +6921,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -6782,7 +7078,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -7199,7 +7495,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -7325,7 +7621,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="35">
+      <Item class="ModuleScript" referent="36">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -7469,7 +7765,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="36">
+      <Item class="ModuleScript" referent="37">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -7585,7 +7881,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="37">
+      <Item class="ModuleScript" referent="38">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -7710,7 +8006,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="38">
+      <Item class="ModuleScript" referent="39">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -7814,19 +8110,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="39">
+  <Item class="StarterPlayer" referent="40">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="40">
+    <Item class="StarterPlayerScripts" referent="41">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="41">
+      <Item class="Folder" referent="42">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -8049,7 +8345,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -8160,7 +8456,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="44">
+        <Item class="LocalScript" referent="45">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -8513,6 +8809,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 		boardView:setState(message)
 	elseif message.Type == Net.Message.Prompt then
 		boardView:showPrompt(message)
+	elseif message.Type == Net.Message.Inventory then
+		lobbyPanel:setInventory(message)
 	end
 end)
 
@@ -8529,11 +8827,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="45">
+        <Item class="Folder" referent="46">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="46">
+          <Item class="ModuleScript" referent="47">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -8818,7 +9116,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="47">
+          <Item class="ModuleScript" referent="48">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -9074,11 +9372,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="48">
+        <Item class="Folder" referent="49">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="49">
+          <Item class="ModuleScript" referent="50">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -9226,7 +9524,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="50">
+          <Item class="ModuleScript" referent="51">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -9683,7 +9981,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="51">
+          <Item class="ModuleScript" referent="52">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -9908,7 +10206,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="52">
+          <Item class="ModuleScript" referent="53">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -10055,14 +10353,15 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="53">
+          <Item class="ModuleScript" referent="54">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
 	LobbyPanel
 	Waiting-room card (bottom centre, so the lobby stays visible): countdown, players
 	seated, and the match settings. The host can change settings and start early; everyone
-	else just sees them. The server checks every change.
+	else just sees them. Below that, a wardrobe row: tap a cosmetic you own to wear it, tap
+	again to take it off. The server checks every change.
 ]]
 
 local Players = game:GetService("Players")
@@ -10075,13 +10374,13 @@ local LobbyPanel = {}
 LobbyPanel.__index = LobbyPanel
 
 function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
-	local self = setmetatable({ Send = send, EndsAt = nil }, LobbyPanel)
+	local self = setmetatable({ Send = send, EndsAt = nil, Inventory = nil, LastMessage = nil }, LobbyPanel)
 
 	self.Root = make("Frame", {
 		Name = "WaitingRoom",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.fromOffset(640, 196),
+		Size = UDim2.fromOffset(640, 256),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.05,
 		Visible = false,
@@ -10137,6 +10436,77 @@ function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
 	return self
 end
 
+-- Owned cosmetics as toggles; the server confirms with a fresh Inventory message.
+local function wardrobeRow(self, order: number)
+	local inventory = self.Inventory or { Owned = {}, Equipped = {} }
+	local row = make("Frame", {
+		LayoutOrder = order,
+		Size = UDim2.new(1, 0, 0, 52),
+		BackgroundTransparency = 1,
+		Parent = self.SettingRows,
+	})
+	Theme.label({
+		Size = UDim2.new(0.28, 0, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "Wear",
+		Parent = row,
+	}, 22)
+	local buttons = make("ScrollingFrame", {
+		Position = UDim2.fromScale(0.28, 0),
+		Size = UDim2.fromScale(0.72, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollingDirection = Enum.ScrollingDirection.X,
+		AutomaticCanvasSize = Enum.AutomaticSize.X,
+		CanvasSize = UDim2.new(),
+		Parent = row,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	if #inventory.Owned == 0 then
+		Theme.label({
+			Size = UDim2.new(1, 0, 1, 0),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = Theme.Colors.Muted,
+			Text = "Win cosmetics at Shop and Gift spaces",
+			Parent = buttons,
+		}, 18)
+		return
+	end
+	for index, item in inventory.Owned do
+		local worn = inventory.Equipped[item.Slot] == item.Id
+		local button = make("TextButton", {
+			LayoutOrder = index,
+			Size = UDim2.new(0, 120, 1, -6),
+			BackgroundColor3 = if worn then Theme.Colors.Good else Theme.Colors.CardLight,
+			Font = Theme.BodyFont,
+			TextScaled = true,
+			TextColor3 = if worn then Theme.Colors.Overlay else Theme.Colors.Text,
+			Text = item.Name,
+			Parent = buttons,
+		}, { Theme.corner(12), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 20 }) })
+		button.Activated:Connect(function()
+			if worn then
+				self.Send({ Kind = "Unequip", Slot = item.Slot })
+			else
+				self.Send({ Kind = "Equip", ItemId = item.Id })
+			end
+		end)
+	end
+end
+
+function LobbyPanel:setInventory(message)
+	self.Inventory = message
+	if self.Root.Visible and self.LastMessage then
+		self:show(self.LastMessage)
+	end
+end
+
 local function settingRow(self, order: number, label: string, key: string, choices, selected, isHost: boolean)
 	local row = make("Frame", {
 		LayoutOrder = order,
@@ -10186,14 +10556,16 @@ end
 
 function LobbyPanel:show(message)
 	local isHost = message.HostId == Players.LocalPlayer.UserId
+	self.LastMessage = message
 	self.EndsAt = message.EndsAt
-	self.Info.Text = ("%d / %d players  ·  bots fill empty seats  ·  %s"):format(
+	self.Info.Text = ("%d / %d players  ·  bots fill empty seats  ·  %s  ·  bank: %d coins"):format(
 		message.PlayerCount or 1,
 		message.Seats or 4,
-		if isHost then "you're the host" else ("host: %s"):format(message.HostName or "?")
+		if isHost then "you're the host" else ("host: %s"):format(message.HostName or "?"),
+		self.Inventory and self.Inventory.BankCoins or 0
 	)
 	for _, child in self.SettingRows:GetChildren() do
-		if child:IsA("Frame") then
+		if child:IsA("GuiObject") then
 			child:Destroy()
 		end
 	end
@@ -10201,6 +10573,7 @@ function LobbyPanel:show(message)
 	local choices = message.Choices or {}
 	settingRow(self, 1, "Rounds", "Rounds", choices.Rounds or {}, settings.Rounds, isHost)
 	settingRow(self, 2, "Bots", "Difficulty", choices.Difficulty or {}, settings.Difficulty, isHost)
+	wardrobeRow(self, 3)
 	self.StartButton.Visible = isHost
 	if not self.Root.Visible then
 		self.Root.Visible = true
@@ -10222,7 +10595,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="55">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -10337,7 +10710,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -10474,7 +10847,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -10592,7 +10965,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -10681,7 +11054,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -10852,7 +11225,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -10970,7 +11343,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11147,18 +11520,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="61">
+  <Item class="Workspace" referent="62">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="62">
+    <Item class="Model" referent="63">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="63">
+      <Item class="Part" referent="64">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -11178,7 +11551,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="64">
+      <Item class="SpawnLocation" referent="65">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
