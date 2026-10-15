@@ -143,7 +143,7 @@ function StandingsScreen:show(message, myId: string)
 			Size = UDim2.fromScale(0.22, 1),
 			Font = Theme.TitleFont,
 			TextColor3 = Theme.Colors.Accent,
-			Text = ("%d %s"):format(row.Collectibles, plural),
+			Text = if message.Mode == "Minigames" then "" else ("%d %s"):format(row.Collectibles, plural),
 			Parent = frame,
 		}, 26)
 		Theme.label({

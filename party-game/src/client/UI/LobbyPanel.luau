@@ -22,7 +22,7 @@ function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
 		Name = "WaitingRoom",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.fromOffset(640, 256),
+		Size = UDim2.fromOffset(640, 316),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.05,
 		Visible = false,
@@ -213,9 +213,13 @@ function LobbyPanel:show(message)
 	end
 	local settings = message.Settings or {}
 	local choices = message.Choices or {}
+	settingRow(self, 0, "Mode", "Mode", choices.Mode or {}, settings.Mode, isHost)
 	settingRow(self, 1, "Rounds", "Rounds", choices.Rounds or {}, settings.Rounds, isHost)
 	settingRow(self, 2, "Bots", "Difficulty", choices.Difficulty or {}, settings.Difficulty, isHost)
-	wardrobeRow(self, 3)
+	if choices.Board and #choices.Board > 1 and settings.Mode == "Board" then
+		settingRow(self, 3, "Board", "Board", choices.Board, settings.Board, isHost)
+	end
+	wardrobeRow(self, 4)
 	self.StartButton.Visible = isHost
 	if not self.Root.Visible then
 		self.Root.Visible = true

@@ -1,8 +1,9 @@
 --[[
 	Main (server entry point)
 	The match loop: waiting room (host picks settings) -> seat 4 participants (real players
-	first, bots fill the rest) -> BoardGame.play (board turns + a minigame every round ->
-	final standings) -> back to the waiting room.
+	first, bots fill the rest) -> the chosen mode -> back to the waiting room.
+	  Board mode       BoardGame.play (board turns + a minigame every round -> bonuses -> standings)
+	  Minigames mode   MinigameMode.play (back-to-back minigames, most coins wins)
 ]]
 
 local Players = game:GetService("Players")
@@ -14,6 +15,7 @@ local BoardGame = require(script.Parent.Board.BoardGame)
 local BotService = require(script.Parent.BotService)
 local CosmeticService = require(script.Parent.CosmeticService)
 local MinigameManager = require(script.Parent.MinigameManager)
+local MinigameMode = require(script.Parent.MinigameMode)
 local Participant = require(script.Parent.Participant)
 local Profiles = require(script.Parent.Profiles)
 local WaitingRoom = require(script.Parent.WaitingRoom)
@@ -80,7 +82,8 @@ while true do
 	BotService.setSkillRange(Config.Match.BotDifficulties[settings.Difficulty])
 
 	local participants = buildParticipants()
-	local ok, err = xpcall(BoardGame.play, debug.traceback, participants, settings)
+	local play = if settings.Mode == "Minigames" then MinigameMode.play else BoardGame.play
+	local ok, err = xpcall(play, debug.traceback, participants, settings)
 	if not ok then
 		warn("[Party] Match crashed, returning to the waiting room:\n" .. tostring(err))
 		MinigameManager.abort("Match crashed, back to the lobby!")

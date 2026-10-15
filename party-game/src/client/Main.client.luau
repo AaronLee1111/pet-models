@@ -117,6 +117,8 @@ local HUD_STRIPS = {
 	"WaitingRoom",
 }
 local HUD_DESIGN_HEIGHT = 720
+-- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
+local HUD_MIN_SCALE = { WaitingRoom = 0.85 }
 local hudBasePositions = {}
 
 local function fitHudToScreen()
@@ -124,9 +126,10 @@ local function fitHudToScreen()
 	if not camera then
 		return
 	end
-	local scale = math.clamp(camera.ViewportSize.Y / HUD_DESIGN_HEIGHT, 0.55, 1)
+	local baseScale = math.clamp(camera.ViewportSize.Y / HUD_DESIGN_HEIGHT, 0.55, 1)
 	for _, name in HUD_STRIPS do
 		local strip = screen:FindFirstChild(name)
+		local scale = math.max(baseScale, HUD_MIN_SCALE[name] or 0)
 		if strip and strip:IsA("GuiObject") then
 			local base = hudBasePositions[name] or strip.Position
 			hudBasePositions[name] = base

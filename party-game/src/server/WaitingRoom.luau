@@ -4,8 +4,9 @@
 	the server) pick the match settings or start early. Empty seats are filled with bots
 	when the match starts, so one player is enough.
 
-	  WaitingRoom.run(getHost) -> settings { Rounds, Difficulty, Board } (yields)
+	  WaitingRoom.run(getHost) -> settings { Mode, Rounds, Difficulty, Board } (yields)
 	  WaitingRoom.handleInput(player, payload) -> true if it was a waiting-room input
+	  WaitingRoom.applySetting(key, value) -> true if it was a legal choice (and applied it)
 ]]
 
 local Players = game:GetService("Players")
@@ -20,10 +21,21 @@ local WaitingRoom = {}
 
 -- Kept between matches, so the host doesn't have to pick again.
 local settings = {
+	Mode = Config.Match.Mode,
 	Rounds = Config.Match.BoardRounds,
 	Difficulty = Config.Match.BotDifficulty,
 	Board = Config.Match.Board,
 }
+
+-- Every setting the host can change, and its legal values.
+local function choices()
+	return {
+		Mode = Config.Match.Modes,
+		Rounds = Config.Match.BoardRoundChoices,
+		Difficulty = Config.Match.BotDifficultyOrder,
+		Board = Config.Match.Boards,
+	}
+end
 
 local open = false
 local changed = false
@@ -37,10 +49,7 @@ local function publish(endsAt: number)
 		EndsAt = endsAt,
 		WaitingRoom = true,
 		Settings = table.clone(settings),
-		Choices = {
-			Rounds = Config.Match.BoardRoundChoices,
-			Difficulty = Config.Match.BotDifficultyOrder,
-		},
+		Choices = choices(),
 		HostId = host and host.UserId,
 		HostName = host and host.DisplayName,
 		PlayerCount = math.min(#Players:GetPlayers(), Config.PlayersPerMatch),
@@ -83,13 +92,18 @@ function WaitingRoom.handleInput(player: Player, payload): boolean
 	end
 	if kind == Net.Input.StartMatch then
 		startNow = true
-	elseif payload.Key == "Rounds" and table.find(Config.Match.BoardRoundChoices, payload.Value) then
-		settings.Rounds = payload.Value
-		changed = true
-	elseif payload.Key == "Difficulty" and table.find(Config.Match.BotDifficultyOrder, payload.Value) then
-		settings.Difficulty = payload.Value
+	elseif WaitingRoom.applySetting(payload.Key, payload.Value) then
 		changed = true
 	end
+	return true
+end
+
+function WaitingRoom.applySetting(key, value): boolean
+	local legal = type(key) == "string" and choices()[key]
+	if not legal or not table.find(legal, value) then
+		return false
+	end
+	settings[key] = value
 	return true
 end
 

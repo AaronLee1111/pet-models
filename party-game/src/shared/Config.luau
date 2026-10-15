@@ -47,7 +47,11 @@ Config.Match = {
 		Hard = { 0.75, 1 },
 	},
 	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
-	Board = "Classic", -- module name in PartyServer/Board/Boards
+	Board = "Classic", -- default board: module name in PartyServer/Board/Boards
+	Boards = { "Classic" }, -- boards the host can pick (in this order)
+	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
+	Mode = "Board",
+	Modes = { "Board", "Minigames" },
 	WaitingRoomDuration = 15, -- seconds the waiting room counts down before a match
 	StandingsDuration = 10, -- final standings screen
 	PreBonusDuration = 5, -- standings before the bonus awards
