@@ -334,7 +334,7 @@ local function onParticipantLost(participant, reason: string)
 	end
 	active.Round:Eliminate(participant, true)
 	active.Round:Toast(
-		if reason == "Left" then ("👋 %s rage quit"):format(participant.Name) else ("💀 %s got bonked"):format(participant.Name)
+		if reason == "Left" then ("👋 %s left the game"):format(participant.Name) else ("💥 %s is out"):format(participant.Name)
 	)
 	safeCall(active.Instance, "OnParticipantLost", participant, reason)
 end

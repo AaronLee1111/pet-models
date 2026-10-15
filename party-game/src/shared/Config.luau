@@ -71,16 +71,16 @@ Config.ChipFlushInterval = 0.15
 Config.BotThinkInterval = 0.2 -- how often each bot's brain runs
 Config.BotVoteDelay = { 1.5, 5 } -- bots "think" about their vote for this long (min, max)
 Config.BotNames = {
-	"Doge",
-	"Big Chungus",
-	"Stonks",
-	"Sus Bean",
-	"Nyan",
-	"Shrek",
-	"Grumpy",
-	"Bonk",
-	"Pepe Jr",
-	"Rickroll",
+	"Pip",
+	"Mochi",
+	"Ziggy",
+	"Nova",
+	"Biscuit",
+	"Pebble",
+	"Juniper",
+	"Comet",
+	"Waffles",
+	"Maple",
 }
 
 -- Networking -------------------------------------------------------------------
@@ -92,7 +92,7 @@ Config.MinigameMessageRateLimit = 40 -- same, for messages a minigame's own clie
 Config.RandomChoice = {
 	Id = "__random",
 	Name = "🎲 Surprise Me",
-	Description = "Can't decide? Let chaos pick for you.",
+	Description = "Can't decide? Let the game pick one at random.",
 	Layout = "???",
 }
 

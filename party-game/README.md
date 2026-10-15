@@ -1,4 +1,4 @@
-# Meme Party — minigame framework
+# Party Games (working title)
 
 A 4-player party-game prototype for Roblox: lobby vote → arena → 3-2-1 → minigame →
 results and coins → back to the lobby. Bots fill any empty seats. The server owns all game

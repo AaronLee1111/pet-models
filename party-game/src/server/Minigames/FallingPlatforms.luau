@@ -16,7 +16,7 @@ local FallingPlatforms = {}
 
 FallingPlatforms.Info = {
 	Name = "Falling Platforms",
-	Description = "The floor is lava's lazy cousin: tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
+	Description = "Tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
 	Duration = 75,
 	Layout = Config.Layouts.FFA,
 	Camera = { Mode = "FollowBehind" },

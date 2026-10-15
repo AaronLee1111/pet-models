@@ -182,7 +182,7 @@ function KernelCatch:_hitByRock(participant, position: Vector3)
 	self.StunnedUntil[participant] = stunEnds + STUN_IMMUNITY
 	self:_setScore(participant, math.max(0, self.Score[participant] - ROCK_PENALTY))
 	participant:SetMovement(0, false)
-	self.Round:Toast(("💥 %s got bonked!"):format(participant.Name))
+	self.Round:Toast(("💥 %s got hit by a rock!"):format(participant.Name))
 
 	-- Hit effect: a puff at the impact point and a red flash on the victim while stunned.
 	local burst = Instance.new("Explosion")

@@ -17,7 +17,7 @@ local MashDash = {}
 
 MashDash.Info = {
 	Name = "Mash Dash",
-	Description = "Mash to run! First one over the finish line wins it for their team. Your thumbs will hate you 👍💥",
+	Description = "Mash to run! First one over the finish line wins it for their team. Tap as fast as you can! 👍",
 	Duration = 30,
 	Layout = Config.Layouts.TwoVsTwo,
 	Camera = { Mode = "SideView", Distance = 55, Height = 10 },

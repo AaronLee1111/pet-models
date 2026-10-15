@@ -40,7 +40,7 @@ Net.Phase = {
 Net.Message = {
 	Phase = "Phase", -- full phase change; carries everything needed to draw that screen
 	VoteUpdate = "VoteUpdate", -- live vote counts during the Vote phase
-	Status = "Status", -- persistent HUD line set by the minigame ("Doge has the potato!")
+	Status = "Status", -- persistent HUD line set by the minigame ("Pip has the potato!")
 	Toast = "Toast", -- short-lived feed message ("BOOM!")
 	Chips = "Chips", -- player-chip strip: every participant's live value + eliminated flag
 }

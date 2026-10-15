@@ -213,7 +213,7 @@ function HotPotato:_explode(spawnNext: boolean)
 		explosion.DestroyJointRadiusPercent = 0
 		explosion.Parent = self.Arena.Folder
 	end
-	self.Round:Toast(("💥 BOOM! %s got cooked"):format(holder.Name))
+	self.Round:Toast(("💥 BOOM! The potato popped on %s"):format(holder.Name))
 	self.Round:Eliminate(holder, true)
 	self:_refreshChips()
 

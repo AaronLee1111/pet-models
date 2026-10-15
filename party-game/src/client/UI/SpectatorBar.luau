@@ -1,6 +1,6 @@
 --[[
 	SpectatorBar
-	"👀 Spectating Doge  ◀ ▶" bar shown while the spectator camera is on.
+	"👀 Spectating Pip  ◀ ▶" bar shown while the spectator camera is on.
 	Buttons work with touch/mouse; Q / E (and gamepad shoulder buttons) also cycle.
 ]]
 
