@@ -148,6 +148,7 @@ local function respawn(bot, cframe: CFrame)
 		bot.Model:Destroy()
 	end
 	local model = buildBody(bot.Name)
+	model:SetAttribute("PartyId", bot.Id) -- CosmeticService finds the bot's cosmetics by this
 	model:PivotTo(cframe)
 	model.Parent = getFolder()
 

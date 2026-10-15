@@ -49,6 +49,7 @@ Net.Message = {
 	BoardLayout = "BoardLayout", -- the board's spaces (sent once per match and to late joiners)
 	BoardState = "BoardState", -- seats, coins, collectibles, whose turn, dice, moves left
 	Prompt = "Prompt", -- to one player: pick an option (fork, buy, shop); Prompt = nil closes it
+	Inventory = "Inventory", -- to one player: owned cosmetics, what's equipped, bank coins
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -59,6 +60,8 @@ Net.Input = {
 	Roll = "Roll", -- roll the die on your turn
 	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
 	UseItem = "UseItem", -- your turn, before rolling: payload.Slot = index into your items
+	Equip = "Equip", -- payload.ItemId: wear a cosmetic you own
+	Unequip = "Unequip", -- payload.Slot: take off whatever is in that slot
 	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
 	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }

@@ -3,11 +3,14 @@
 	Who owns which cosmetic (PartyShared.Cosmetics) and what each owner has equipped.
 	Server-authoritative; owners are participant Ids ("player_123", "bot_4").
 
-	Session only: real players keep their items across matches until they leave the
-	server; bots lose theirs at the end of every match (resetBots). No saving yet.
+	Players' records are their permanent profile tables (Profiles attaches them on join), so
+	what they own and wear is saved with the profile. Bots get plain records that are wiped
+	at the end of every match (resetBots).
+
+	Inventory.onChanged(fn(ownerId)) fires after anything changes (CosmeticService redraws
+	characters and tells the owner's client).
 ]]
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
@@ -15,6 +18,7 @@ local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
 local Inventory = {}
 
 local owners: { [string]: { Owned: { [string]: boolean }, Equipped: { [string]: string } } } = {}
+local listeners: { (string) -> () } = {}
 
 local function entry(ownerId: string)
 	local record = owners[ownerId]
@@ -23,6 +27,23 @@ local function entry(ownerId: string)
 		owners[ownerId] = record
 	end
 	return record
+end
+
+local function changed(ownerId: string)
+	for _, listener in listeners do
+		task.spawn(listener, ownerId)
+	end
+end
+
+function Inventory.onChanged(fn: (string) -> ())
+	table.insert(listeners, fn)
+end
+
+-- Uses `owned` / `equipped` (a player's profile tables) as this owner's record, so every
+-- change lands straight in the profile.
+function Inventory.attach(ownerId: string, owned: { [string]: boolean }, equipped: { [string]: string })
+	owners[ownerId] = { Owned = owned, Equipped = equipped }
+	changed(ownerId)
 end
 
 function Inventory.owns(ownerId: string, itemId: string): boolean
@@ -36,6 +57,7 @@ function Inventory.grant(ownerId: string, itemId: string): boolean
 		return false
 	end
 	entry(ownerId).Owned[itemId] = true
+	changed(ownerId)
 	return true
 end
 
@@ -46,13 +68,15 @@ function Inventory.equip(ownerId: string, itemId: string): boolean
 		return false
 	end
 	entry(ownerId).Equipped[item.Slot] = itemId
+	changed(ownerId)
 	return true
 end
 
 function Inventory.unequip(ownerId: string, slot: string)
 	local record = owners[ownerId]
-	if record then
+	if record and record.Equipped[slot] then
 		record.Equipped[slot] = nil
+		changed(ownerId)
 	end
 end
 
@@ -92,12 +116,9 @@ function Inventory.resetBots()
 	for ownerId in owners do
 		if string.sub(ownerId, 1, 4) == "bot_" then
 			owners[ownerId] = nil
+			changed(ownerId)
 		end
 	end
 end
-
-Players.PlayerRemoving:Connect(function(player)
-	Inventory.forget("player_" .. player.UserId)
-end)
 
 return Inventory

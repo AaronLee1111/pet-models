@@ -2,7 +2,8 @@
 	LobbyPanel
 	Waiting-room card (bottom centre, so the lobby stays visible): countdown, players
 	seated, and the match settings. The host can change settings and start early; everyone
-	else just sees them. The server checks every change.
+	else just sees them. Below that, a wardrobe row: tap a cosmetic you own to wear it, tap
+	again to take it off. The server checks every change.
 ]]
 
 local Players = game:GetService("Players")
@@ -15,13 +16,13 @@ local LobbyPanel = {}
 LobbyPanel.__index = LobbyPanel
 
 function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
-	local self = setmetatable({ Send = send, EndsAt = nil }, LobbyPanel)
+	local self = setmetatable({ Send = send, EndsAt = nil, Inventory = nil, LastMessage = nil }, LobbyPanel)
 
 	self.Root = make("Frame", {
 		Name = "WaitingRoom",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.fromOffset(640, 196),
+		Size = UDim2.fromOffset(640, 256),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.05,
 		Visible = false,
@@ -77,6 +78,77 @@ function LobbyPanel.new(screen: ScreenGui, send: (any) -> ())
 	return self
 end
 
+-- Owned cosmetics as toggles; the server confirms with a fresh Inventory message.
+local function wardrobeRow(self, order: number)
+	local inventory = self.Inventory or { Owned = {}, Equipped = {} }
+	local row = make("Frame", {
+		LayoutOrder = order,
+		Size = UDim2.new(1, 0, 0, 52),
+		BackgroundTransparency = 1,
+		Parent = self.SettingRows,
+	})
+	Theme.label({
+		Size = UDim2.new(0.28, 0, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "Wear",
+		Parent = row,
+	}, 22)
+	local buttons = make("ScrollingFrame", {
+		Position = UDim2.fromScale(0.28, 0),
+		Size = UDim2.fromScale(0.72, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollingDirection = Enum.ScrollingDirection.X,
+		AutomaticCanvasSize = Enum.AutomaticSize.X,
+		CanvasSize = UDim2.new(),
+		Parent = row,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	if #inventory.Owned == 0 then
+		Theme.label({
+			Size = UDim2.new(1, 0, 1, 0),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = Theme.Colors.Muted,
+			Text = "Win cosmetics at Shop and Gift spaces",
+			Parent = buttons,
+		}, 18)
+		return
+	end
+	for index, item in inventory.Owned do
+		local worn = inventory.Equipped[item.Slot] == item.Id
+		local button = make("TextButton", {
+			LayoutOrder = index,
+			Size = UDim2.new(0, 120, 1, -6),
+			BackgroundColor3 = if worn then Theme.Colors.Good else Theme.Colors.CardLight,
+			Font = Theme.BodyFont,
+			TextScaled = true,
+			TextColor3 = if worn then Theme.Colors.Overlay else Theme.Colors.Text,
+			Text = item.Name,
+			Parent = buttons,
+		}, { Theme.corner(12), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 20 }) })
+		button.Activated:Connect(function()
+			if worn then
+				self.Send({ Kind = "Unequip", Slot = item.Slot })
+			else
+				self.Send({ Kind = "Equip", ItemId = item.Id })
+			end
+		end)
+	end
+end
+
+function LobbyPanel:setInventory(message)
+	self.Inventory = message
+	if self.Root.Visible and self.LastMessage then
+		self:show(self.LastMessage)
+	end
+end
+
 local function settingRow(self, order: number, label: string, key: string, choices, selected, isHost: boolean)
 	local row = make("Frame", {
 		LayoutOrder = order,
@@ -126,14 +198,16 @@ end
 
 function LobbyPanel:show(message)
 	local isHost = message.HostId == Players.LocalPlayer.UserId
+	self.LastMessage = message
 	self.EndsAt = message.EndsAt
-	self.Info.Text = ("%d / %d players  ·  bots fill empty seats  ·  %s"):format(
+	self.Info.Text = ("%d / %d players  ·  bots fill empty seats  ·  %s  ·  bank: %d coins"):format(
 		message.PlayerCount or 1,
 		message.Seats or 4,
-		if isHost then "you're the host" else ("host: %s"):format(message.HostName or "?")
+		if isHost then "you're the host" else ("host: %s"):format(message.HostName or "?"),
+		self.Inventory and self.Inventory.BankCoins or 0
 	)
 	for _, child in self.SettingRows:GetChildren() do
-		if child:IsA("Frame") then
+		if child:IsA("GuiObject") then
 			child:Destroy()
 		end
 	end
@@ -141,6 +215,7 @@ function LobbyPanel:show(message)
 	local choices = message.Choices or {}
 	settingRow(self, 1, "Rounds", "Rounds", choices.Rounds or {}, settings.Rounds, isHost)
 	settingRow(self, 2, "Bots", "Difficulty", choices.Difficulty or {}, settings.Difficulty, isHost)
+	wardrobeRow(self, 3)
 	self.StartButton.Visible = isHost
 	if not self.Root.Visible then
 		self.Root.Visible = true

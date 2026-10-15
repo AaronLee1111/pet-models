@@ -348,6 +348,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 		boardView:setState(message)
 	elseif message.Type == Net.Message.Prompt then
 		boardView:showPrompt(message)
+	elseif message.Type == Net.Message.Inventory then
+		lobbyPanel:setInventory(message)
 	end
 end)
 
