@@ -17,7 +17,7 @@
 
 	A seat: { Index, Participant, SpaceId, Items = {item ids}, Shield, Stats }. Seats keep
 	their place in the turn order, inventory and stats when a bot takes over from a player
-	who left (replaceParticipant).
+	who left (replaceParticipant), and when that player comes back (reclaimSeat).
 
 	A turn: beginTurn(seat) -> [useItem(seat, slot, target)] -> rollTurn(seat) -> move(...) -> endTurn().
 ]]
@@ -1123,6 +1123,30 @@ end
 function Match:replaceParticipant(seat, newParticipant)
 	self.Deps.Wallet.transfer(seat.Participant, newParticipant)
 	seat.Participant = newParticipant
+end
+
+--[[
+	A returning player takes back the seat a bot kept for them. It is the same seat, so its
+	position, items, stats and turn order carry over untouched; only control (and the wallet)
+	moves. Refuses anything that would seat someone twice or push out a player who is here.
+	Who may claim which seat (by UserId) is checked by SeatClaims before this.
+	Returns ok, the participant who was replaced (or a reason).
+]]
+function Match:reclaimSeat(seat, participant): (boolean, any)
+	if not participant or participant.IsBot or not table.find(self.Seats, seat) then
+		return false, "invalid"
+	end
+	local previous = seat.Participant
+	if not (previous.IsBot or previous.Left) then
+		return false, "occupied"
+	end
+	for _, other in self.Seats do
+		if other ~= seat and other.Participant.Id == participant.Id then
+			return false, "seated"
+		end
+	end
+	self:replaceParticipant(seat, participant)
+	return true, previous
 end
 
 -- Bots ------------------------------------------------------------------------------------------

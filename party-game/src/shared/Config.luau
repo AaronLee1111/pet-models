@@ -71,6 +71,13 @@ Config.Match = {
 	},
 }
 
+-- Rejoining: a player who leaves mid-match has their seat kept for their UserId until the
+-- match ends (a bot plays it meanwhile) and gets it back if they rejoin. Off = old behavior
+-- (they watch until the next match).
+Config.SeatReclaim = {
+	Enabled = true,
+}
+
 Config.Board = {
 	Origin = Vector3.new(0, 0, -300), -- far from the lobby (0,0,0) and the arenas
 	SpaceSpacing = 12, -- studs between grid cells in board layouts

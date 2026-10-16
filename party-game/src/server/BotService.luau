@@ -218,6 +218,20 @@ function BotService.getBots(count: number, spawnAt: (number) -> CFrame)
 	return table.clone(bots)
 end
 
+-- Removes one bot for good (a takeover bot whose player came back for their seat). Other
+-- bots, including the ones filling empty seats, are left alone.
+function BotService.release(bot)
+	local index = table.find(bots, bot)
+	if index then
+		table.remove(bots, index)
+	end
+	bot.Participant = nil
+	if bot.Model then
+		bot.Model:Destroy()
+		bot.Model = nil
+	end
+end
+
 -- Respawns any bot whose body died during the round.
 function BotService.reviveAll(spawnAt: (number) -> CFrame)
 	for index, bot in bots do

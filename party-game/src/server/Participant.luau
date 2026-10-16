@@ -8,6 +8,7 @@
 	  Name    display name
 	  IsBot   true for bots
 	  Player  the Player (real players only)
+	  UserId  the player's numeric UserId (real players only; seat reservations use it)
 	  Bot     the Bot object from BotService (bots only)
 	  Team    team number for 1v3 / 2v2 layouts, nil in FFA
 	  Left    true once a real player leaves mid-round
@@ -26,6 +27,7 @@ function Participant.fromPlayer(player: Player)
 		Name = player.DisplayName,
 		IsBot = false,
 		Player = player,
+		UserId = player.UserId,
 		Bot = nil,
 		Team = nil,
 		Left = false,

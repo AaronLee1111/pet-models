@@ -101,7 +101,14 @@ function CoinService.spend(participant, amount: number): boolean
 end
 
 -- A bot taking over a seat inherits everything the leaver had.
+-- Also used when a returning player takes their seat back from that bot. A returning player
+-- whose seat never changed hands has the same Id, so the wallet already is theirs.
 function CoinService.transfer(from, to)
+	if from.Id == to.Id then
+		wallet(to)
+		mirror(to.Id)
+		return
+	end
 	local entry = wallet(from)
 	local target = wallet(to)
 	target.Coins += entry.Coins
