@@ -116,6 +116,11 @@ Config.Economy = {
 	},
 	ShopOffers = 2, -- cosmetics offered per shop visit
 	ShopItemOffers = 1, -- board items offered per shop visit (on top of the cosmetics)
+	ItemSpaceFallbackCoins = 3, -- Item space with a full bag
+	ChaosLossCap = 15, -- most coins a single Chaos space can take
+	PriceSurgeCap = 10, -- Price Surge can raise the Crown price by at most this much
+	DuelStakes = { 5, 10, 20 }, -- Duel space wagers (only ones both duellists can pay are offered)
+	CrownMovePrice = 8, -- Switch space: pay this to send the Crown somewhere else
 }
 
 -- Board items (Board/Items has the list). One item may be used per turn, before rolling.
@@ -1138,6 +1143,7 @@ local function publish()
 		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
 	)
 	current.World:setTraps(match.Traps)
+	current.World:setGates(match.Board.Gates, match.GateOpen)
 	current.StateMessage = stateMessage()
 	MinigameManager.broadcast(current.StateMessage)
 end
@@ -1719,7 +1725,9 @@ return BoardGame
 	  board.Name, board.Start, board.CrownSpaces
 	  board.Spaces[id] = { Id, Type, At = {x, z}, Next = {ids}, Paths = {labels}? }
 	  board.Order      every space id, in data order
-	  board:nextOptions(id) -> { ids }
+	  board:nextOptions(id) -> { ids }   (ignores gates; Match:nextOptions applies them)
+	  board.Gates      { { Id, From, To, Open, Toll } }: a fork edge that can be shut
+	                   (Switch spaces flip them) and/or costs Toll coins to take
 ]]
 
 local BoardLayout = {}
@@ -1794,6 +1802,15 @@ function BoardLayout.validate(data, spaceTypes): string?
 	if not byId[data.Start] then
 		return "Start is not a space"
 	end
+	for _, gate in data.Gates or {} do
+		local from = byId[gate.From]
+		if not from or not table.find(from.Next, gate.To) then
+			return ("gate %s is not an edge of the board"):format(tostring(gate.Id))
+		end
+		if #from.Next < 2 then
+			return ("gate %s must be on a fork, so there's always another way"):format(tostring(gate.Id))
+		end
+	end
 	if type(data.CrownSpaces) ~= "table" or #data.CrownSpaces < 2 then
 		return "need at least 2 CrownSpaces (the collectible moves after each purchase)"
 	end
@@ -1847,6 +1864,7 @@ function BoardLayout.load(data, spaceTypes)
 		Name = data.Name,
 		Start = data.Start,
 		CrownSpaces = table.clone(data.CrownSpaces),
+		Gates = data.Gates or {},
 		Spaces = {},
 		Order = {},
 	}, Board)
@@ -2034,6 +2052,49 @@ function BoardWorld:setCollectible(id: number?, label: string)
 	end
 end
 
+-- Shows each gate on its path: a red barrier when closed, a yellow toll post when open.
+function BoardWorld:setGates(gates, openState)
+	self.GateMarkers = self.GateMarkers or {}
+	for _, gate in gates or {} do
+		local path = self.Folder:FindFirstChild(("Path%d_%d"):format(gate.From, gate.To))
+		if not path then
+			continue
+		end
+		local marker = self.GateMarkers[gate.Id]
+		if not marker then
+			marker = part({
+				Name = "Gate_" .. gate.Id,
+				Size = Vector3.new(4, 3, 0.6),
+				CFrame = path.CFrame * CFrame.new(0, 1.5, 0),
+				CanCollide = false,
+				CanQuery = false,
+				Parent = self.Folder,
+			})
+			local gui = Instance.new("BillboardGui")
+			gui.Size = UDim2.fromOffset(120, 30)
+			gui.StudsOffset = Vector3.new(0, 3, 0)
+			gui.Parent = marker
+			local label = Instance.new("TextLabel")
+			label.Name = "Label"
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.Font = Enum.Font.FredokaOne
+			label.TextScaled = true
+			label.TextColor3 = Color3.new(1, 1, 1)
+			label.TextStrokeTransparency = 0
+			label.Parent = gui
+			self.GateMarkers[gate.Id] = marker
+		end
+		local open = openState[gate.Id]
+		marker.Color = if open then Color3.fromRGB(255, 210, 60) else Color3.fromRGB(220, 50, 50)
+		marker.Transparency = if open then 0.5 else 0
+		marker:FindFirstChildWhichIsA("BillboardGui").Label.Text = if not open
+			then "CLOSED"
+			elseif (gate.Toll or 0) > 0 then ("TOLL %d"):format(gate.Toll)
+			else "OPEN"
+	end
+end
+
 -- Draws a small marker on every trapped space ({ [spaceId] = trap }).
 function BoardWorld:setTraps(traps)
 	self.TrapMarkers = self.TrapMarkers or {}
@@ -2087,6 +2148,7 @@ return BoardWorld
 
 	Start          where everyone begins
 	CrownSpaces    where the collectible can appear (it moves after every purchase)
+	Gates          fork edges that Switch spaces can shut, and/or that cost a toll
 
 	Layout (x across, z up), clockwise from Start at the bottom-left:
 
@@ -2096,38 +2158,44 @@ return BoardWorld
 	  25          28          11
 	  26          27          10
 	   1  2  3  4  5  6  7  8  9     5 is a fork: main road (6) or shortcut (27)
+
+	Signature mechanic: the Shortcut toll gate. It saves 8 spaces for 3 coins, but a Switch
+	space (17) can close it for everyone, or open it again.
 ]]
 
 return {
 	Name = "Classic",
 	Start = 1,
-	CrownSpaces = { 7, 10, 13, 17, 20, 23, 26 },
+	CrownSpaces = { 7, 10, 13, 15, 20, 23, 26 },
+	Gates = {
+		{ Id = "Shortcut", From = 5, To = 27, Open = true, Toll = 3 },
+	},
 	Spaces = {
 		-- bottom row, left to right
 		{ Id = 1, Type = "Neutral", At = { 0, 0 }, Next = { 2 } },
 		{ Id = 2, Type = "Gain", At = { 1, 0 }, Next = { 3 } },
 		{ Id = 3, Type = "Gain", At = { 2, 0 }, Next = { 4 } },
-		{ Id = 4, Type = "Event", At = { 3, 0 }, Next = { 5 } },
-		{ Id = 5, Type = "Neutral", At = { 4, 0 }, Next = { 6, 27 }, Paths = { "Main road", "Shortcut" } },
+		{ Id = 4, Type = "Item", At = { 3, 0 }, Next = { 5 } },
+		{ Id = 5, Type = "Neutral", At = { 4, 0 }, Next = { 6, 27 }, Paths = { "Main road", "Shortcut (toll)" } },
 		{ Id = 6, Type = "Lose", At = { 5, 0 }, Next = { 7 } },
 		{ Id = 7, Type = "Gain", At = { 6, 0 }, Next = { 8 } },
 		{ Id = 8, Type = "Reward", At = { 7, 0 }, Next = { 9 } },
 		{ Id = 9, Type = "Gain", At = { 8, 0 }, Next = { 10 } },
 		-- right column, upwards
 		{ Id = 10, Type = "Gain", At = { 8, 1 }, Next = { 11 } },
-		{ Id = 11, Type = "Lose", At = { 8, 2 }, Next = { 12 } },
+		{ Id = 11, Type = "Event", At = { 8, 2 }, Next = { 12 } },
 		{ Id = 12, Type = "Shop", At = { 8, 3 }, Next = { 13 } },
 		{ Id = 13, Type = "Gain", At = { 8, 4 }, Next = { 14 } },
 		-- top row, right to left
-		{ Id = 14, Type = "Event", At = { 8, 5 }, Next = { 15 } },
+		{ Id = 14, Type = "Duel", At = { 8, 5 }, Next = { 15 } },
 		{ Id = 15, Type = "Gain", At = { 7, 5 }, Next = { 16 } },
 		{ Id = 16, Type = "Lose", At = { 6, 5 }, Next = { 17 } },
-		{ Id = 17, Type = "Gain", At = { 5, 5 }, Next = { 18 } },
+		{ Id = 17, Type = "Switch", At = { 5, 5 }, Next = { 18 } },
 		{ Id = 18, Type = "Neutral", At = { 4, 5 }, Next = { 19 } },
 		{ Id = 19, Type = "Reward", At = { 3, 5 }, Next = { 20 } },
 		{ Id = 20, Type = "Gain", At = { 2, 5 }, Next = { 21 } },
 		{ Id = 21, Type = "Lose", At = { 1, 5 }, Next = { 22 } },
-		{ Id = 22, Type = "Event", At = { 0, 5 }, Next = { 23 } },
+		{ Id = 22, Type = "Chaos", At = { 0, 5 }, Next = { 23 } },
 		-- left column, downwards
 		{ Id = 23, Type = "Gain", At = { 0, 4 }, Next = { 24 } },
 		{ Id = 24, Type = "Shop", At = { 0, 3 }, Next = { 25 } },
@@ -2136,7 +2204,7 @@ return {
 		-- shortcut up the middle: quicker, but riskier
 		{ Id = 27, Type = "Lose", At = { 4, 1 }, Next = { 28 } },
 		{ Id = 28, Type = "Event", At = { 4, 2 }, Next = { 29 } },
-		{ Id = 29, Type = "Lose", At = { 4, 3 }, Next = { 30 } },
+		{ Id = 29, Type = "Chaos", At = { 4, 3 }, Next = { 30 } },
 		{ Id = 30, Type = "Reward", At = { 4, 4 }, Next = { 18 } },
 	},
 }
@@ -2169,7 +2237,18 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local BotBrain = {}
 
 -- How much a bot likes landing on / passing each space type (scaled down with distance).
-BotBrain.SpaceValue = { Gain = 3, Lose = -3, Event = 0.5, Reward = 3, Shop = 1, Neutral = 0 }
+BotBrain.SpaceValue = {
+	Gain = 3,
+	Lose = -3,
+	Event = 0.5,
+	Reward = 3,
+	Shop = 1,
+	Neutral = 0,
+	Item = 2,
+	Duel = 0.5,
+	Chaos = -2,
+	Switch = 0.5,
+}
 -- How much a bot wants each item in a shop.
 BotBrain.ItemValue = {
 	DoubleDice = 3,
@@ -2196,7 +2275,7 @@ local function isLastRound(match): boolean
 end
 
 local function crownDistance(match, spaceId: number): number
-	return match.Board:distance(spaceId, match.CollectibleSpace)
+	return match:distance(spaceId, match.CollectibleSpace)
 end
 
 -- True if this seat has fewer collectibles than the leader.
@@ -2228,13 +2307,14 @@ function BotBrain.branchScore(match, seat, startId: number, profile): number
 	return score + weight * (20 - distance) * 0.5
 end
 
-function BotBrain.choosePath(match, seat, spaces, profile): number
+function BotBrain.choosePath(match, seat, spaces, profile, info): number
 	if profile.LookAhead <= 0 then
 		return match.Rng:NextInteger(1, #spaces)
 	end
 	local best, bestScore = 1, -math.huge
 	for i, id in spaces do
-		local score = BotBrain.branchScore(match, seat, id, profile)
+		local toll = info and info[i] and info[i].Toll or 0
+		local score = BotBrain.branchScore(match, seat, id, profile) - toll * 0.5
 		if score > bestScore then
 			best, bestScore = i, score
 		end
@@ -2412,6 +2492,34 @@ function BotBrain.chooseItem(match, seat, profile)
 	return nil
 end
 
+-- Switch space ------------------------------------------------------------------------------------
+
+-- Flip the gates if that brings the Crown closer; pay to move the Crown if an opponent is about
+-- to reach it and this bot can't; otherwise leave the board alone.
+function BotBrain.chooseSwitch(match, seat, actions, _profile): number
+	local leave = table.find(actions, "None") or #actions
+	local gatesIndex = table.find(actions, "Gates")
+	if gatesIndex then
+		local now = crownDistance(match, seat.SpaceId)
+		match:toggleGates()
+		local flipped = crownDistance(match, seat.SpaceId)
+		match:toggleGates() -- put them back: this was only a look
+		if flipped + 3 <= now then
+			return gatesIndex
+		end
+	end
+	local crownIndex = table.find(actions, "Crown")
+	if crownIndex then
+		local mine = crownDistance(match, seat.SpaceId)
+		for _, other in match:opponentsOf(seat) do
+			if crownDistance(match, other.SpaceId) <= 4 and match:coinsOf(other) >= match.CollectiblePrice and mine > 6 then
+				return crownIndex
+			end
+		end
+	end
+	return leave
+end
+
 -- Ask requests ----------------------------------------------------------------------------------
 
 function BotBrain.decide(match, seat, request, profile, _skill: number): number
@@ -2422,7 +2530,7 @@ function BotBrain.decide(match, seat, request, profile, _skill: number): number
 	if request.Kind == "Collectible" then
 		return 1 -- always buy: it's what wins
 	elseif request.Kind == "Path" and request.Data and request.Data.Spaces then
-		return BotBrain.choosePath(match, seat, request.Data.Spaces, profile)
+		return BotBrain.choosePath(match, seat, request.Data.Spaces, profile, request.Data.Info)
 	elseif request.Kind == "Shop" and request.Data and request.Data.Items then
 		return BotBrain.chooseShop(match, seat, request.Data.Items, request.Default, profile)
 	elseif request.Kind == "Target" and request.Data and request.Data.Seats then
@@ -2430,6 +2538,21 @@ function BotBrain.decide(match, seat, request, profile, _skill: number): number
 		return table.find(request.Data.Seats, target) or 1
 	elseif request.Kind == "DieFace" then
 		return (BotBrain.bestFace(match, seat))
+	elseif request.Kind == "DuelTarget" and request.Data and request.Data.Seats then
+		-- Challenge whoever is ahead (or richest): a win there helps the most.
+		local best, bestScore = 1, -math.huge
+		for i, other in request.Data.Seats do
+			local score = match:collectiblesOf(other) * 100 + match:coinsOf(other)
+			if score > bestScore then
+				best, bestScore = i, score
+			end
+		end
+		return best
+	elseif request.Kind == "DuelStake" and request.Data and request.Data.Stakes then
+		-- A die duel is a coin flip: bots that are behind gamble big, leaders play it safe.
+		return if isBehind(match, seat) then #request.Data.Stakes else 1
+	elseif request.Kind == "Switch" and request.Data and request.Data.Actions then
+		return BotBrain.chooseSwitch(match, seat, request.Data.Actions, profile)
 	end
 	return request.Default or 1
 end
@@ -2439,6 +2562,100 @@ return BotBrain
           </Properties>
         </Item>
         <Item class="ModuleScript" referent="17">
+          <Properties>
+            <string name="Name">ChaosEvents</string>
+            <string name="Source"><![CDATA[--[[
+	ChaosEvents
+	What can happen on a Chaos space: mostly harmful or disruptive, occasionally lucky.
+	Same shape as Events: { Id, Name, Weight, Apply(match, seat, rng) -> feed text }.
+
+	Losses are capped (Config.Economy.ChaosLossCap) and a Coin Shield blocks a coin loss, so
+	one bad landing can hurt but can't wipe anyone out.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+return {
+	{
+		Id = "Thunderclap",
+		Name = "Thunderclap",
+		Weight = 3,
+		Apply = function(match, seat)
+			local loss = math.min(math.ceil(match:coinsOf(seat) / 2), Config.Economy.ChaosLossCap)
+			local delta, shielded = match:changeCoins(seat, -loss)
+			if shielded then
+				return ("%s's Coin Shield took the hit and broke"):format(seat.Participant.Name)
+			end
+			return ("%s lost %d coins"):format(seat.Participant.Name, -delta)
+		end,
+	},
+	{
+		Id = "TaxDay",
+		Name = "Tax Day",
+		Weight = 2,
+		Apply = function(match)
+			for _, each in match.Seats do
+				match:changeCoins(each, -3)
+			end
+			return "Everyone pays 3 coins (shields block it)"
+		end,
+	},
+	{
+		Id = "Shuffle",
+		Name = "Shuffle",
+		Weight = 2,
+		Apply = function(match, _seat, rng)
+			local spaces = {}
+			for _, each in match.Seats do
+				table.insert(spaces, each.SpaceId)
+			end
+			for i = #spaces, 2, -1 do
+				local j = rng:NextInteger(1, i)
+				spaces[i], spaces[j] = spaces[j], spaces[i]
+			end
+			for i, each in match.Seats do
+				each.SpaceId = spaces[i]
+			end
+			return "Everyone's pieces were shuffled around the board"
+		end,
+	},
+	{
+		Id = "BagSwap",
+		Name = "Bag Swap",
+		Weight = 1,
+		Apply = function(match, seat, rng)
+			local others = match:opponentsOf(seat)
+			local other = others[rng:NextInteger(1, #others)]
+			seat.Items, other.Items = other.Items, seat.Items
+			return ("%s and %s swapped item bags"):format(seat.Participant.Name, other.Participant.Name)
+		end,
+	},
+	{
+		Id = "PriceSurge",
+		Name = "Price Surge",
+		Weight = 1,
+		Apply = function(match)
+			local cap = Config.Collectible.Price + Config.Economy.PriceSurgeCap
+			match.CollectiblePrice = math.min(match.CollectiblePrice + 5, cap)
+			return ("The %s now costs %d coins (until someone buys it)"):format(match.CollectibleName, match.CollectiblePrice)
+		end,
+	},
+	{
+		Id = "LuckyBreak",
+		Name = "Lucky Break",
+		Weight = 1,
+		Apply = function(match, seat)
+			local delta = match:changeCoins(seat, 8)
+			return ("Chaos smiles on %s: +%d coins"):format(seat.Participant.Name, delta)
+		end,
+	},
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Events</string>
             <string name="Source"><![CDATA[--[[
@@ -2570,7 +2787,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Items</string>
             <string name="Source"><![CDATA[--[[
@@ -2727,7 +2944,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">Match</string>
             <string name="Source"><![CDATA[--[[
@@ -2757,6 +2974,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
 local BotBrain = require(script.Parent.BotBrain)
+local ChaosEvents = require(script.Parent.ChaosEvents)
 local Events = require(script.Parent.Events)
 local Items = require(script.Parent.Items)
 local SpaceTypes = require(script.Parent.SpaceTypes)
@@ -2807,6 +3025,7 @@ function Match.new(board, participants, settings, deps)
 		CollectiblePrice = Config.Collectible.Price,
 		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice, Fixed }
 		Traps = {}, -- [spaceId] = { Owner = seat, Coins = n }
+		GateOpen = {}, -- [gateId] = true/false (Switch spaces flip them)
 	}, Match)
 
 	for index, participant in participants do
@@ -2820,6 +3039,9 @@ function Match.new(board, participants, settings, deps)
 		}
 		table.insert(self.Seats, seat)
 		table.insert(self.Order, seat)
+	end
+	for _, gate in board.Gates or {} do
+		self.GateOpen[gate.Id] = gate.Open ~= false
 	end
 	self:relocateCollectible()
 	return self
@@ -3142,6 +3364,7 @@ function Match:buyCollectible(seat): boolean
 		return false
 	end
 	self.Deps.Wallet.addCollectibles(seat.Participant, 1)
+	self.CollectiblePrice = Config.Collectible.Price -- a Price Surge ends with the purchase
 	self:relocateCollectible()
 	return true
 end
@@ -3174,23 +3397,100 @@ end
 
 -- Movement ------------------------------------------------------------------------------------
 
--- One space forward. At a fork the mover chooses.
+-- Gates ----------------------------------------------------------------------------------------
+
+-- The gate on the edge from -> to, if any.
+function Match:gateOn(from: number, to: number)
+	for _, gate in self.Board.Gates or {} do
+		if gate.From == from and gate.To == to then
+			return gate
+		end
+	end
+	return nil
+end
+
+-- Where a piece can go from `id` right now: closed gates are left out (never all of them).
+function Match:nextOptions(id: number): { number }
+	local all = self.Board:nextOptions(id)
+	local open = {}
+	for _, nextId in all do
+		local gate = self:gateOn(id, nextId)
+		if not gate or self.GateOpen[gate.Id] then
+			table.insert(open, nextId)
+		end
+	end
+	return if #open > 0 then open else all
+end
+
+-- Flips every gate on the board (Switch space). Returns how many are now open.
+function Match:toggleGates(): number
+	local open = 0
+	for _, gate in self.Board.Gates or {} do
+		self.GateOpen[gate.Id] = not self.GateOpen[gate.Id]
+		open += if self.GateOpen[gate.Id] then 1 else 0
+	end
+	self.DistanceCache = nil
+	return open
+end
+
+-- Fewest moves from -> to with the gates as they are now (math.huge if unreachable).
+function Match:distance(from: number, to: number): number
+	self.DistanceCache = self.DistanceCache or {}
+	local row = self.DistanceCache[from]
+	if not row then
+		row = { [from] = 0 }
+		local queue, head = { from }, 1
+		while queue[head] do
+			local id = queue[head]
+			head += 1
+			for _, nextId in self:nextOptions(id) do
+				if row[nextId] == nil then
+					row[nextId] = row[id] + 1
+					table.insert(queue, nextId)
+				end
+			end
+		end
+		self.DistanceCache[from] = row
+	end
+	return row[to] or math.huge
+end
+
+-- One space forward. At a fork the mover chooses; a tolled route is only offered to (and
+-- charged to) someone who can pay.
 function Match:step(seat): number
-	local options = self.Board:nextOptions(seat.SpaceId)
+	local here = seat.SpaceId
+	local options = {}
+	for _, id in self:nextOptions(here) do
+		local gate = self:gateOn(here, id)
+		if not gate or not gate.Toll or self:coinsOf(seat) >= gate.Toll then
+			table.insert(options, id)
+		end
+	end
+	if #options == 0 then
+		options = self:nextOptions(here)
+	end
 	local nextId = options[1]
 	if #options > 1 then
-		local space = self.Board:get(seat.SpaceId)
-		local labels = {}
+		local space = self.Board:get(here)
+		local all = self.Board:nextOptions(here)
+		local labels, info = {}, {}
 		for i, id in options do
-			labels[i] = if space.Paths then space.Paths[i] else ("Space %d"):format(id)
+			local index = table.find(all, id)
+			labels[i] = if space.Paths and index then space.Paths[index] else ("Space %d"):format(id)
+			local gate = self:gateOn(here, id)
+			info[i] = { Toll = gate and gate.Toll or 0 }
 		end
 		nextId = options[self:ask(seat, {
 			Kind = "Path",
 			Prompt = "Which way?",
 			Options = labels,
 			Default = 1,
-			Data = { Spaces = options },
+			Data = { Spaces = options, Info = info },
 		})]
+	end
+	local gate = self:gateOn(here, nextId)
+	if gate and gate.Toll and gate.Toll > 0 then
+		self.Deps.Wallet.spend(seat.Participant, gate.Toll)
 	end
 	seat.SpaceId = nextId
 	seat.Stats.SpacesMoved += 1
@@ -3231,6 +3531,110 @@ function Match:land(seat): string?
 end
 
 -- Space helpers (used by SpaceTypes / Events) ---------------------------------------------------
+
+function Match:runChaos(seat): string
+	local event = weightedPick(self.Rng, ChaosEvents)
+	return ("%s: %s"):format(event.Name, event.Apply(self, seat, self.Rng))
+end
+
+-- Item space: a random item, or a few coins if the bag is full.
+function Match:itemSpace(seat): string
+	local item = self:giveRandomItem(seat)
+	if item then
+		return ("%s found a %s"):format(seat.Participant.Name, item.Name)
+	end
+	local delta = self:changeCoins(seat, Config.Economy.ItemSpaceFallbackCoins)
+	return ("%s's bag is full: +%d coins instead"):format(seat.Participant.Name, delta)
+end
+
+--[[
+	Duel space: the lander picks an opponent and a stake both can pay; both roll a die and the
+	higher roll takes the stake (a tie is a draw). A duel is a wager, so shields don't apply.
+]]
+function Match:runDuel(seat): string
+	local name = seat.Participant.Name
+	local opponents = {}
+	for _, other in self:opponentsOf(seat) do
+		if self:coinsOf(other) >= Config.Economy.DuelStakes[1] then
+			table.insert(opponents, other)
+		end
+	end
+	if self:coinsOf(seat) < Config.Economy.DuelStakes[1] or #opponents == 0 then
+		return ("%s wants a duel, but nobody has the coins"):format(name)
+	end
+	local labels = {}
+	for i, other in opponents do
+		labels[i] = ("%s (%d coins)"):format(other.Participant.Name, self:coinsOf(other))
+	end
+	table.insert(labels, "No duel")
+	local pick = self:ask(seat, {
+		Kind = "DuelTarget",
+		Prompt = "Duel! Challenge who?",
+		Options = labels,
+		Default = #labels,
+		Data = { Seats = opponents },
+	})
+	local rival = opponents[pick]
+	if not rival then
+		return ("%s declined the duel"):format(name)
+	end
+	local stakes, stakeLabels = {}, {}
+	for _, stake in Config.Economy.DuelStakes do
+		if self:coinsOf(seat) >= stake and self:coinsOf(rival) >= stake then
+			table.insert(stakes, stake)
+			table.insert(stakeLabels, ("%d coins"):format(stake))
+		end
+	end
+	local stake = stakes[self:ask(seat, {
+		Kind = "DuelStake",
+		Prompt = ("Duel %s: how many coins?"):format(rival.Participant.Name),
+		Options = stakeLabels,
+		Default = 1,
+		Data = { Stakes = stakes, Rival = rival },
+	})]
+	local mine, theirs = self:roll(), self:roll()
+	local result = ("%s %d vs %s %d"):format(name, mine, rival.Participant.Name, theirs)
+	if mine == theirs then
+		return result .. ": a draw!"
+	end
+	local winner, loser = if mine > theirs then seat else rival, if mine > theirs then rival else seat
+	local _, taken = self.Deps.Wallet.add(loser.Participant, -stake)
+	self:changeCoins(winner, -taken)
+	return ("%s: %s wins %d coins"):format(result, winner.Participant.Name, -taken)
+end
+
+--[[
+	Switch space: flip the board's gates (free), pay to move the Crown, or leave it.
+]]
+function Match:runSwitch(seat): string
+	local name = seat.Participant.Name
+	local options, actions = {}, {}
+	if #(self.Board.Gates or {}) > 0 then
+		table.insert(options, "Flip the gates")
+		table.insert(actions, "Gates")
+	end
+	if self:coinsOf(seat) >= Config.Economy.CrownMovePrice then
+		table.insert(options, ("Move the %s (%d coins)"):format(self.CollectibleName, Config.Economy.CrownMovePrice))
+		table.insert(actions, "Crown")
+	end
+	table.insert(options, "Leave it")
+	table.insert(actions, "None")
+	local action = actions[self:ask(seat, {
+		Kind = "Switch",
+		Prompt = "Switch: change the board?",
+		Options = options,
+		Default = #options,
+		Data = { Actions = actions },
+	})]
+	if action == "Gates" then
+		local open = self:toggleGates()
+		return ("%s flipped the gates: %s"):format(name, if open > 0 then "the shortcut is open" else "the shortcut is closed")
+	elseif action == "Crown" and self.Deps.Wallet.spend(seat.Participant, Config.Economy.CrownMovePrice) then
+		self:relocateCollectible()
+		return ("%s paid %d coins to move the %s"):format(name, Config.Economy.CrownMovePrice, self.CollectibleName)
+	end
+	return ("%s left the board as it is"):format(name)
+end
 
 function Match:runEvent(seat): string
 	local event = weightedPick(self.Rng, Events)
@@ -3454,7 +3858,7 @@ return Match
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">SpaceTypes</string>
             <string name="Source"><![CDATA[--[[
@@ -3467,7 +3871,8 @@ return Match
 	  Color     tile colour
 	  Resolve   function(match, seat, space) -> string?  runs when a piece LANDS here
 	            (passing over a space does nothing). Return a short line for the feed.
-	            Use the match helpers: changeCoins, runEvent, giveReward, visitShop.
+	            Use the match helpers: changeCoins, runEvent, runChaos, giveReward,
+	            visitShop, itemSpace, runDuel, runSwitch.
 
 	To add a type: add an entry here, then use its key in a board's Spaces.
 ]]
@@ -3527,6 +3932,38 @@ return {
 			return match:visitShop(seat)
 		end,
 	},
+	Item = {
+		Name = "Item space",
+		Short = "ITEM",
+		Color = Color3.fromRGB(60, 200, 210),
+		Resolve = function(match, seat)
+			return match:itemSpace(seat)
+		end,
+	},
+	Duel = {
+		Name = "Duel space",
+		Short = "DUEL",
+		Color = Color3.fromRGB(255, 140, 40),
+		Resolve = function(match, seat)
+			return match:runDuel(seat)
+		end,
+	},
+	Chaos = {
+		Name = "Chaos space",
+		Short = "!",
+		Color = Color3.fromRGB(90, 40, 120),
+		Resolve = function(match, seat)
+			return match:runChaos(seat)
+		end,
+	},
+	Switch = {
+		Name = "Switch space",
+		Short = "SWITCH",
+		Color = Color3.fromRGB(240, 240, 255),
+		Resolve = function(match, seat)
+			return match:runSwitch(seat)
+		end,
+	},
 	Reward = {
 		Name = "Gift space",
 		Short = "GIFT",
@@ -3540,7 +3977,7 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="21">
+      <Item class="ModuleScript" referent="22">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -3820,7 +4257,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="23">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -3960,7 +4397,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="23">
+      <Item class="ModuleScript" referent="24">
         <Properties>
           <string name="Name">CosmeticService</string>
           <string name="Source"><![CDATA[--[[
@@ -4202,7 +4639,7 @@ return CosmeticService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="24">
+      <Item class="ModuleScript" referent="25">
         <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
@@ -4332,7 +4769,7 @@ return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="25">
+      <Item class="Script" referent="26">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -4431,7 +4868,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="26">
+      <Item class="ModuleScript" referent="27">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -4562,7 +4999,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="27">
+      <Item class="ModuleScript" referent="28">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -5227,7 +5664,7 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="28">
+      <Item class="ModuleScript" referent="29">
         <Properties>
           <string name="Name">MinigameMode</string>
           <string name="Source"><![CDATA[--[[
@@ -5362,11 +5799,11 @@ return MinigameMode
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="29">
+      <Item class="Folder" referent="30">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -5679,7 +6116,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -6175,7 +6612,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -6848,7 +7285,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -7358,7 +7795,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -7515,7 +7952,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -7932,7 +8369,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -8058,7 +8495,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="37">
+      <Item class="ModuleScript" referent="38">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -8202,7 +8639,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="38">
+      <Item class="ModuleScript" referent="39">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -8334,7 +8771,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -8457,7 +8894,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -8488,7 +8925,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -8623,7 +9060,7 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="42">
+      <Item class="ModuleScript" referent="43">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -8739,7 +9176,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="43">
+      <Item class="ModuleScript" referent="44">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -8864,7 +9301,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="44">
+      <Item class="ModuleScript" referent="45">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -8982,19 +9419,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="45">
+  <Item class="StarterPlayer" referent="46">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="46">
+    <Item class="StarterPlayerScripts" referent="47">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="47">
+      <Item class="Folder" referent="48">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -9217,7 +9654,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -9328,7 +9765,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="50">
+        <Item class="LocalScript" referent="51">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -9703,11 +10140,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="51">
+        <Item class="Folder" referent="52">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="52">
+          <Item class="ModuleScript" referent="53">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -9992,7 +10429,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="53">
+          <Item class="ModuleScript" referent="54">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -10248,11 +10685,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="54">
+        <Item class="Folder" referent="55">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -10400,7 +10837,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -10857,7 +11294,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -11082,7 +11519,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -11229,7 +11666,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -11475,7 +11912,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -11590,7 +12027,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -11727,7 +12164,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="62">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -11845,7 +12282,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -11934,7 +12371,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -12105,7 +12542,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -12225,7 +12662,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -12402,18 +12839,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="67">
+  <Item class="Workspace" referent="68">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="68">
+    <Item class="Model" referent="69">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="69">
+      <Item class="Part" referent="70">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -12433,7 +12870,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="70">
+      <Item class="SpawnLocation" referent="71">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
