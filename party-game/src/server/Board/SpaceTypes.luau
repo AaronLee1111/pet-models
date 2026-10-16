@@ -8,7 +8,8 @@
 	  Color     tile colour
 	  Resolve   function(match, seat, space) -> string?  runs when a piece LANDS here
 	            (passing over a space does nothing). Return a short line for the feed.
-	            Use the match helpers: changeCoins, runEvent, giveReward, visitShop.
+	            Use the match helpers: changeCoins, runEvent, runChaos, giveReward,
+	            visitShop, itemSpace, runDuel, runSwitch.
 
 	To add a type: add an entry here, then use its key in a board's Spaces.
 ]]
@@ -66,6 +67,38 @@ return {
 		Color = Color3.fromRGB(170, 90, 230),
 		Resolve = function(match, seat)
 			return match:visitShop(seat)
+		end,
+	},
+	Item = {
+		Name = "Item space",
+		Short = "ITEM",
+		Color = Color3.fromRGB(60, 200, 210),
+		Resolve = function(match, seat)
+			return match:itemSpace(seat)
+		end,
+	},
+	Duel = {
+		Name = "Duel space",
+		Short = "DUEL",
+		Color = Color3.fromRGB(255, 140, 40),
+		Resolve = function(match, seat)
+			return match:runDuel(seat)
+		end,
+	},
+	Chaos = {
+		Name = "Chaos space",
+		Short = "!",
+		Color = Color3.fromRGB(90, 40, 120),
+		Resolve = function(match, seat)
+			return match:runChaos(seat)
+		end,
+	},
+	Switch = {
+		Name = "Switch space",
+		Short = "SWITCH",
+		Color = Color3.fromRGB(240, 240, 255),
+		Resolve = function(match, seat)
+			return match:runSwitch(seat)
 		end,
 	},
 	Reward = {

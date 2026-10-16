@@ -168,6 +168,49 @@ function BoardWorld:setCollectible(id: number?, label: string)
 	end
 end
 
+-- Shows each gate on its path: a red barrier when closed, a yellow toll post when open.
+function BoardWorld:setGates(gates, openState)
+	self.GateMarkers = self.GateMarkers or {}
+	for _, gate in gates or {} do
+		local path = self.Folder:FindFirstChild(("Path%d_%d"):format(gate.From, gate.To))
+		if not path then
+			continue
+		end
+		local marker = self.GateMarkers[gate.Id]
+		if not marker then
+			marker = part({
+				Name = "Gate_" .. gate.Id,
+				Size = Vector3.new(4, 3, 0.6),
+				CFrame = path.CFrame * CFrame.new(0, 1.5, 0),
+				CanCollide = false,
+				CanQuery = false,
+				Parent = self.Folder,
+			})
+			local gui = Instance.new("BillboardGui")
+			gui.Size = UDim2.fromOffset(120, 30)
+			gui.StudsOffset = Vector3.new(0, 3, 0)
+			gui.Parent = marker
+			local label = Instance.new("TextLabel")
+			label.Name = "Label"
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.Font = Enum.Font.FredokaOne
+			label.TextScaled = true
+			label.TextColor3 = Color3.new(1, 1, 1)
+			label.TextStrokeTransparency = 0
+			label.Parent = gui
+			self.GateMarkers[gate.Id] = marker
+		end
+		local open = openState[gate.Id]
+		marker.Color = if open then Color3.fromRGB(255, 210, 60) else Color3.fromRGB(220, 50, 50)
+		marker.Transparency = if open then 0.5 else 0
+		marker:FindFirstChildWhichIsA("BillboardGui").Label.Text = if not open
+			then "CLOSED"
+			elseif (gate.Toll or 0) > 0 then ("TOLL %d"):format(gate.Toll)
+			else "OPEN"
+	end
+end
+
 -- Draws a small marker on every trapped space ({ [spaceId] = trap }).
 function BoardWorld:setTraps(traps)
 	self.TrapMarkers = self.TrapMarkers or {}

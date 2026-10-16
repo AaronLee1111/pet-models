@@ -9,7 +9,9 @@
 	  board.Name, board.Start, board.CrownSpaces
 	  board.Spaces[id] = { Id, Type, At = {x, z}, Next = {ids}, Paths = {labels}? }
 	  board.Order      every space id, in data order
-	  board:nextOptions(id) -> { ids }
+	  board:nextOptions(id) -> { ids }   (ignores gates; Match:nextOptions applies them)
+	  board.Gates      { { Id, From, To, Open, Toll } }: a fork edge that can be shut
+	                   (Switch spaces flip them) and/or costs Toll coins to take
 ]]
 
 local BoardLayout = {}
@@ -84,6 +86,15 @@ function BoardLayout.validate(data, spaceTypes): string?
 	if not byId[data.Start] then
 		return "Start is not a space"
 	end
+	for _, gate in data.Gates or {} do
+		local from = byId[gate.From]
+		if not from or not table.find(from.Next, gate.To) then
+			return ("gate %s is not an edge of the board"):format(tostring(gate.Id))
+		end
+		if #from.Next < 2 then
+			return ("gate %s must be on a fork, so there's always another way"):format(tostring(gate.Id))
+		end
+	end
 	if type(data.CrownSpaces) ~= "table" or #data.CrownSpaces < 2 then
 		return "need at least 2 CrownSpaces (the collectible moves after each purchase)"
 	end
@@ -137,6 +148,7 @@ function BoardLayout.load(data, spaceTypes)
 		Name = data.Name,
 		Start = data.Start,
 		CrownSpaces = table.clone(data.CrownSpaces),
+		Gates = data.Gates or {},
 		Spaces = {},
 		Order = {},
 	}, Board)

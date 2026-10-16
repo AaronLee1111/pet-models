@@ -143,6 +143,7 @@ test("forks ask the mover and follow the choice", function()
 	local match, asked = newMatch({ Path = 2 })
 	local seat = match.Seats[1]
 	match.CollectibleSpace = 7
+	setCoins(match, seat, 10) -- the shortcut has a toll
 	seat.SpaceId = 4
 	match:move(seat, 2)
 	eq(seat.SpaceId, 27, "took the shortcut")
@@ -915,6 +916,170 @@ test("bots: heist the Crown leader, pickpocket the richest, skip shielded target
 	setCoins(match, match.Seats[4], 30)
 	local _, victim = BotBrain.itemScore(match, me, "Pickpocket")
 	eq(victim, match.Seats[4], "richest")
+end)
+
+-- Space set 2: gates, tolls, switches, duels, chaos, item spaces -----------------------------------
+
+test("validation: gates must sit on a fork edge", function()
+	local data = table.clone(Classic)
+	data.Gates = { { Id = "Bad", From = 1, To = 2, Open = true } }
+	ok(BoardLayout.validate(data, SpaceTypes), "gate on a non-fork edge not caught")
+	data.Gates = { { Id = "Bad", From = 5, To = 9, Open = true } }
+	ok(BoardLayout.validate(data, SpaceTypes), "gate on a missing edge not caught")
+end)
+
+test("toll shortcut: offered only to those who can pay, and charged", function()
+	local match, asked = newMatch({ Path = 2 })
+	local seat = match.Seats[1]
+	match.CollectibleSpace = 7
+	seat.SpaceId = 5
+	setCoins(match, seat, 2)
+	match:move(seat, 1)
+	eq(seat.SpaceId, 6, "can't pay: main road, no question")
+	eq(#asked, 0, "not asked")
+	seat.SpaceId = 5
+	setCoins(match, seat, 10)
+	match:move(seat, 1)
+	eq(seat.SpaceId, 27, "paid the toll")
+	eq(asked[1].Data.Info[2].Toll, 3, "toll shown with the choice")
+	ok(string.find(asked[1].Options[2], "toll"), "label says toll")
+	eq(match:coinsOf(seat), 10 - 3 - Config.Economy.LoseSpaceCoins, "toll + the Lose space")
+end)
+
+test("switch: flipping gates closes the shortcut and changes distances", function()
+	local match = newMatch({ Switch = 1, Path = 2 })
+	local seat = match.Seats[1]
+	eq(match:distance(5, 18), 5, "shortcut open")
+	seat.SpaceId = 17
+	ok(string.find(match:runSwitch(seat), "closed"), "feed says closed")
+	eq(match:distance(5, 18), 13, "shortcut closed")
+	seat.SpaceId = 5
+	setCoins(match, seat, 50)
+	match:move(seat, 1)
+	eq(seat.SpaceId, 6, "closed gate isn't offered")
+	match:toggleGates()
+	eq(match:distance(5, 18), 5, "open again")
+end)
+
+test("switch: paying moves the Crown; can't pay, no option", function()
+	local match, asked = newMatch({ Switch = function(request)
+		return table.find(request.Data.Actions, "Crown") or #request.Options
+	end })
+	local seat = match.Seats[1]
+	seat.SpaceId = 17
+	setCoins(match, seat, Config.Economy.CrownMovePrice - 1)
+	match:runSwitch(seat)
+	eq(table.find(asked[1].Data.Actions, "Crown"), nil, "not offered when broke")
+	setCoins(match, seat, 20)
+	local before = match.CollectibleSpace
+	match:runSwitch(seat)
+	ok(match.CollectibleSpace ~= before, "Crown moved")
+	eq(match:coinsOf(seat), 20 - Config.Economy.CrownMovePrice, "paid")
+end)
+
+test("duel: winner takes the stake, ties draw, only affordable stakes offered", function()
+	local match, asked = newMatch({ DuelTarget = 1, DuelStake = function(request)
+		return #request.Options -- biggest offered
+	end })
+	local me, rival = match.Seats[1], match.Seats[2]
+	for _, other in match.Seats do
+		setCoins(match, other, 0)
+	end
+	setCoins(match, me, 30)
+	setCoins(match, rival, 12)
+	local rolls = { 6, 2 }
+	match.roll = function()
+		return table.remove(rolls, 1)
+	end
+	local text = match:runDuel(me)
+	local stakeRequest = asked[2]
+	eq(stakeRequest.Options[#stakeRequest.Options], "10 coins", "20 not offered (rival has 12)")
+	ok(string.find(text, "wins 10"), "feed")
+	eq(match:coinsOf(me), 40, "winner")
+	eq(match:coinsOf(rival), 2, "loser")
+	rolls = { 3, 3 }
+	setCoins(match, rival, 12)
+	ok(string.find(match:runDuel(me), "draw"), "tie")
+	eq(match:coinsOf(me), 40, "draw keeps coins")
+end)
+
+test("duel: declining or nobody able to pay costs nothing", function()
+	local match = newMatch({ DuelTarget = function(request)
+		return #request.Options
+	end })
+	local me = match.Seats[1]
+	for _, other in match.Seats do
+		setCoins(match, other, 0)
+	end
+	ok(string.find(match:runDuel(me), "nobody"), "nobody can pay")
+	setCoins(match, me, 10)
+	setCoins(match, match.Seats[3], 10)
+	ok(string.find(match:runDuel(me), "declined"), "declined")
+	eq(match:coinsOf(me), 10, "unchanged")
+end)
+
+test("every chaos event runs; losses are capped; price surge ends on purchase", function()
+	local ChaosEvents = require(Server.Board.ChaosEvents)
+	for _, event in ChaosEvents do
+		local match = newMatch(nil, 5)
+		for i, seat in match.Seats do
+			setCoins(match, seat, i * 20)
+			seat.SpaceId = match.Board.Order[i * 6]
+		end
+		local before = match:coinsOf(match.Seats[4])
+		local text = event.Apply(match, match.Seats[4], match.Rng)
+		ok(type(text) == "string" and #text > 0, event.Id .. " text")
+		ok(before - match:coinsOf(match.Seats[4]) <= Config.Economy.ChaosLossCap, event.Id .. " took more than the cap")
+		for _, seat in match.Seats do
+			ok(match.Board:get(seat.SpaceId), event.Id .. " put a seat off the board")
+		end
+	end
+	local match = newMatch({ Collectible = 1 })
+	for _, event in ChaosEvents do
+		if event.Id == "PriceSurge" then
+			for _ = 1, 5 do
+				event.Apply(match, match.Seats[1], match.Rng)
+			end
+		end
+	end
+	eq(match.CollectiblePrice, Config.Collectible.Price + Config.Economy.PriceSurgeCap, "surge capped")
+	setCoins(match, match.Seats[1], 100)
+	match:offerCollectible(match.Seats[1])
+	eq(match.CollectiblePrice, Config.Collectible.Price, "price back after a purchase")
+	eq(match:coinsOf(match.Seats[1]), 100 - Config.Collectible.Price - Config.Economy.PriceSurgeCap, "paid the surged price")
+end)
+
+test("item space: an item, or coins when the bag is full", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	seat.SpaceId = 4
+	match:land(seat)
+	eq(#seat.Items, 1, "got an item")
+	for _ = 2, Config.Items.MaxHeld do
+		match:giveItem(seat, "Snare")
+	end
+	match:land(seat)
+	eq(match:coinsOf(seat), Config.Economy.ItemSpaceFallbackCoins, "full bag -> coins")
+end)
+
+test("bots: flip a gate that helps, duel the leader, gamble only when behind", function()
+	local match = newMatch()
+	local me = match.Seats[1]
+	match:toggleGates() -- shortcut closed
+	me.SpaceId = 3
+	match.CollectibleSpace = 20 -- far up the shortcut side
+	local actions = { "Gates", "None" }
+	eq(BotBrain.chooseSwitch(match, me, actions), 1, "opens the shortcut it needs")
+	match:toggleGates() -- open
+	eq(BotBrain.chooseSwitch(match, me, actions), 2, "leaves an open shortcut alone")
+
+	CoinService.addCollectibles(match.Seats[3].Participant, 1)
+	local target = match:botDecision(me, { Kind = "DuelTarget", Options = { "a", "b", "c", "No" }, Default = 4, Data = { Seats = { match.Seats[2], match.Seats[3], match.Seats[4] } } })
+	eq(target, 2, "duels the Crown leader")
+	local stake = { Kind = "DuelStake", Options = { "5", "10", "20" }, Default = 1, Data = { Stakes = { 5, 10, 20 } } }
+	eq(match:botDecision(me, stake), 3, "behind: big stake")
+	CoinService.addCollectibles(me.Participant, 2)
+	eq(match:botDecision(me, stake), 1, "ahead: small stake")
 end)
 
 -- Bonuses -----------------------------------------------------------------------------------------

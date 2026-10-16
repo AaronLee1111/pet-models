@@ -25,6 +25,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Cosmetics = require(ReplicatedStorage.PartyShared.Cosmetics)
 local BotBrain = require(script.Parent.BotBrain)
+local ChaosEvents = require(script.Parent.ChaosEvents)
 local Events = require(script.Parent.Events)
 local Items = require(script.Parent.Items)
 local SpaceTypes = require(script.Parent.SpaceTypes)
@@ -75,6 +76,7 @@ function Match.new(board, participants, settings, deps)
 		CollectiblePrice = Config.Collectible.Price,
 		Turn = nil, -- { Seat, Stage = "PreRoll"|"Moving", ItemUsed, Dice, Fixed }
 		Traps = {}, -- [spaceId] = { Owner = seat, Coins = n }
+		GateOpen = {}, -- [gateId] = true/false (Switch spaces flip them)
 	}, Match)
 
 	for index, participant in participants do
@@ -88,6 +90,9 @@ function Match.new(board, participants, settings, deps)
 		}
 		table.insert(self.Seats, seat)
 		table.insert(self.Order, seat)
+	end
+	for _, gate in board.Gates or {} do
+		self.GateOpen[gate.Id] = gate.Open ~= false
 	end
 	self:relocateCollectible()
 	return self
@@ -410,6 +415,7 @@ function Match:buyCollectible(seat): boolean
 		return false
 	end
 	self.Deps.Wallet.addCollectibles(seat.Participant, 1)
+	self.CollectiblePrice = Config.Collectible.Price -- a Price Surge ends with the purchase
 	self:relocateCollectible()
 	return true
 end
@@ -442,23 +448,100 @@ end
 
 -- Movement ------------------------------------------------------------------------------------
 
--- One space forward. At a fork the mover chooses.
+-- Gates ----------------------------------------------------------------------------------------
+
+-- The gate on the edge from -> to, if any.
+function Match:gateOn(from: number, to: number)
+	for _, gate in self.Board.Gates or {} do
+		if gate.From == from and gate.To == to then
+			return gate
+		end
+	end
+	return nil
+end
+
+-- Where a piece can go from `id` right now: closed gates are left out (never all of them).
+function Match:nextOptions(id: number): { number }
+	local all = self.Board:nextOptions(id)
+	local open = {}
+	for _, nextId in all do
+		local gate = self:gateOn(id, nextId)
+		if not gate or self.GateOpen[gate.Id] then
+			table.insert(open, nextId)
+		end
+	end
+	return if #open > 0 then open else all
+end
+
+-- Flips every gate on the board (Switch space). Returns how many are now open.
+function Match:toggleGates(): number
+	local open = 0
+	for _, gate in self.Board.Gates or {} do
+		self.GateOpen[gate.Id] = not self.GateOpen[gate.Id]
+		open += if self.GateOpen[gate.Id] then 1 else 0
+	end
+	self.DistanceCache = nil
+	return open
+end
+
+-- Fewest moves from -> to with the gates as they are now (math.huge if unreachable).
+function Match:distance(from: number, to: number): number
+	self.DistanceCache = self.DistanceCache or {}
+	local row = self.DistanceCache[from]
+	if not row then
+		row = { [from] = 0 }
+		local queue, head = { from }, 1
+		while queue[head] do
+			local id = queue[head]
+			head += 1
+			for _, nextId in self:nextOptions(id) do
+				if row[nextId] == nil then
+					row[nextId] = row[id] + 1
+					table.insert(queue, nextId)
+				end
+			end
+		end
+		self.DistanceCache[from] = row
+	end
+	return row[to] or math.huge
+end
+
+-- One space forward. At a fork the mover chooses; a tolled route is only offered to (and
+-- charged to) someone who can pay.
 function Match:step(seat): number
-	local options = self.Board:nextOptions(seat.SpaceId)
+	local here = seat.SpaceId
+	local options = {}
+	for _, id in self:nextOptions(here) do
+		local gate = self:gateOn(here, id)
+		if not gate or not gate.Toll or self:coinsOf(seat) >= gate.Toll then
+			table.insert(options, id)
+		end
+	end
+	if #options == 0 then
+		options = self:nextOptions(here)
+	end
 	local nextId = options[1]
 	if #options > 1 then
-		local space = self.Board:get(seat.SpaceId)
-		local labels = {}
+		local space = self.Board:get(here)
+		local all = self.Board:nextOptions(here)
+		local labels, info = {}, {}
 		for i, id in options do
-			labels[i] = if space.Paths then space.Paths[i] else ("Space %d"):format(id)
+			local index = table.find(all, id)
+			labels[i] = if space.Paths and index then space.Paths[index] else ("Space %d"):format(id)
+			local gate = self:gateOn(here, id)
+			info[i] = { Toll = gate and gate.Toll or 0 }
 		end
 		nextId = options[self:ask(seat, {
 			Kind = "Path",
 			Prompt = "Which way?",
 			Options = labels,
 			Default = 1,
-			Data = { Spaces = options },
+			Data = { Spaces = options, Info = info },
 		})]
+	end
+	local gate = self:gateOn(here, nextId)
+	if gate and gate.Toll and gate.Toll > 0 then
+		self.Deps.Wallet.spend(seat.Participant, gate.Toll)
 	end
 	seat.SpaceId = nextId
 	seat.Stats.SpacesMoved += 1
@@ -499,6 +582,110 @@ function Match:land(seat): string?
 end
 
 -- Space helpers (used by SpaceTypes / Events) ---------------------------------------------------
+
+function Match:runChaos(seat): string
+	local event = weightedPick(self.Rng, ChaosEvents)
+	return ("%s: %s"):format(event.Name, event.Apply(self, seat, self.Rng))
+end
+
+-- Item space: a random item, or a few coins if the bag is full.
+function Match:itemSpace(seat): string
+	local item = self:giveRandomItem(seat)
+	if item then
+		return ("%s found a %s"):format(seat.Participant.Name, item.Name)
+	end
+	local delta = self:changeCoins(seat, Config.Economy.ItemSpaceFallbackCoins)
+	return ("%s's bag is full: +%d coins instead"):format(seat.Participant.Name, delta)
+end
+
+--[[
+	Duel space: the lander picks an opponent and a stake both can pay; both roll a die and the
+	higher roll takes the stake (a tie is a draw). A duel is a wager, so shields don't apply.
+]]
+function Match:runDuel(seat): string
+	local name = seat.Participant.Name
+	local opponents = {}
+	for _, other in self:opponentsOf(seat) do
+		if self:coinsOf(other) >= Config.Economy.DuelStakes[1] then
+			table.insert(opponents, other)
+		end
+	end
+	if self:coinsOf(seat) < Config.Economy.DuelStakes[1] or #opponents == 0 then
+		return ("%s wants a duel, but nobody has the coins"):format(name)
+	end
+	local labels = {}
+	for i, other in opponents do
+		labels[i] = ("%s (%d coins)"):format(other.Participant.Name, self:coinsOf(other))
+	end
+	table.insert(labels, "No duel")
+	local pick = self:ask(seat, {
+		Kind = "DuelTarget",
+		Prompt = "Duel! Challenge who?",
+		Options = labels,
+		Default = #labels,
+		Data = { Seats = opponents },
+	})
+	local rival = opponents[pick]
+	if not rival then
+		return ("%s declined the duel"):format(name)
+	end
+	local stakes, stakeLabels = {}, {}
+	for _, stake in Config.Economy.DuelStakes do
+		if self:coinsOf(seat) >= stake and self:coinsOf(rival) >= stake then
+			table.insert(stakes, stake)
+			table.insert(stakeLabels, ("%d coins"):format(stake))
+		end
+	end
+	local stake = stakes[self:ask(seat, {
+		Kind = "DuelStake",
+		Prompt = ("Duel %s: how many coins?"):format(rival.Participant.Name),
+		Options = stakeLabels,
+		Default = 1,
+		Data = { Stakes = stakes, Rival = rival },
+	})]
+	local mine, theirs = self:roll(), self:roll()
+	local result = ("%s %d vs %s %d"):format(name, mine, rival.Participant.Name, theirs)
+	if mine == theirs then
+		return result .. ": a draw!"
+	end
+	local winner, loser = if mine > theirs then seat else rival, if mine > theirs then rival else seat
+	local _, taken = self.Deps.Wallet.add(loser.Participant, -stake)
+	self:changeCoins(winner, -taken)
+	return ("%s: %s wins %d coins"):format(result, winner.Participant.Name, -taken)
+end
+
+--[[
+	Switch space: flip the board's gates (free), pay to move the Crown, or leave it.
+]]
+function Match:runSwitch(seat): string
+	local name = seat.Participant.Name
+	local options, actions = {}, {}
+	if #(self.Board.Gates or {}) > 0 then
+		table.insert(options, "Flip the gates")
+		table.insert(actions, "Gates")
+	end
+	if self:coinsOf(seat) >= Config.Economy.CrownMovePrice then
+		table.insert(options, ("Move the %s (%d coins)"):format(self.CollectibleName, Config.Economy.CrownMovePrice))
+		table.insert(actions, "Crown")
+	end
+	table.insert(options, "Leave it")
+	table.insert(actions, "None")
+	local action = actions[self:ask(seat, {
+		Kind = "Switch",
+		Prompt = "Switch: change the board?",
+		Options = options,
+		Default = #options,
+		Data = { Actions = actions },
+	})]
+	if action == "Gates" then
+		local open = self:toggleGates()
+		return ("%s flipped the gates: %s"):format(name, if open > 0 then "the shortcut is open" else "the shortcut is closed")
+	elseif action == "Crown" and self.Deps.Wallet.spend(seat.Participant, Config.Economy.CrownMovePrice) then
+		self:relocateCollectible()
+		return ("%s paid %d coins to move the %s"):format(name, Config.Economy.CrownMovePrice, self.CollectibleName)
+	end
+	return ("%s left the board as it is"):format(name)
+end
 
 function Match:runEvent(seat): string
 	local event = weightedPick(self.Rng, Events)

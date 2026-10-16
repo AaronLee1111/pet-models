@@ -104,6 +104,11 @@ Config.Economy = {
 	},
 	ShopOffers = 2, -- cosmetics offered per shop visit
 	ShopItemOffers = 1, -- board items offered per shop visit (on top of the cosmetics)
+	ItemSpaceFallbackCoins = 3, -- Item space with a full bag
+	ChaosLossCap = 15, -- most coins a single Chaos space can take
+	PriceSurgeCap = 10, -- Price Surge can raise the Crown price by at most this much
+	DuelStakes = { 5, 10, 20 }, -- Duel space wagers (only ones both duellists can pay are offered)
+	CrownMovePrice = 8, -- Switch space: pay this to send the Crown somewhere else
 }
 
 -- Board items (Board/Items has the list). One item may be used per turn, before rolling.

@@ -65,6 +65,23 @@ the player's profile.
 4. Set `Config.Match.Board = "Beach"`. A broken board stops the match with a message saying
    exactly what's wrong (dead end, missing space, unreachable space, unknown type...).
 
+### Space types
+| Space | Tile | What happens |
+|---|---|---|
+| Neutral | (blank) | nothing |
+| Gain / Lose | +3 / -3 | coins (`Config.Economy`) |
+| Item | ITEM | a random item (coins if your bag is full) |
+| Gift | GIFT | weighted reward: coins, item, cosmetic or (rarely) a Crown |
+| Event | ? | a mixed event (Lucky Find, Swap Spots, Item Drop, Warp…) |
+| Chaos | ! | mostly bad, capped (Thunderclap, Tax Day, Shuffle, Bag Swap, Price Surge, Lucky Break) |
+| Duel | DUEL | pick an opponent and a stake you can both pay; both roll, higher roll takes it |
+| Switch | SWITCH | flip the board's gates (free) or pay 8 coins to move the Crown |
+| Shop | SHOP | buy an item or a cosmetic with match coins |
+
+Gates (`Gates` in a board) are fork edges that can be closed by a Switch and/or cost a toll.
+Classic's shortcut is a 3-coin toll gate; closed gates are never offered, and bots plan with
+the gates as they currently are (`Match:distance`).
+
 ### Add a space type
 Add an entry to `src/server/Board/SpaceTypes.luau` with `Name`, `Short` (tile text), `Color`
 and `Resolve(match, seat, space) -> feed text`, then use its key in a board. Resolve can use

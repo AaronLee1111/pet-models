@@ -20,7 +20,18 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local BotBrain = {}
 
 -- How much a bot likes landing on / passing each space type (scaled down with distance).
-BotBrain.SpaceValue = { Gain = 3, Lose = -3, Event = 0.5, Reward = 3, Shop = 1, Neutral = 0 }
+BotBrain.SpaceValue = {
+	Gain = 3,
+	Lose = -3,
+	Event = 0.5,
+	Reward = 3,
+	Shop = 1,
+	Neutral = 0,
+	Item = 2,
+	Duel = 0.5,
+	Chaos = -2,
+	Switch = 0.5,
+}
 -- How much a bot wants each item in a shop.
 BotBrain.ItemValue = {
 	DoubleDice = 3,
@@ -47,7 +58,7 @@ local function isLastRound(match): boolean
 end
 
 local function crownDistance(match, spaceId: number): number
-	return match.Board:distance(spaceId, match.CollectibleSpace)
+	return match:distance(spaceId, match.CollectibleSpace)
 end
 
 -- True if this seat has fewer collectibles than the leader.
@@ -79,13 +90,14 @@ function BotBrain.branchScore(match, seat, startId: number, profile): number
 	return score + weight * (20 - distance) * 0.5
 end
 
-function BotBrain.choosePath(match, seat, spaces, profile): number
+function BotBrain.choosePath(match, seat, spaces, profile, info): number
 	if profile.LookAhead <= 0 then
 		return match.Rng:NextInteger(1, #spaces)
 	end
 	local best, bestScore = 1, -math.huge
 	for i, id in spaces do
-		local score = BotBrain.branchScore(match, seat, id, profile)
+		local toll = info and info[i] and info[i].Toll or 0
+		local score = BotBrain.branchScore(match, seat, id, profile) - toll * 0.5
 		if score > bestScore then
 			best, bestScore = i, score
 		end
@@ -263,6 +275,34 @@ function BotBrain.chooseItem(match, seat, profile)
 	return nil
 end
 
+-- Switch space ------------------------------------------------------------------------------------
+
+-- Flip the gates if that brings the Crown closer; pay to move the Crown if an opponent is about
+-- to reach it and this bot can't; otherwise leave the board alone.
+function BotBrain.chooseSwitch(match, seat, actions, _profile): number
+	local leave = table.find(actions, "None") or #actions
+	local gatesIndex = table.find(actions, "Gates")
+	if gatesIndex then
+		local now = crownDistance(match, seat.SpaceId)
+		match:toggleGates()
+		local flipped = crownDistance(match, seat.SpaceId)
+		match:toggleGates() -- put them back: this was only a look
+		if flipped + 3 <= now then
+			return gatesIndex
+		end
+	end
+	local crownIndex = table.find(actions, "Crown")
+	if crownIndex then
+		local mine = crownDistance(match, seat.SpaceId)
+		for _, other in match:opponentsOf(seat) do
+			if crownDistance(match, other.SpaceId) <= 4 and match:coinsOf(other) >= match.CollectiblePrice and mine > 6 then
+				return crownIndex
+			end
+		end
+	end
+	return leave
+end
+
 -- Ask requests ----------------------------------------------------------------------------------
 
 function BotBrain.decide(match, seat, request, profile, _skill: number): number
@@ -273,7 +313,7 @@ function BotBrain.decide(match, seat, request, profile, _skill: number): number
 	if request.Kind == "Collectible" then
 		return 1 -- always buy: it's what wins
 	elseif request.Kind == "Path" and request.Data and request.Data.Spaces then
-		return BotBrain.choosePath(match, seat, request.Data.Spaces, profile)
+		return BotBrain.choosePath(match, seat, request.Data.Spaces, profile, request.Data.Info)
 	elseif request.Kind == "Shop" and request.Data and request.Data.Items then
 		return BotBrain.chooseShop(match, seat, request.Data.Items, request.Default, profile)
 	elseif request.Kind == "Target" and request.Data and request.Data.Seats then
@@ -281,6 +321,21 @@ function BotBrain.decide(match, seat, request, profile, _skill: number): number
 		return table.find(request.Data.Seats, target) or 1
 	elseif request.Kind == "DieFace" then
 		return (BotBrain.bestFace(match, seat))
+	elseif request.Kind == "DuelTarget" and request.Data and request.Data.Seats then
+		-- Challenge whoever is ahead (or richest): a win there helps the most.
+		local best, bestScore = 1, -math.huge
+		for i, other in request.Data.Seats do
+			local score = match:collectiblesOf(other) * 100 + match:coinsOf(other)
+			if score > bestScore then
+				best, bestScore = i, score
+			end
+		end
+		return best
+	elseif request.Kind == "DuelStake" and request.Data and request.Data.Stakes then
+		-- A die duel is a coin flip: bots that are behind gamble big, leaders play it safe.
+		return if isBehind(match, seat) then #request.Data.Stakes else 1
+	elseif request.Kind == "Switch" and request.Data and request.Data.Actions then
+		return BotBrain.chooseSwitch(match, seat, request.Data.Actions, profile)
 	end
 	return request.Default or 1
 end

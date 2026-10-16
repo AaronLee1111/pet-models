@@ -139,6 +139,7 @@ local function publish()
 		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
 	)
 	current.World:setTraps(match.Traps)
+	current.World:setGates(match.Board.Gates, match.GateOpen)
 	current.StateMessage = stateMessage()
 	MinigameManager.broadcast(current.StateMessage)
 end
