@@ -22,6 +22,9 @@
 ]]
 
 return {
+ { Id="MoonDial", Name="Moon Dial", Description="Rotate the bridge before rolling. Shared cooldown: 2 rounds; automatic rotation still happens.",
+ Price=7, Weight=2, Boards={"MagicalFestival"},
+ Use=function(match) return match:useMoonDial() end },
 	{
 		Id = "DoubleDice",
 		Name = "Double Dice",

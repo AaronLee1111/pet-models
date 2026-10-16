@@ -68,7 +68,7 @@ local function layoutMessage(board)
 	for key, spaceType in SpaceTypes do
 		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
 	end
-	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend }
+	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend, Festival = board.Bridge ~= nil }
 end
 
 local function describeItems(seat)
@@ -97,6 +97,7 @@ local function stateMessage()
 			Coins = match:coinsOf(seat),
 			Collectibles = match:collectiblesOf(seat),
 			SpaceId = seat.SpaceId,
+			Zone = match.Board:get(seat.SpaceId).Zone,
 			Character = participant:GetCharacter(),
 		})
 	end
@@ -108,6 +109,7 @@ local function stateMessage()
 		end
 	end
 	return {
+		Bridge = match:bridgeState(),
 		OrderPending = pending,
 		Dice = match.Turn and match.Turn.Dice,
 		ItemUsed = match.Turn and match.Turn.ItemUsed,
@@ -154,6 +156,8 @@ local function publish()
 		match.CollectibleSpace,
 		("%s · %d coins"):format(Config.Collectible.Name, match.CollectiblePrice)
 	)
+	current.World:setFestivalLighting(current.Stage ~= "Minigame")
+	current.World:setBridgeState(match:bridgeState())
 	current.World:setTraps(match.Traps)
 	current.World:setGates(match.Board.Gates, match.GateOpen)
 	current.StateMessage = stateMessage()
@@ -187,9 +191,13 @@ local function placeSeat(seat)
 	if not participant:IsAlive() then
 		return
 	end
-	local facing = current.Match.Board:nextOptions(seat.SpaceId)[1]
+	local facing = current.Match:nextOptions(seat.SpaceId)[1]
 	participant:Teleport(current.World:spaceCFrame(seat.SpaceId, slotOf(seat), facing))
 	participant:Freeze()
+	if current.Match.Board.Bridge then
+		local root = participant:GetRoot()
+		if root then root.Anchored = true end
+	end
 	-- Pieces bumping on a shared tile can tip over; stand bots back up (players' own
 	-- clients do the same in BoardView).
 	local humanoid = participant:GetHumanoid()
@@ -204,13 +212,56 @@ local function placeAll()
 	end
 end
 
+-- Board pieces are anchored on this board: clients cannot jump/walk across a gap.
+-- Release before any minigame/duel or lobby transition.
+local function releasePieces()
+ if not current or not current.Match or not current.Match.Board.Bridge then return end
+ for _,seat in current.Match.Seats do
+  local root=seat.Participant:GetRoot()
+  if root then root.Anchored=false end
+ end
+end
+
+local function warnRotation()
+ local state=current.Match:bridgeState()
+ current.Stage="RotationWarning"
+ feed("Moon bridge: " .. state.Alignment .. " → " .. state.NextAlignment .. ". Stay on your space!")
+ publish()
+ task.wait(current.Match.Board.Bridge.WarningSeconds)
+end
+
+local function animateRotation()
+ local match=current.Match
+ current.Stage="Rotating"
+ -- State and connectivity have already committed together; no turns or seam hops
+ -- can run until this synchronous presentation finishes.
+ publish()
+ local startAngle=current.BridgeAngle or 0
+ local duration=match.Board.Bridge.RotationSeconds
+ local started=now()
+ repeat
+  local alpha=math.clamp((now()-started)/duration,0,1)
+  current.World:setBridgeAngle(startAngle+((if match.Orientation==0 then 0 else -math.pi/2)-startAngle)*(alpha*alpha*(3-2*alpha)))
+  for _,seat in match.Seats do
+   if seat.SpaceId>=33 then placeSeat(seat) end
+  end
+  task.wait()
+ until now()-started>=duration
+ current.BridgeAngle=if match.Orientation==0 then 0 else -math.pi/2
+ current.World:setBridgeAngle(current.BridgeAngle)
+ placeAll()
+ current.LayoutMessage=layoutMessage(match.Board)
+ MinigameManager.broadcast(current.LayoutMessage)
+ feed("Moon bridge now " .. match:bridgeState().Alignment .. ". Closed zones keep looping.")
+end
+
 --[[
 	Safe recovery: while the board is up, any piece that has been knocked off its space,
 	fallen off the board or lost its body is put back (bots get a new body first). Runs once
 	a second; Match positions are the truth, the world just follows them.
 ]]
 local function recoverPieces()
-	if not current or current.Stage == "Minigame" or current.Stage == "Finished" then
+	if not current or current.Stage == "Minigame" or current.Stage == "Finished" or current.Stage == "Rotating" then
 		return 0
 	end
 	local fixed = 0
@@ -338,6 +389,7 @@ local function playDuel(seatA, seatB)
 	current.Stage = "Minigame"
 	publish()
 	task.wait(1)
+	releasePieces()
 	local ok, winner = xpcall(MinigameManager.runDuel, debug.traceback, seatA.Participant, seatB.Participant)
 	if not ok then
 		warn("[BoardGame] Duel crashed, using dice instead:\n" .. tostring(winner))
@@ -455,7 +507,13 @@ local function useItem(seat, slot, target, choice)
 			return false
 		end
 	end
-	local used, text = match:useItem(seat, slot, target, choice)
+	local previousStage=current.Stage
+ local revision=match.BridgeRevision
+ if id=="MoonDial" and match:canUseMoonDial() and match.Turn and match.Turn.Seat==seat
+  and match.Turn.Stage=="PreRoll" and not match.Turn.ItemUsed then warnRotation() end
+ local used, text = match:useItem(seat, slot, target, choice)
+ if match.BridgeRevision~=revision then animateRotation() end
+ current.Stage=previousStage
 	if used then
 		feed(text)
 		placeAll() -- swaps and warps move pieces
@@ -626,11 +684,16 @@ function BoardGame.play(participants, settings)
 		end
 
 		current.Turn = nil
+  if match:rotationDue() then
+   warnRotation()
+   if match:finishBoardRound() then animateRotation() end
+  end
 		current.Stage = "Minigame"
 		current.Text = "Minigame time!"
 		publish()
 		task.wait(1)
 		refreshSeats()
+		releasePieces()
 		local ok, results, rows = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
 		if ok then
 			match:recordMinigame(results, rows)
@@ -687,6 +750,7 @@ end
 -- Tears the match down and sends everyone back to the lobby. Safe to call any time.
 function BoardGame.cleanup()
 	local match = current and current.Match
+	releasePieces()
 	if current then
 		current.World:destroy()
 	end
@@ -749,7 +813,7 @@ MinigameManager.onReady(function(player)
 	if current and current.LayoutMessage then
 		MinigameManager.sendTo(player, current.LayoutMessage)
 		if current.StateMessage then
-			MinigameManager.sendTo(player, current.StateMessage)
+			MinigameManager.sendTo(player, stateMessage())
 		end
 	end
 end)

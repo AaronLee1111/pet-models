@@ -14,6 +14,8 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 
+local FestivalScene = require(script.Parent.FestivalScene)
+
 local BoardWorld = {}
 BoardWorld.__index = BoardWorld
 
@@ -40,7 +42,7 @@ local function part(props): Part
 end
 
 function BoardWorld.build(board, spaceTypes, origin: Vector3)
-	local self = setmetatable({ Board = board, Origin = origin, Tops = {} }, BoardWorld)
+	local self = setmetatable({ Board = board, Origin = origin, Tops = {}, Tiles = {} }, BoardWorld)
 	local spacing = Config.Board.SpaceSpacing
 	local folder = Instance.new("Folder")
 	folder.Name = "PartyBoard"
@@ -58,6 +60,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		return origin + Vector3.new(at[1] * spacing, 0, -at[2] * spacing) - centre
 	end
 
+	if not board.Bridge then
 	part({
 		Name = "Base",
 		Size = Vector3.new((maxX - minX) * spacing + 30, 2, (maxZ - minZ) * spacing + 30),
@@ -67,6 +70,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		Parent = folder,
 	})
 
+	end
 	for _, id in board.Order do
 		local space = board.Spaces[id]
 		local spaceType = spaceTypes[space.Type]
@@ -80,6 +84,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 			Color = spaceType.Color,
 			Parent = folder,
 		})
+		self.Tiles[id] = tile
 		tile:SetAttribute("SpaceId", id)
 		tile:SetAttribute("SpaceType", space.Type)
 		if spaceType.Short ~= "" then
@@ -101,6 +106,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 
 		-- Paths to the next spaces
 		for _, nextId in space.Next do
+			if board.Bridge and (id >= 33 or nextId >= 33) then continue end
 			local target = worldAt(board.Spaces[nextId].At)
 			local length = (target - position).Magnitude - TILE_SIZE
 			if length > 0 then
@@ -116,6 +122,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		end
 	end
 
+	if board.Bridge then FestivalScene.build(self) end
 	-- The collectible marker: a floating gold gem with a price tag.
 	local marker = part({
 		Name = "Collectible",
@@ -171,6 +178,7 @@ function BoardWorld:isMisplaced(position: Vector3, id: number): boolean
 end
 
 function BoardWorld:setCollectible(id: number?, label: string)
+	self.MarkerId = id
 	local top = id and self.Tops[id]
 	self.Marker.Transparency = if top then 0 else 1
 	self.MarkerLabel.Text = label
@@ -248,7 +256,32 @@ function BoardWorld:setTraps(traps)
 	end
 end
 
+function BoardWorld:setBridgeAngle(angle)
+ FestivalScene.align(self,angle)
+ if self.MarkerId and self.MarkerId>=33 then self.Marker.Position=self.Tops[self.MarkerId]+Vector3.new(0,7,0) end
+ for id,marker in self.TrapMarkers or {} do
+  if id>=33 then marker.Position=self.Tops[id]+Vector3.new(0,0.2,0) end
+ end
+end
+function BoardWorld:setBridgeState(state)
+ if state then FestivalScene.status(self,state) end
+end
+
+function BoardWorld:setFestivalLighting(active)
+ if not self.Board.Bridge then return end
+ local lighting=game:GetService("Lighting")
+ if active and not self.SavedLighting then
+  self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
+  lighting.ClockTime=17.8;lighting.Ambient=Color3.fromRGB(145,130,180)
+  lighting.OutdoorAmbient=Color3.fromRGB(155,150,190);lighting.Brightness=2
+ elseif not active and self.SavedLighting then
+  for key,value in self.SavedLighting do lighting[key]=value end
+  self.SavedLighting=nil
+ end
+end
+
 function BoardWorld:destroy()
+ self:setFestivalLighting(false)
 	self.Folder:Destroy()
 end
 

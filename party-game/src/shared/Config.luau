@@ -49,7 +49,7 @@ Config.Match = {
 	},
 	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
 	Board = "Classic", -- default board: module name in PartyServer/Board/Boards
-	Boards = { "Classic" }, -- boards the host can pick (in this order)
+	Boards = { "Classic", "MagicalFestival" }, -- boards the host can pick (in this order)
 	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
 	Mode = "Board",
 	Modes = { "Board", "Minigames" },

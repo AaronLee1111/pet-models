@@ -32,6 +32,8 @@ local Events = require(script.Parent.Events)
 local Items = require(script.Parent.Items)
 local SpaceTypes = require(script.Parent.SpaceTypes)
 
+local Bridge = require(script.Parent.RotatingBridge)
+
 local Match = {}
 Match.__index = Match
 
@@ -71,6 +73,10 @@ function Match.new(board, participants, settings, deps)
 		Rounds = settings.Rounds or Config.Match.BoardRounds,
 		Difficulty = settings.Difficulty or Config.Match.BotDifficulty,
 		Round = 0,
+		Orientation = 0,
+		BridgeRevision = 0,
+		LastRotationRound = 0,
+		DialReadyRound = 1,
 		Seats = {},
 		Order = {}, -- seat order until decideTurnOrder runs
 		CollectibleSpace = nil,
@@ -258,6 +264,9 @@ function Match:useItem(seat, slot, target, choice): (boolean, string)
 	if not item then
 		return false, "unknown item"
 	end
+	if item.Boards and not table.find(item.Boards, self.Board.Name) then
+		return false, "item belongs to another board"
+	end
 	if item.Target == "Opponent" then
 		if type(target) ~= "table" or target == seat or not table.find(self.Seats, target) then
 			return false, "pick an opponent"
@@ -399,7 +408,7 @@ function Match:relocateCollectible()
 		occupied[seat.SpaceId] = true
 	end
 	for _, id in self.Board.CrownSpaces do
-		if id ~= self.CollectibleSpace then
+		if id ~= self.CollectibleSpace and (not self.Board.Bridge or Bridge.connected(self.Board:get(id).Zone,self.Orientation)) then
 			table.insert(candidates, id)
 			if not occupied[id] then
 				table.insert(free, id)
@@ -548,6 +557,9 @@ end
 
 -- Where a piece can go from `id` right now: closed gates are left out (never all of them).
 function Match:nextOptions(id: number): { number }
+	if self.Board.Bridge then
+		return Bridge.options(self.Board, id, self.Orientation)
+	end
 	local all = self.Board:nextOptions(id)
 	local open = {}
 	for _, nextId in all do
@@ -571,6 +583,53 @@ function Match:toggleGates(): number
 end
 
 -- Fewest moves from -> to with the gates as they are now (math.huge if unreachable).
+function Match:bridgeState()
+ return Bridge.snapshot(self)
+end
+
+function Match:canUseMoonDial()
+ return self.Board.Bridge ~= nil and self.Round >= self.DialReadyRound
+end
+
+-- Commit orientation, route cache and Crown together without yielding. Only the turn
+-- driver invokes automatic rotation, after all four turns have ended (no seam crossing).
+function Match:rotateBridge()
+ if not self.Board.Bridge or (self.Turn and self.Turn.Stage ~= "PreRoll") then return false end
+ local nextOrientation = 1-self.Orientation
+ local crown = self.CollectibleSpace
+ if not crown or not Bridge.connected(self.Board:get(crown).Zone,nextOrientation) then
+  crown = if self.CollectibleSpace == 34 then 35 else 34
+ end
+ self.Orientation = nextOrientation
+ self.CollectibleSpace = crown
+ self.DistanceCache = nil
+ self.BridgeRevision += 1
+ return true
+end
+
+function Match:rotationDue()
+ return self.Board.Bridge ~= nil and self.Turn == nil
+  and self.Round >= self.LastRotationRound+self.Board.Bridge.EveryRounds
+end
+
+function Match:finishBoardRound()
+ if not self:rotationDue() then return false end
+ if not self:rotateBridge() then return false end
+ self.LastRotationRound = self.Round
+ return true
+end
+
+function Match:useMoonDial()
+ if not self:canUseMoonDial() then return nil,"Moon Dial is cooling down until round " .. self.DialReadyRound end
+ if not self:rotateBridge() then return nil,"bridge is busy" end
+ self.DialReadyRound = self.Round+self.Board.Bridge.DialCooldownRounds*self.Board.Bridge.EveryRounds
+ return "Moon Dial: bridge rotated to " .. self:bridgeState().Alignment .. "; automatic rotation still happens this round"
+end
+
+function Match:distanceAt(from, to, orientation)
+ return Bridge.distance(self.Board,from,to,orientation)
+end
+
 function Match:distance(from: number, to: number): number
 	self.DistanceCache = self.DistanceCache or {}
 	local row = self.DistanceCache[from]
@@ -609,7 +668,7 @@ function Match:routeInfo(_seat, firstId: number, toll: number)
 	end
 	return {
 		CrownDistance = 1 + self:distance(firstId, self.CollectibleSpace),
-		Preview = table.concat(shorts, " "),
+		Preview = table.concat(shorts, " ") .. (if self.Board.Bridge and not Bridge.connected(self.Board:get(firstId).Zone, self.Orientation) then " · bridge CLOSED; local loop" else ""),
 		Toll = toll,
 	}
 end

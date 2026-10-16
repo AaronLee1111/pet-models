@@ -252,7 +252,14 @@ function BoardView:setState(message)
 			then ("Tap ROLL to roll %d dice!"):format(message.Dice)
 			else "Use an item, or tap ROLL to roll the die!"
 	end
-	self.Subtitle.Text = sub
+	if message.Bridge and message.Stage ~= "RotationWarning" and message.Stage ~= "Rotating" then sub ..= " · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
+	if message.Bridge and message.Stage == "Roll" then
+  for _,seat in message.Seats do
+   local dock=seat.Zone and message.Bridge.Docks[seat.Zone]
+   if seat.Id==message.TurnId and dock and not dock.Open then sub="Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
+  end
+ end
+ self.Subtitle.Text = sub
 
 	-- Standings rows (turn order)
 	for _, row in self.Rows do
@@ -409,6 +416,11 @@ function BoardView:refreshMap()
 	end
 	line("MAP" .. (if layout and layout.Name then " · " .. layout.Name else ""), Theme.Colors.Accent)
 	line(("%s: space %s · %d coins"):format(state.CollectibleName or "Crown", tostring(state.CollectibleSpace), state.CollectiblePrice or 0), Theme.Colors.Accent)
+	if state.Bridge then
+  line("Bridge " .. state.Bridge.Alignment .. " · next " .. state.Bridge.NextAlignment,Theme.Colors.Accent)
+  line("Rotates after round " .. state.Bridge.NextRound .. " · Moon Dial ready round " .. state.Bridge.DialReadyRound)
+  for _,dock in state.Bridge.Docks do line(dock.Name .. ": " .. (if dock.Open then "OPEN" else "EXIT CLOSED · local loop")) end
+ end
 	for _, gate in state.Gates or {} do
 		line(("Gate %s: %s%s"):format(gate.Id, if gate.Open then "open" else "CLOSED", if gate.Open and gate.Toll > 0 then (" · toll %d"):format(gate.Toll) else ""))
 	end
@@ -530,13 +542,20 @@ function BoardView:show()
 	local camera = Workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Scriptable
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
-		local goal = if self.MapOpen then self.Centre else turnFocus(self)
+		local festival = self.Layout and self.Layout.Festival
+		local goal = if self.MapOpen or festival then self.Centre else turnFocus(self)
 		if not goal then
 			return
 		end
 		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
 		camera.CameraType = Enum.CameraType.Scriptable
-		camera.CFrame = CFrame.lookAt(self.Focus + (if self.MapOpen then MAP_OFFSET else CAMERA_OFFSET), self.Focus)
+		local offset=if self.MapOpen then MAP_OFFSET else CAMERA_OFFSET
+  if festival then
+   local aspect=camera.ViewportSize.X/math.max(1,camera.ViewportSize.Y)
+   local distance=math.max(190,190/math.max(0.5,aspect))
+   offset=Vector3.new(0,distance,distance*0.38)
+  end
+  camera.CFrame = CFrame.lookAt(self.Focus + offset, self.Focus)
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")

@@ -311,3 +311,10 @@ minigame actions) alongside two bots:
   chips, camera restore, action and spectator UI, arena cleanup, and that nothing errored or warned.
   It's a smoke test only. Real physics, rendering and networking still need a Studio playtest.
 - `selene src`: lint against the Roblox API (`selene generate-roblox-std` once to create `roblox.yml`).
+
+## Magical Festival Island
+
+The second board has four eight-space local loops and a straight, four-space rotating bridge.
+Closed zones remain playable. Moon Dial permits an early rotation with a shared cooldown;
+automatic round-end rotation still occurs. See [the board guide](docs/MagicalFestival.md) for
+mechanics, geometry sources, fairness, test commands and integration notes.

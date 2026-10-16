@@ -14,6 +14,7 @@
 	                   (Switch spaces flip them) and/or costs Toll coins to take
 ]]
 
+local RotatingBridge = require(script.Parent.RotatingBridge)
 local BoardLayout = {}
 
 local Board = {}
@@ -104,6 +105,9 @@ function BoardLayout.validate(data, spaceTypes): string?
 		end
 	end
 
+	local bridgeProblem = RotatingBridge.validate(data)
+	if bridgeProblem then return bridgeProblem end
+
 	-- Every space must be reachable from Start, and Start reachable again from every space
 	-- (otherwise someone could get stuck on a branch forever).
 	local function reach(from, edges)
@@ -150,6 +154,8 @@ function BoardLayout.load(data, spaceTypes)
 		Start = data.Start,
 		CrownSpaces = table.clone(data.CrownSpaces),
 		Gates = data.Gates or {},
+		Bridge = data.Bridge,
+		Zones = data.Zones,
 		Spaces = {},
 		Order = {},
 	}, Board)

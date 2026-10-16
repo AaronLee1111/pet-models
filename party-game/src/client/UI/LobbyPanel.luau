@@ -195,7 +195,7 @@ local function settingRow(self, order: number, label: string, key: string, choic
 			Font = Theme.BodyFont,
 			TextScaled = true,
 			TextColor3 = if isSelected then Theme.Colors.Overlay else Theme.Colors.Text,
-			Text = tostring(choice),
+			Text = if choice == "MagicalFestival" then "Magical Festival Island" else tostring(choice),
 			Parent = buttons,
 		}, { Theme.corner(12), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 24 }) })
 		if isHost then
