@@ -18,6 +18,13 @@ Six placeholder minigames exercise the framework:
 | Kernel Catch | FFA | AngledOverhead | move + jump, no actions | 🍿 popcorn caught |
 | Ice Dash | FFA | FollowBehind | **auto-forward**, hold **◀ / ▶** to steer (A/D, arrows, on-screen) | race bar along the top |
 | Pole Shimmy | FFA | SideView (follows you up) | **movement locked**, alternate **LEFT / RIGHT** (A / D, on-screen) | height % |
+| Pattern Recall | FFA (memory) | AngledOverhead | **movement locked**, colour buttons RED / BLUE / GREEN / YELLOW (1-4, gamepad B/X/A/Y, on-screen) | colours recalled |
+| Bullseye | 1v3 (timing, precision) | AngledOverhead | **movement locked**, **STOP** (Space / ButtonA / on-screen) | points |
+| Quick Draw | Duel (reaction) | SideView | **movement locked**, **DRAW** (Space / ButtonA / on-screen) | points (first to 2) |
+
+Duel minigames (`Layout = "Duel"`) are never in the normal vote: a board Duel space plays one
+between the two duellists while everyone else watches (`MinigameManager.runDuel`), and the
+stake goes to the winner. If no Duel minigame is registered, Duel spaces fall back to dice.
 
 ## Play it in Studio (1 real player + 3 bots)
 
@@ -219,7 +226,7 @@ Coins by placement are set in `Config.CoinsByPlacement = { 10, 6, 3, 1 }`. Ties 
    ```lua
    Info = {
        Name = "Coin Rush", Description = "...", Duration = 60,
-       Layout = "FFA",                                 -- "FFA" | "1v3" | "2v2"
+       Layout = "FFA",                                 -- "FFA" | "1v3" | "2v2" | "Duel"
        Camera = { Mode = "AngledOverhead" },           -- or "FollowBehind" | "SideView" (+ Height/Distance overrides)
        Controls = {
            Move = true, Jump = true, WalkSpeed = 16,   -- Move=false locks walking (server-enforced)
