@@ -123,6 +123,25 @@ Config.Economy = {
 	CrownMovePrice = 8, -- Switch space: pay this to send the Crown somewhere else
 }
 
+-- Comeback help for trailing players. Kept small and late so early play still matters.
+--   StartRound            no help before this round
+--   LastPlaceCoins        coins for the last-place seat(s) at the start of each round
+--   UnderdogGap           a seat this many Crowns behind the leader is an "underdog" ...
+--   UnderdogDiscount      ... and pays this much less for a Crown (never below MinCrownPrice)
+--   UnderdogGiftBoost     ... and its Gift-space Item/Crown chances are multiplied by this
+--   FinalFrenzy           in the last round Gain/Lose spaces are worth FrenzyMultiplier times more
+Config.Comeback = {
+	Enabled = true,
+	StartRound = 2,
+	LastPlaceCoins = 5,
+	UnderdogGap = 2,
+	UnderdogDiscount = 5,
+	MinCrownPrice = 10,
+	UnderdogGiftBoost = 2,
+	FinalFrenzy = true,
+	FrenzyMultiplier = 2,
+}
+
 -- Board items (Board/Items has the list). One item may be used per turn, before rolling.
 Config.Items = {
 	MaxHeld = 3,
@@ -1092,6 +1111,7 @@ local function stateMessage()
 		table.insert(seats, {
 			Items = describeItems(seat),
 			Shield = seat.Shield,
+			Underdog = match:isUnderdog(seat),
 			OrderRolls = current.OrderRolls and current.OrderRolls[seat],
 			Id = participant.Id,
 			Name = participant.Name,
@@ -1128,7 +1148,8 @@ local function stateMessage()
 		CollectibleSpace = match.CollectibleSpace,
 		CollectibleName = Config.Collectible.Name,
 		CollectiblePlural = Config.Collectible.Plural,
-		CollectiblePrice = Config.Collectible.Price,
+		CollectiblePrice = match.CollectiblePrice,
+		Frenzy = match:isFrenzy(),
 		Seats = seats,
 	}
 end
@@ -1140,7 +1161,7 @@ local function publish()
 	local match = current.Match
 	current.World:setCollectible(
 		match.CollectibleSpace,
-		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
+		("%s · %d coins"):format(Config.Collectible.Name, match.CollectiblePrice)
 	)
 	current.World:setTraps(match.Traps)
 	current.World:setGates(match.Board.Gates, match.GateOpen)
@@ -1529,16 +1550,22 @@ function BoardGame.play(participants, settings)
 	MinigameManager.broadcast(current.LayoutMessage)
 
 	for round = 1, match.Rounds do
-		match.Round = round
+		local catchUp = match:startRound(round)
 		current.Turn = nil
 		current.Stage = "Start"
 		current.Text = ("Round %d of %d"):format(round, match.Rounds)
+			.. (if match:isFrenzy() then "  ·  FINAL FRENZY: coin spaces x2" else "")
 		MinigameManager.setPhase(Net.Phase.Board, { Round = round, Rounds = match.Rounds })
 		refreshSeats()
 		ensureBodies()
 		placeAll()
 		publish()
 		task.wait(1.5)
+		if catchUp then
+			feed(catchUp)
+			publish()
+			task.wait(1.5)
+		end
 		if round == 1 then
 			rollForTurnOrder()
 		end
@@ -2301,7 +2328,7 @@ function BotBrain.branchScore(match, seat, startId: number, profile): number
 		id = space.Next[1]
 	end
 	-- The Crown matters most when you can (nearly) pay for it.
-	local coins, price = match:coinsOf(seat), match.CollectiblePrice
+	local coins, price = match:coinsOf(seat), match:collectiblePriceFor(seat)
 	local weight = if coins >= price then 4 elseif coins >= price - 6 then 1.5 else 0.3
 	local distance = math.min(crownDistance(match, startId), 20)
 	return score + weight * (20 - distance) * 0.5
@@ -2326,7 +2353,7 @@ end
 
 -- Coins a bot keeps back for the Crown before buying anything.
 function BotBrain.reserve(match, seat, profile): number
-	local reserve = match.CollectiblePrice * profile.SaveFactor
+	local reserve = match:collectiblePriceFor(seat) * profile.SaveFactor
 	if isLastRound(match) and crownDistance(match, seat.SpaceId) > 2 * AVERAGE_ROLL + 2 then
 		reserve = 0 -- can't reach the Crown again anyway: spend
 	end
@@ -2410,7 +2437,7 @@ end
 	and die-face choice where the item needs them. To teach bots a new item, add a branch here.
 ]]
 function BotBrain.itemScore(match, seat, id: string)
-	local coins, price = match:coinsOf(seat), match.CollectiblePrice
+	local coins, price = match:coinsOf(seat), match:collectiblePriceFor(seat)
 	local canBuy = coins >= price
 	local distance = crownDistance(match, seat.SpaceId)
 	local late = isLastRound(match)
@@ -3358,9 +3385,88 @@ function Match:relocateCollectible()
 	return self.CollectibleSpace
 end
 
+-- Comeback ------------------------------------------------------------------------------------
+
+local function comebackOn(match): boolean
+	return Config.Comeback.Enabled and match.Round >= Config.Comeback.StartRound
+end
+
+-- An underdog is far enough behind the Crown leader to get help (discount, better gifts).
+function Match:isUnderdog(seat): boolean
+	if not comebackOn(self) then
+		return false
+	end
+	local leader = 0
+	for _, other in self.Seats do
+		leader = math.max(leader, self:collectiblesOf(other))
+	end
+	return leader - self:collectiblesOf(seat) >= Config.Comeback.UnderdogGap
+end
+
+-- What this seat pays for the collectible right now (underdogs get a discount).
+function Match:collectiblePriceFor(seat): number
+	if self:isUnderdog(seat) then
+		return math.max(Config.Comeback.MinCrownPrice, self.CollectiblePrice - Config.Comeback.UnderdogDiscount)
+	end
+	return self.CollectiblePrice
+end
+
+-- True in the last round when Final Frenzy is on.
+function Match:isFrenzy(): boolean
+	return Config.Comeback.Enabled and Config.Comeback.FinalFrenzy and self.Round >= self.Rounds
+end
+
+-- Coins a Gain / Lose space is worth this round.
+function Match:spaceCoins(base: number): number
+	return if self:isFrenzy() then base * Config.Comeback.FrenzyMultiplier else base
+end
+
+--[[
+	Start of a round: the last-place seat(s) get a few coins (from Comeback.StartRound on).
+	Returns feed text or nil.
+]]
+function Match:startRound(round: number): string?
+	self.Round = round
+	if not comebackOn(self) then
+		return nil
+	end
+	local rows = self:standings()
+	local last = rows[#rows].Placement
+	if last == 1 then
+		return nil -- everyone tied
+	end
+	local names = {}
+	for _, row in rows do
+		if row.Placement == last then
+			local seat = self:seatOf(row.Participant)
+			self:changeCoins(seat, Config.Comeback.LastPlaceCoins)
+			table.insert(names, row.Participant.Name)
+		end
+	end
+	return ("Catch-up: %s +%d coins"):format(table.concat(names, ", "), Config.Comeback.LastPlaceCoins)
+end
+
+-- Gift-space reward table for this seat (underdogs get better odds on items and Crowns).
+function Match:rewardsFor(seat)
+	if not self:isUnderdog(seat) then
+		return Config.Economy.Rewards
+	end
+	local boosted = {}
+	for _, reward in Config.Economy.Rewards do
+		local copy = table.clone(reward)
+		if copy.Kind == "Collectible" or copy.Kind == "Item" then
+			copy.Weight *= Config.Comeback.UnderdogGiftBoost
+		end
+		table.insert(boosted, copy)
+	end
+	return boosted
+end
+
+-- Collectible purchase ---------------------------------------------------------------------------
+
 -- Pays for the collectible. Returns true if bought (and moves it).
 function Match:buyCollectible(seat): boolean
-	if not self.Deps.Wallet.spend(seat.Participant, self.CollectiblePrice) then
+	if not self.Deps.Wallet.spend(seat.Participant, self:collectiblePriceFor(seat)) then
 		return false
 	end
 	self.Deps.Wallet.addCollectibles(seat.Participant, 1)
@@ -3372,12 +3478,17 @@ end
 -- Reached the collectible's space (passing or landing): offer it if affordable.
 function Match:offerCollectible(seat): string
 	local name = seat.Participant.Name
-	if self:coinsOf(seat) < self.CollectiblePrice then
-		return ("%s needs %d coins for a %s"):format(name, self.CollectiblePrice, self.CollectibleName)
+	local price = self:collectiblePriceFor(seat)
+	if self:coinsOf(seat) < price then
+		return ("%s needs %d coins for a %s"):format(name, price, self.CollectibleName)
 	end
 	local pick = self:ask(seat, {
 		Kind = "Collectible",
-		Prompt = ("Buy a %s for %d coins?"):format(self.CollectibleName, self.CollectiblePrice),
+		Prompt = ("Buy a %s for %d coins?%s"):format(
+			self.CollectibleName,
+			price,
+			if price < self.CollectiblePrice then " (underdog discount)" else ""
+		),
 		Options = { "Buy", "Not now" },
 		Default = 1,
 	})
@@ -3665,7 +3776,7 @@ end
 
 function Match:giveReward(seat): string
 	local name = seat.Participant.Name
-	local reward = weightedPick(self.Rng, Config.Economy.Rewards)
+	local reward = weightedPick(self.Rng, self:rewardsFor(seat))
 	if reward.Kind == "Item" then
 		local item = self:giveRandomItem(seat)
 		if item then
@@ -3904,7 +4015,7 @@ return {
 		Short = "+" .. Config.Economy.GainSpaceCoins,
 		Color = Color3.fromRGB(70, 140, 255),
 		Resolve = function(match, seat)
-			return coinsText(seat.Participant.Name, match:changeCoins(seat, Config.Economy.GainSpaceCoins))
+			return coinsText(seat.Participant.Name, match:changeCoins(seat, match:spaceCoins(Config.Economy.GainSpaceCoins)))
 		end,
 	},
 	Lose = {
@@ -3912,7 +4023,7 @@ return {
 		Short = "-" .. Config.Economy.LoseSpaceCoins,
 		Color = Color3.fromRGB(240, 70, 70),
 		Resolve = function(match, seat)
-			local delta, shielded = match:changeCoins(seat, -Config.Economy.LoseSpaceCoins)
+			local delta, shielded = match:changeCoins(seat, -match:spaceCoins(Config.Economy.LoseSpaceCoins))
 			return coinsText(seat.Participant.Name, delta, shielded)
 		end,
 	},
@@ -11036,7 +11147,12 @@ function BoardView:setState(message)
 	-- Header
 	local myTurn = message.TurnId == myId
 	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
-	self.Title.Text = ("Round %d / %d%s"):format(message.Round or 0, message.Rounds or 0, if who then "  ·  " .. who .. " turn" else "")
+	self.Title.Text = ("%s %d / %d%s"):format(
+		if message.Frenzy then "FINAL FRENZY · Round" else "Round",
+		message.Round or 0,
+		message.Rounds or 0,
+		if who then "  ·  " .. who .. " turn" else ""
+	)
 	local sub = message.Text or ""
 	if message.Stage == "OrderRoll" then
 		self.Title.Text = ("Round %d / %d  ·  Turn order"):format(message.Round or 0, message.Rounds or 0)
@@ -11083,6 +11199,9 @@ function BoardView:setState(message)
 			line ..= ("  ·  %d item%s"):format(#(seat.Items or {}), if #(seat.Items or {}) == 1 then "" else "s")
 			if seat.Shield then
 				line ..= "  ·  shield"
+			end
+			if seat.Underdog then
+				line ..= "  ·  underdog"
 			end
 		end
 		Theme.label({
