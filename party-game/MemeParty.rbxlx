@@ -28,6 +28,7 @@ Config.Layouts = {
 	FFA = "FFA", -- everyone for themselves
 	OneVsThree = "1v3", -- one solo player vs a team of three
 	TwoVsTwo = "2v2", -- two teams of two
+	Duel = "Duel", -- exactly two players (board Duel spaces); never in the normal vote
 }
 
 -- Phase timings (seconds) ----------------------------------------------------
@@ -1350,6 +1351,33 @@ local function ask(seat, request)
 	return answer
 end
 
+-- Duel space: play a Duel minigame between the two seats, then bring everyone back to the board.
+-- Returns winner seat (nil = draw) and whether a duel was played at all.
+local function playDuel(seatA, seatB)
+	if #MinigameManager.duelMinigames() == 0 then
+		return nil, false
+	end
+	local match = current.Match
+	local previousStage = current.Stage
+	current.Stage = "Minigame"
+	publish()
+	task.wait(1)
+	local ok, winner = xpcall(MinigameManager.runDuel, debug.traceback, seatA.Participant, seatB.Participant)
+	if not ok then
+		warn("[BoardGame] Duel crashed, using dice instead:\n" .. tostring(winner))
+		MinigameManager.abort("Duel crashed, rolling dice instead")
+	end
+	MinigameManager.setPhase(Net.Phase.Board, { Round = match.Round, Rounds = match.Rounds })
+	current.Stage = previousStage
+	ensureBodies()
+	placeAll()
+	publish()
+	if not ok then
+		return nil, false
+	end
+	return if winner then match:seatOf(winner) else nil, true
+end
+
 -- Turns -------------------------------------------------------------------------------------------
 
 -- Turn order: everyone rolls once before round 1; ties roll again among themselves.
@@ -1577,6 +1605,7 @@ function BoardGame.play(participants, settings)
 		Inventory = Inventory,
 		Rng = rng,
 		Ask = ask,
+		Duel = playDuel,
 	})
 	local match = current.Match
 	for _, seat in match.Seats do
@@ -3069,6 +3098,8 @@ return {
 	      Wallet     CoinService-like: get, add, spend, getCollectibles, addCollectibles, transfer
 	      Inventory  Inventory-like: grant, equip, getEquipped, unowned
 	      Rng        Random
+	      Duel       optional function(seatA, seatB) -> winner seat or nil, played: plays a duel
+	                 minigame (BoardGame); without it, or if none was played, duels use dice
 	      Ask        function(seat, request) -> option index; may yield. request =
 	                 { Kind = "Path"|"Collectible"|"Shop"|"Target", Prompt, Options = {labels}, Default, Data }
 	    }
@@ -3815,12 +3846,25 @@ function Match:runDuel(seat): string
 		Default = 1,
 		Data = { Stakes = stakes, Rival = rival },
 	})]
-	local mine, theirs = self:roll(), self:roll()
-	local result = ("%s %d vs %s %d"):format(name, mine, rival.Participant.Name, theirs)
-	if mine == theirs then
-		return result .. ": a draw!"
+	local winner, loser, result
+	local duelWinner, played = nil, false
+	if self.Deps.Duel then
+		duelWinner, played = self.Deps.Duel(seat, rival)
 	end
-	local winner, loser = if mine > theirs then seat else rival, if mine > theirs then rival else seat
+	if played then
+		result = ("%s vs %s"):format(name, rival.Participant.Name)
+		if duelWinner ~= seat and duelWinner ~= rival then
+			return result .. ": a draw!"
+		end
+		winner, loser = duelWinner, if duelWinner == seat then rival else seat
+	else
+		local mine, theirs = self:roll(), self:roll()
+		result = ("%s %d vs %s %d"):format(name, mine, rival.Participant.Name, theirs)
+		if mine == theirs then
+			return result .. ": a draw!"
+		end
+		winner, loser = if mine > theirs then seat else rival, if mine > theirs then rival else seat
+	end
 	local _, taken = self.Deps.Wallet.add(loser.Participant, -stake)
 	self:changeCoins(winner, -taken)
 	return ("%s: %s wins %d coins"):format(result, winner.Participant.Name, -taken)
@@ -5148,8 +5192,8 @@ function MinigameInfo.validate(definition): string?
 	if type(info.Duration) ~= "number" or info.Duration <= 0 then
 		return "Info.Duration must be a positive number"
 	end
-	if not table.find({ "FFA", "1v3", "2v2" }, info.Layout) then
-		return "Info.Layout must be FFA, 1v3 or 2v2"
+	if not table.find({ "FFA", "1v3", "2v2", "Duel" }, info.Layout) then
+		return "Info.Layout must be FFA, 1v3, 2v2 or Duel"
 	end
 	local camera = info.Camera
 	if camera ~= nil and (type(camera) ~= "table" or not Config.CameraModes[camera.Mode]) then
@@ -5195,6 +5239,7 @@ function MinigameInfo.normalize(id: string, info)
 			Gamepad = action.Gamepad, -- optional Enum.KeyCode name, e.g. "ButtonX"
 			Hold = action.Hold == true, -- also sends "<Action>Stop" when released
 			Side = action.Side, -- "Left" puts the on-screen button in the bottom-left corner
+			Color = if typeof(action.Color) == "Color3" then action.Color else nil, -- on-screen button colour
 		})
 	end
 	local controls = {
@@ -5448,8 +5493,19 @@ local function everyoneVoted(vote, participants): boolean
 	return true
 end
 
+-- Minigames for the normal 4-player vote (Duel minigames are only played from Duel spaces).
+local function votePool()
+	local pool = {}
+	for _, entry in registry do
+		if entry.Definition.Info.Layout ~= "Duel" then
+			table.insert(pool, entry)
+		end
+	end
+	return pool
+end
+
 local function runVote(participants)
-	local pool = table.clone(registry)
+	local pool = votePool()
 	for i = #pool, 2, -1 do -- shuffle
 		local j = rng:NextInteger(1, i)
 		pool[i], pool[j] = pool[j], pool[i]
@@ -5459,7 +5515,7 @@ local function runVote(participants)
 	for i = 1, math.min(Config.VoteChoices, #pool) do
 		table.insert(choices, describeMinigame(pool[i]))
 	end
-	if #choices < Config.VoteChoices and #registry > 1 then
+	if #choices < Config.VoteChoices and #pool > 1 then
 		table.insert(choices, table.clone(Config.RandomChoice))
 	end
 
@@ -5501,7 +5557,8 @@ local function runVote(participants)
 	local winner = choices[best[rng:NextInteger(1, #best)]]
 
 	if winner.Id == Config.RandomChoice.Id then
-		return registry[rng:NextInteger(1, #registry)]
+		local all = votePool()
+		return all[rng:NextInteger(1, #all)]
 	end
 	return findEntry(winner.Id)
 end
@@ -5580,6 +5637,10 @@ local function submitAction(participant, action: string)
 	if not active.Actions[action] or active.Round:IsEliminated(participant) or not participant:IsAlive() then
 		return
 	end
+	-- Only people playing this round (a duel has two; everyone else just watches).
+	if not table.find(active.Round.Participants, participant) then
+		return
+	end
 	safeCall(active.Instance, "OnInput", participant, action)
 end
 
@@ -5614,7 +5675,8 @@ end
 	Returns the normalized ranked results and the coin rows shown on the results screen.
 	BoardGame calls this after every full turn cycle.
 ]]
-function MinigameManager.runRound(participants)
+function MinigameManager.runRound(participants, options)
+	options = options or {}
 	assert(#registry > 0, "No minigames loaded")
 	state.Participants = participants
 	state.ByPlayer = {}
@@ -5624,8 +5686,8 @@ function MinigameManager.runRound(participants)
 		end
 	end
 
-	-- 1. Vote
-	local entry = runVote(participants)
+	-- 1. Vote (skipped when the caller already picked, e.g. a duel)
+	local entry = options.Entry or runVote(participants)
 	local definition = entry.Definition
 	local info = definition.Info
 	local described = describeMinigame(entry)
@@ -5716,7 +5778,12 @@ function MinigameManager.runRound(participants)
 		EndsAt = round.EndsAt,
 	})
 	BotService.setBrain(function(bot, dt)
-		if instance.UpdateBot and not round.Ended and not round:IsEliminated(bot.Participant) then
+		if
+			instance.UpdateBot
+			and not round.Ended
+			and table.find(participants, bot.Participant)
+			and not round:IsEliminated(bot.Participant)
+		then
 			instance:UpdateBot(bot, dt)
 		end
 	end)
@@ -5743,7 +5810,17 @@ function MinigameManager.runRound(participants)
 	finishRound()
 
 	-- 7. Results screen
-	local rows = awardCoins(results)
+	local rows = if options.NoCoins then (function()
+		local list = {}
+		for _, result in results do
+			local row = result.Participant:Describe()
+			row.Placement = result.Placement
+			row.Coins = 0
+			row.Total = CoinService.get(result.Participant)
+			table.insert(list, row)
+		end
+		return list
+	end)() else awardCoins(results)
 	setPhase(Net.Phase.Results, {
 		Minigame = described,
 		Results = rows,
@@ -5751,6 +5828,36 @@ function MinigameManager.runRound(participants)
 	})
 	task.wait(Config.ResultsDuration)
 	return results, rows
+end
+
+-- Duel minigames (Info.Layout = "Duel") registered, for Duel spaces.
+function MinigameManager.duelMinigames()
+	local list = {}
+	for _, entry in registry do
+		if entry.Definition.Info.Layout == "Duel" then
+			table.insert(list, entry)
+		end
+	end
+	return list
+end
+
+--[[
+	Plays a random Duel minigame between two participants (everyone else watches) without
+	placement coins. Returns the winning participant, or nil for a draw / no duel minigames.
+]]
+function MinigameManager.runDuel(a, b)
+	local duels = MinigameManager.duelMinigames()
+	if #duels == 0 then
+		return nil
+	end
+	local results = MinigameManager.runRound({ a, b }, { Entry = duels[rng:NextInteger(1, #duels)], NoCoins = true })
+	local first = {}
+	for _, result in results do
+		if result.Placement == 1 then
+			table.insert(first, result.Participant)
+		end
+	end
+	return if #first == 1 then first[1] else nil
 end
 
 -- Emergency stop if anything in runRound threw. Leaves the server ready for the next round.
@@ -6027,6 +6134,254 @@ return MinigameMode
           <string name="Name">Minigames</string>
         </Properties>
         <Item class="ModuleScript" referent="31">
+          <Properties>
+            <string name="Name">Bullseye</string>
+            <string name="Source"><![CDATA[--[[
+	Bullseye (1v3, timing + precision)
+	Everyone has a gauge with a marker sweeping back and forth. Press STOP to lock the marker
+	as close to the centre as you can: 100 points dead centre, 0 at the edge. Three shots,
+	each sweep faster than the last. The solo player's total takes on the team's AVERAGE
+	total; the higher side wins.
+
+	Server-authoritative: the marker's position is a function of the server clock, and a
+	press is scored at the moment the server receives it. Bots aim with skill-based error.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local Bullseye = {}
+
+Bullseye.Info = {
+	Name = "Bullseye",
+	Description = "Stop the sliding marker as close to the middle as you can. 3 shots, faster each time. 1 vs 3: the solo player's score takes on the team's average!",
+	Duration = 40,
+	Layout = Config.Layouts.OneVsThree,
+	Camera = { Mode = "AngledOverhead", Height = 40, Distance = 30 },
+	Controls = {
+		Move = false,
+		Jump = false,
+		Actions = {
+			{ Action = "Stop", Label = "STOP!", Key = "Space", Gamepad = "ButtonA" },
+		},
+	},
+	ProgressLabel = "Points",
+}
+
+-- Tuning ----------------------------------------------------------------------------------
+Bullseye.SHOTS = 3
+Bullseye.SPEEDS = { 2.2, 3.0, 3.8 } -- radians/second of the sweep, per shot
+Bullseye.SHOT_TIME = 7 -- seconds to take a shot before it counts as a miss (0)
+Bullseye.BETWEEN_SHOTS = 1.5
+local HALF_WIDTH = 8 -- studs from centre to edge of a gauge
+local LANE_SPACING = 7
+
+-- Marker offset (-1..1 of the half width) at `t` seconds into a shot.
+function Bullseye.offsetAt(shot: number, t: number): number
+	return math.sin(t * Bullseye.SPEEDS[shot] + 0.6)
+end
+
+-- Points for stopping at `offset` (-1..1).
+function Bullseye.scoreFor(offset: number): number
+	return math.floor(math.max(0, 1 - math.abs(offset)) * 100 + 0.5)
+end
+
+function Bullseye:Setup(arena, participants, _round)
+	self.Now = self.Now or os.clock
+	self.Totals, self.Locked, self.Markers = {}, {}, {}
+	self.Shot = 0
+	self.ShotStart = nil
+
+	-- One floor under every gauge and every player's spot.
+	local floor = Instance.new("Part")
+	floor.Name = "Floor"
+	floor.Anchored = true
+	floor.Size = Vector3.new(HALF_WIDTH * 2 + 10, 1, #participants * LANE_SPACING + 12)
+	floor.CFrame = arena.Origin * CFrame.new(0, -0.8, 2)
+	floor.Color = Color3.fromRGB(70, 70, 90)
+	floor.Parent = arena.Folder
+
+	for index, participant in participants do
+		self.Totals[participant] = 0
+		local z = (index - (#participants + 1) / 2) * LANE_SPACING
+		local gauge = Instance.new("Part")
+		gauge.Name = "Gauge"
+		gauge.Anchored = true
+		gauge.Size = Vector3.new(HALF_WIDTH * 2, 0.6, 3)
+		gauge.CFrame = arena.Origin * CFrame.new(0, 0, z)
+		gauge.Color = if participant.Team == 1 then Color3.fromRGB(255, 120, 120) else Color3.fromRGB(120, 170, 255)
+		gauge.Parent = arena.Folder
+		local centre = Instance.new("Part")
+		centre.Name = "Centre"
+		centre.Anchored = true
+		centre.CanCollide = false
+		centre.Size = Vector3.new(0.6, 0.7, 3.1)
+		centre.CFrame = gauge.CFrame
+		centre.Color = Color3.fromRGB(255, 230, 80)
+		centre.Material = Enum.Material.Neon
+		centre.Parent = arena.Folder
+		local marker = Instance.new("Part")
+		marker.Name = "Marker"
+		marker.Anchored = true
+		marker.CanCollide = false
+		marker.Size = Vector3.new(0.8, 2, 0.8)
+		marker.CFrame = gauge.CFrame * CFrame.new(0, 1.3, 0)
+		marker.Color = Color3.new(1, 1, 1)
+		marker.Parent = arena.Folder
+		self.Markers[participant] = { Part = marker, Base = gauge.CFrame }
+	end
+
+	local spawns = {}
+	for index, participant in participants do
+		spawns[index] = self.Markers[participant].Base * CFrame.new(0, 3, 4)
+	end
+	return spawns
+end
+
+function Bullseye:_report()
+	for participant, total in self.Totals do
+		self.Round:ReportProgress(participant, total)
+	end
+end
+
+function Bullseye:_startShot()
+	self.Shot += 1
+	self.ShotStart = self.Now()
+	self.Locked = {}
+	self.Round:SetStatus(("Shot %d of %d: STOP in the middle!"):format(self.Shot, Bullseye.SHOTS))
+	local shot = self.Shot
+	task.delay(Bullseye.SHOT_TIME, function()
+		if self.Shot == shot and not self.Round.Ended then
+			self:_endShot()
+		end
+	end)
+end
+
+function Bullseye:_endShot()
+	self.ShotStart = nil
+	self:_report()
+	if self.Shot >= Bullseye.SHOTS then
+		self.Round:End("AllShots")
+		return
+	end
+	task.delay(Bullseye.BETWEEN_SHOTS, function()
+		if not self.Round.Ended then
+			self:_startShot()
+		end
+	end)
+end
+
+-- A STOP press, scored at the server's clock. One per shot.
+function Bullseye:Stop(participant)
+	if not self.ShotStart or self.Locked[participant] ~= nil then
+		return nil
+	end
+	local offset = Bullseye.offsetAt(self.Shot, self.Now() - self.ShotStart)
+	local points = Bullseye.scoreFor(offset)
+	self.Locked[participant] = offset
+	self.Totals[participant] += points
+	local marker = self.Markers[participant]
+	if marker then
+		marker.Part.CFrame = marker.Base * CFrame.new(offset * HALF_WIDTH, 1.3, 0)
+		marker.Part.Color = Color3.fromRGB(255, 230, 80)
+	end
+	self:_report()
+	local everyone = true
+	for _, other in self.Participants do
+		if self.Locked[other] == nil and not other.Left then
+			everyone = false
+		end
+	end
+	if everyone then
+		self:_endShot()
+	end
+	return points
+end
+
+function Bullseye:Start()
+	self:_report()
+	self.Connection = RunService.Heartbeat:Connect(function()
+		if not self.ShotStart then
+			return
+		end
+		local t = self.Now() - self.ShotStart
+		for participant, marker in self.Markers do
+			if self.Locked[participant] == nil then
+				marker.Part.Color = Color3.new(1, 1, 1)
+				marker.Part.CFrame = marker.Base * CFrame.new(Bullseye.offsetAt(self.Shot, t) * HALF_WIDTH, 1.3, 0)
+			end
+		end
+	end)
+	self:_startShot()
+end
+
+function Bullseye:OnInput(participant, action)
+	if action == "Stop" then
+		self:Stop(participant)
+	end
+end
+
+-- Bots pick an aim (worse with low skill) and press when the marker gets there.
+function Bullseye:UpdateBot(bot, _dt)
+	local memory = bot.Memory
+	if not self.ShotStart or memory.Shot == self.Shot then
+		return
+	end
+	memory.Shot = self.Shot
+	local aim = (math.random() * 2 - 1) * (0.05 + (1 - bot.Skill) * 0.45)
+	-- First moment after a short look when the marker passes `aim`.
+	local shot, start = self.Shot, self.ShotStart
+	local earliest = self.Now() - start + 0.6 + math.random() * 0.8
+	local t = earliest
+	while t < Bullseye.SHOT_TIME - 0.2 and math.abs(Bullseye.offsetAt(shot, t) - aim) > 0.03 do
+		t += 1 / 120
+	end
+	task.delay(math.max(0, start + t - self.Now()), function()
+		if self.Shot == shot and self.ShotStart == start then
+			bot:Input("Stop")
+		end
+	end)
+end
+
+-- 1v3: solo (team 1) total vs the team's average total.
+function Bullseye:TeamScores()
+	local solo, teamSum, teamCount = 0, 0, 0
+	for _, participant in self.Participants do
+		if participant.Team == 1 then
+			solo += self.Totals[participant]
+		else
+			teamSum += self.Totals[participant]
+			teamCount += 1
+		end
+	end
+	return solo, if teamCount > 0 then teamSum / teamCount else 0
+end
+
+function Bullseye:GetResults()
+	local solo, team = self:TeamScores()
+	if solo == team then
+		return ResultsUtil.fromScores(self.Participants, function()
+			return 0
+		end)
+	end
+	return ResultsUtil.fromTeams(self.Participants, if solo > team then 1 else 2)
+end
+
+function Bullseye:Cleanup()
+	if self.Connection then
+		self.Connection:Disconnect()
+	end
+	self.Shot = math.huge
+end
+
+return Bullseye
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -6339,7 +6694,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -6835,7 +7190,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -7508,7 +7863,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -8018,7 +8373,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -8175,7 +8530,262 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
+          <Properties>
+            <string name="Name">PatternRecall</string>
+            <string name="Source"><![CDATA[--[[
+	Pattern Recall (FFA, memory)
+	Four coloured pads flash a sequence. Then everyone repeats it with the four colour
+	buttons. A wrong colour, or not finishing in time, knocks you out. Each round the
+	sequence is one longer. Last one standing wins (players out in the same round tie).
+
+	Server-authoritative: the server makes the sequence and checks every press. Bots
+	remember each step with a chance that drops as the sequence grows (less with skill).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local PatternRecall = {}
+
+PatternRecall.COLORS = { "Red", "Blue", "Green", "Yellow" }
+local COLOR_VALUES = {
+	Red = Color3.fromRGB(235, 70, 70),
+	Blue = Color3.fromRGB(70, 130, 245),
+	Green = Color3.fromRGB(70, 210, 100),
+	Yellow = Color3.fromRGB(250, 210, 60),
+}
+
+PatternRecall.Info = {
+	Name = "Pattern Recall",
+	Description = "Watch the pads flash, then repeat the colours in order with the buttons. One mistake and you're out. It gets longer every round!",
+	Duration = 75,
+	Layout = Config.Layouts.FFA,
+	Camera = { Mode = "AngledOverhead", Height = 34, Distance = 26 },
+	Controls = {
+		Move = false,
+		Jump = false,
+		Actions = {
+			{ Action = "Red", Label = "RED", Key = "One", Gamepad = "ButtonB", Side = "Left", Color = COLOR_VALUES.Red },
+			{ Action = "Blue", Label = "BLUE", Key = "Two", Gamepad = "ButtonX", Side = "Left", Color = COLOR_VALUES.Blue },
+			{ Action = "Green", Label = "GREEN", Key = "Three", Gamepad = "ButtonA", Color = COLOR_VALUES.Green },
+			{ Action = "Yellow", Label = "YELLOW", Key = "Four", Gamepad = "ButtonY", Color = COLOR_VALUES.Yellow },
+		},
+	},
+	ProgressLabel = "Recalled",
+}
+
+-- Tuning ----------------------------------------------------------------------------------
+PatternRecall.START_LENGTH = 3
+PatternRecall.FLASH_TIME = 0.55 -- each colour is lit this long ...
+PatternRecall.GAP_TIME = 0.2 -- ... with this gap between colours
+PatternRecall.INPUT_TIME_PER_STEP = 1.2 -- seconds allowed per colour to repeat it
+PatternRecall.INPUT_TIME_BASE = 2
+PatternRecall.BOT_STEP_ACCURACY = 0.985 -- skill-1 bot's chance per colour, falls with length
+PatternRecall.BOT_FORGET_PER_STEP = 0.02 -- extra miss chance per colour of length (skill 0)
+
+function PatternRecall:Setup(arena, participants, round)
+	self.Rng = round.Rng
+	self.Sequence = {}
+	self.Progress = {} -- participant -> how many of this round's colours they've entered
+	self.Done = {} -- participant -> finished this round's sequence
+	self.Phase = "Idle" -- Idle | Show | Input
+	self.Pads = {}
+	self.OutRound = {} -- participant -> round they were knocked out in
+
+	local floor = Instance.new("Part")
+	floor.Name = "Floor"
+	floor.Anchored = true
+	floor.Size = Vector3.new(36, 1, 30)
+	floor.CFrame = arena.Origin
+	floor.Color = Color3.fromRGB(60, 60, 80)
+	floor.Parent = arena.Folder
+	for index, colour in PatternRecall.COLORS do
+		local pad = Instance.new("Part")
+		pad.Name = "Pad" .. colour
+		pad.Anchored = true
+		pad.Size = Vector3.new(6, 1, 6)
+		pad.CFrame = arena.Origin * CFrame.new((index - 2.5) * 7.5, 0.6, -6)
+		pad.Color = COLOR_VALUES[colour]:Lerp(Color3.new(0, 0, 0), 0.55)
+		pad.Parent = arena.Folder
+		self.Pads[colour] = pad
+	end
+
+	local spawns = {}
+	for index, participant in participants do
+		local position = (arena.Origin * CFrame.new((index - (#participants + 1) / 2) * 6, 4, 8)).Position
+		spawns[index] = CFrame.lookAt(position, (arena.Origin * CFrame.new(0, 4, -6)).Position)
+	end
+	return spawns
+end
+
+function PatternRecall:_light(colour: string?, on: boolean)
+	local pad = colour and self.Pads[colour]
+	if pad and pad.Parent then
+		pad.Color = if on then COLOR_VALUES[colour] else COLOR_VALUES[colour]:Lerp(Color3.new(0, 0, 0), 0.55)
+		pad.Material = if on then Enum.Material.Neon else Enum.Material.SmoothPlastic
+	end
+end
+
+-- Next round: one colour longer, shown, then everyone repeats it.
+function PatternRecall:_nextRound()
+	local length = if #self.Sequence == 0 then PatternRecall.START_LENGTH else #self.Sequence + 1
+	while #self.Sequence < length do
+		table.insert(self.Sequence, PatternRecall.COLORS[self.Rng:NextInteger(1, #PatternRecall.COLORS)])
+	end
+	self.Phase = "Show"
+	self.RoundNumber = (self.RoundNumber or 0) + 1
+	local roundNumber = self.RoundNumber
+	self.Round:SetStatus(("Watch! %d colours"):format(#self.Sequence))
+	task.spawn(function()
+		for _, colour in self.Sequence do
+			if self.Round.Ended or self.RoundNumber ~= roundNumber then
+				return
+			end
+			self:_light(colour, true)
+			task.wait(PatternRecall.FLASH_TIME)
+			self:_light(colour, false)
+			task.wait(PatternRecall.GAP_TIME)
+		end
+		if self.Round.Ended or self.RoundNumber ~= roundNumber then
+			return
+		end
+		self:_beginInput()
+	end)
+end
+
+function PatternRecall:_beginInput()
+	self.Phase = "Input"
+	self.Progress, self.Done = {}, {}
+	for _, participant in self.Round:GetAlive() do
+		self.Progress[participant] = 0
+	end
+	self.Round:SetStatus("Your turn: repeat the colours!")
+	local roundNumber = self.RoundNumber
+	task.delay(PatternRecall.INPUT_TIME_BASE + PatternRecall.INPUT_TIME_PER_STEP * #self.Sequence, function()
+		if self.RoundNumber == roundNumber and self.Phase == "Input" and not self.Round.Ended then
+			self:_finishInput()
+		end
+	end)
+end
+
+-- Input over: anyone who didn't finish is out. Then the next round, or the end.
+function PatternRecall:_finishInput()
+	self.Phase = "Idle"
+	for _, participant in self.Round:GetAlive() do
+		if not self.Done[participant] then
+			self:_knockOut(participant)
+		end
+	end
+	if #self.Round:GetAlive() <= 1 then
+		self.Round:End("LastStanding")
+		return
+	end
+	task.delay(1, function()
+		if not self.Round.Ended then
+			self:_nextRound()
+		end
+	end)
+end
+
+-- A colour press. Wrong colour = out; finishing the sequence = safe this round.
+function PatternRecall:Press(participant, colour: string)
+	if self.Phase ~= "Input" or self.Done[participant] or self.Round:IsEliminated(participant) then
+		return nil
+	end
+	local index = (self.Progress[participant] or 0) + 1
+	if self.Sequence[index] ~= colour then
+		self:_knockOut(participant)
+		self.Round:Toast(("%s pressed %s, it was %s"):format(participant.Name, colour, self.Sequence[index]))
+		self:_checkEveryoneDone()
+		return false
+	end
+	self.Progress[participant] = index
+	self.Round:ReportProgress(participant, ("%d/%d"):format(index, #self.Sequence))
+	if index == #self.Sequence then
+		self.Done[participant] = true
+		self:_checkEveryoneDone()
+	end
+	return true
+end
+
+function PatternRecall:_knockOut(participant)
+	self.OutRound[participant] = self.RoundNumber or 0
+	self.Round:Eliminate(participant)
+end
+
+function PatternRecall:_checkEveryoneDone()
+	for _, participant in self.Round:GetAlive() do
+		if not self.Done[participant] then
+			return
+		end
+	end
+	if self.Phase == "Input" then
+		self:_finishInput()
+	end
+end
+
+function PatternRecall:Start()
+	for _, participant in self.Participants do
+		self.Round:ReportProgress(participant, "0")
+	end
+	self:_nextRound()
+end
+
+function PatternRecall:OnInput(participant, action)
+	if table.find(PatternRecall.COLORS, action) then
+		self:Press(participant, action)
+	end
+end
+
+-- Chance a bot gets one colour right in a sequence of `length` (tested).
+function PatternRecall.botStepChance(skill: number, length: number): number
+	return PatternRecall.BOT_STEP_ACCURACY - (1 - skill) * PatternRecall.BOT_FORGET_PER_STEP * length
+end
+
+function PatternRecall:UpdateBot(bot, _dt)
+	local participant = bot.Participant
+	if self.Phase ~= "Input" or self.Done[participant] then
+		return
+	end
+	local memory = bot.Memory
+	if memory.Round ~= self.RoundNumber then
+		memory.Round = self.RoundNumber
+		memory.NextAt = os.clock() + 0.4 + math.random() * 0.4
+	end
+	if os.clock() < memory.NextAt then
+		return
+	end
+	memory.NextAt = os.clock() + 0.25 + math.random() * 0.35
+	local expected = self.Sequence[(self.Progress[participant] or 0) + 1]
+	local colour = expected
+	if math.random() > PatternRecall.botStepChance(bot.Skill, #self.Sequence) then
+		repeat
+			colour = PatternRecall.COLORS[math.random(1, #PatternRecall.COLORS)]
+		until colour ~= expected
+	end
+	bot:Input(colour)
+end
+
+-- Lasting longer is better; everyone knocked out in the same round ties.
+function PatternRecall:GetResults()
+	return ResultsUtil.fromScores(self.Participants, function(participant)
+		return self.OutRound[participant] or math.huge
+	end)
+end
+
+function PatternRecall:Cleanup()
+	self.RoundNumber = -1
+	self.Phase = "Idle"
+end
+
+return PatternRecall
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -8592,7 +9202,199 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="39">
+          <Properties>
+            <string name="Name">QuickDraw</string>
+            <string name="Source"><![CDATA[--[[
+	Quick Draw (Duel: exactly two players, played from board Duel spaces)
+	A reaction duel. "Wait for it..." then the light turns green: first to press DRAW wins
+	the point. Press before the light and you lose the point (false start). First to 2.
+
+	Server-authoritative: the server picks the moment, and judges presses by when it
+	receives them. Bots react after a skill-based delay and sometimes jump the gun.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+local ResultsUtil = require(script.Parent.Parent.ResultsUtil)
+
+local QuickDraw = {}
+
+QuickDraw.Info = {
+	Name = "Quick Draw",
+	Description = "Wait for the light to turn green, then press DRAW first. Too early and you lose the point! First to 2.",
+	Duration = 40,
+	Layout = Config.Layouts.Duel,
+	Camera = { Mode = "SideView", Distance = 36, Height = 6 },
+	Controls = {
+		Move = false,
+		Jump = false,
+		Actions = {
+			{ Action = "Draw", Label = "DRAW!", Key = "Space", Gamepad = "ButtonA" },
+		},
+	},
+	ProgressLabel = "Points",
+}
+
+-- Tuning ----------------------------------------------------------------------------------
+QuickDraw.POINTS_TO_WIN = 2
+QuickDraw.WAIT_RANGE = { 1.5, 4 } -- seconds before the light turns green
+QuickDraw.BETWEEN_POINTS = 2 -- pause after each point
+QuickDraw.BOT_REACTION = { 0.22, 0.6 } -- fastest (skill 1) .. slowest (skill 0), seconds
+QuickDraw.BOT_FALSE_START = 0.12 -- chance per point a skill-0 bot jumps the gun (less with skill)
+local GAP = 16
+
+local COLORS = { Wait = Color3.fromRGB(220, 60, 60), Draw = Color3.fromRGB(60, 220, 90), Idle = Color3.fromRGB(90, 90, 110) }
+
+function QuickDraw:Setup(arena, participants, round)
+	self.Points = {}
+	self.State = "Idle" -- Idle | Waiting | Draw
+	self.Now = self.Now or os.clock
+	self.Rng = round.Rng
+	for _, participant in participants do
+		self.Points[participant] = 0
+	end
+
+	local floor = Instance.new("Part")
+	floor.Name = "Floor"
+	floor.Anchored = true
+	floor.Size = Vector3.new(GAP + 12, 1, 10)
+	floor.CFrame = arena.Origin
+	floor.Color = Color3.fromRGB(200, 170, 120)
+	floor.Parent = arena.Folder
+
+	local light = Instance.new("Part")
+	light.Name = "Light"
+	light.Anchored = true
+	light.Shape = Enum.PartType.Ball
+	light.Size = Vector3.new(4, 4, 4)
+	light.Material = Enum.Material.Neon
+	light.Color = COLORS.Idle
+	light.CFrame = arena.Origin * CFrame.new(0, 9, 0)
+	light.Parent = arena.Folder
+	self.Light = light
+
+	local spawns = {}
+	for index, participant in participants do
+		local side = if index == 1 then -1 else 1
+		local position = (arena.Origin * CFrame.new(side * GAP / 2, 4, 0)).Position
+		spawns[index] = CFrame.lookAt(position, (arena.Origin * CFrame.new(0, 4, 0)).Position)
+		participant.QuickDrawSide = side
+	end
+	return spawns
+end
+
+function QuickDraw:_setLight(state: string)
+	self.State = state
+	if self.Light then
+		self.Light.Color = COLORS[if state == "Draw" then "Draw" elseif state == "Waiting" then "Wait" else "Idle"]
+	end
+end
+
+function QuickDraw:_report()
+	for participant, points in self.Points do
+		self.Round:ReportProgress(participant, points)
+	end
+end
+
+-- Starts a point: red light, then green after a random wait.
+function QuickDraw:_arm()
+	self:_setLight("Waiting")
+	self.Round:SetStatus("Wait for it...")
+	self.PointId = (self.PointId or 0) + 1
+	local pointId = self.PointId
+	local wait = self.Rng:NextNumber(QuickDraw.WAIT_RANGE[1], QuickDraw.WAIT_RANGE[2])
+	self.DrawAt = self.Now() + wait
+	task.delay(wait, function()
+		if self.PointId == pointId and self.State == "Waiting" and not self.Round.Ended then
+			self:_setLight("Draw")
+			self.Round:SetStatus("DRAW!")
+		end
+	end)
+end
+
+-- Awards the point and starts the next one (or ends the duel).
+function QuickDraw:_award(winner, why: string)
+	self:_setLight("Idle")
+	self.Points[winner] += 1
+	self:_report()
+	self.Round:Toast(("%s %s"):format(winner.Name, why))
+	if self.Points[winner] >= QuickDraw.POINTS_TO_WIN then
+		self.Round:End("Winner")
+		return
+	end
+	task.delay(QuickDraw.BETWEEN_POINTS, function()
+		if not self.Round.Ended then
+			self:_arm()
+		end
+	end)
+end
+
+function QuickDraw:_other(participant)
+	for _, other in self.Participants do
+		if other ~= participant then
+			return other
+		end
+	end
+	return nil
+end
+
+-- A DRAW press. Judged on the server's clock.
+function QuickDraw:Press(participant)
+	if self.State == "Waiting" then
+		local other = self:_other(participant)
+		if other then
+			self:_award(other, ("wins the point: %s jumped the gun"):format(participant.Name))
+		end
+	elseif self.State == "Draw" then
+		self:_award(participant, "drew first!")
+	end
+end
+
+function QuickDraw:Start()
+	self:_report()
+	self:_arm()
+end
+
+function QuickDraw:OnInput(participant, action)
+	if action == "Draw" then
+		self:Press(participant)
+	end
+end
+
+function QuickDraw:UpdateBot(bot, _dt)
+	local memory = bot.Memory
+	if memory.Point ~= self.PointId then
+		memory.Point = self.PointId
+		local reaction = QuickDraw.BOT_REACTION[2] - (QuickDraw.BOT_REACTION[2] - QuickDraw.BOT_REACTION[1]) * bot.Skill
+		memory.PressAt = (self.DrawAt or math.huge) + reaction * (0.85 + math.random() * 0.3)
+		if math.random() < QuickDraw.BOT_FALSE_START * (1 - bot.Skill) then
+			memory.PressAt = (self.DrawAt or math.huge) - 0.4 -- jumps the gun
+		end
+	end
+	if self.State ~= "Idle" and memory.PressAt and self.Now() >= memory.PressAt then
+		memory.PressAt = nil
+		bot:Input("Draw")
+	end
+end
+
+function QuickDraw:GetResults()
+	return ResultsUtil.fromScores(self.Participants, function(participant)
+		return self.Points[participant] or 0
+	end)
+end
+
+function QuickDraw:Cleanup()
+	self.PointId = -1
+	self.State = "Idle"
+end
+
+return QuickDraw
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -8718,7 +9520,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="38">
+      <Item class="ModuleScript" referent="41">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -8862,7 +9664,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="39">
+      <Item class="ModuleScript" referent="42">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -8994,7 +9796,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -9117,7 +9919,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -9148,7 +9950,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -9283,7 +10085,7 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="43">
+      <Item class="ModuleScript" referent="46">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -9399,7 +10201,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="44">
+      <Item class="ModuleScript" referent="47">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -9524,7 +10326,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="45">
+      <Item class="ModuleScript" referent="48">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -9642,19 +10444,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="46">
+  <Item class="StarterPlayer" referent="49">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="47">
+    <Item class="StarterPlayerScripts" referent="50">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="48">
+      <Item class="Folder" referent="51">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -9877,7 +10679,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -9988,7 +10790,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="51">
+        <Item class="LocalScript" referent="54">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -10365,11 +11167,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="52">
+        <Item class="Folder" referent="55">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="53">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -10654,7 +11456,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -10910,11 +11712,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="55">
+        <Item class="Folder" referent="58">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -10987,7 +11789,7 @@ function ActionBar:show(actions, send: (string) -> (), low: boolean?)
 			Name = "Action_" .. action.Action,
 			LayoutOrder = index,
 			Size = UDim2.fromOffset(BUTTON_SIZE, BUTTON_SIZE),
-			BackgroundColor3 = Theme.Colors.Hot,
+			BackgroundColor3 = action.Color or Theme.Colors.Hot,
 			BackgroundTransparency = 0.1,
 			Text = "",
 			AutoButtonColor = true,
@@ -11062,7 +11864,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -11667,7 +12469,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -11892,7 +12694,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -12039,7 +12841,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -12285,7 +13087,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -12400,7 +13202,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="62">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -12537,7 +13339,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -12655,7 +13457,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -12744,7 +13546,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -12915,7 +13717,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -13035,7 +13837,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -13212,18 +14014,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="68">
+  <Item class="Workspace" referent="71">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="69">
+    <Item class="Model" referent="72">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="70">
+      <Item class="Part" referent="73">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -13243,7 +14045,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="71">
+      <Item class="SpawnLocation" referent="74">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
