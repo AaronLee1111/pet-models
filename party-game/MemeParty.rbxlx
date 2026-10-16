@@ -1091,7 +1091,7 @@ local function layoutMessage(board)
 	for key, spaceType in SpaceTypes do
 		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
 	end
-	return { Type = Net.Message.BoardLayout, Name = board.Name, Spaces = spaces, Legend = legend }
+	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend }
 end
 
 local function describeItems(seat)
@@ -1903,6 +1903,7 @@ function BoardLayout.load(data, spaceTypes)
 	end
 	local board = setmetatable({
 		Name = data.Name,
+		DisplayName = data.DisplayName or data.Name,
 		Start = data.Start,
 		CrownSpaces = table.clone(data.CrownSpaces),
 		Gates = data.Gates or {},
@@ -2201,11 +2202,14 @@ return BoardWorld
 	   1  2  3  4  5  6  7  8  9     5 is a fork: main road (6) or shortcut (27)
 
 	Signature mechanic: the Shortcut toll gate. It saves 8 spaces for 3 coins, but a Switch
-	space (17) can close it for everyone, or open it again.
+	space (17) can close it for everyone, or open it again. Board item: the Gate Key flips
+	the gate from anywhere.
 ]]
 
 return {
-	Name = "Classic",
+	Name = "Classic", -- id: used by Config.Match.Boards and items' Boards lists
+	DisplayName = "Sunny Loop", -- shown to players
+	-- Beginner board: one loop, one toll shortcut, a single Switch, few Chaos spaces.
 	Start = 1,
 	CrownSpaces = { 7, 10, 13, 15, 20, 23, 26 },
 	Gates = {
@@ -2301,6 +2305,7 @@ BotBrain.ItemValue = {
 	Pickpocket = 2,
 	CrownHeist = 4,
 	Snare = 1,
+	GateKey = 2,
 }
 -- Items an opponent could hurt you with; a bot that sees one in an opponent's (public)
 -- inventory values its own Coin Shield more.
@@ -2491,6 +2496,13 @@ function BotBrain.itemScore(match, seat, id: string)
 		return 0
 	elseif id == "Snare" then
 		return if match.Traps[seat.SpaceId] then 0 else 1
+	elseif id == "GateKey" then
+		-- Same reasoning as a Switch space: flip only if it brings the Crown closer.
+		local now = distance
+		match:toggleGates()
+		local flipped = crownDistance(match, seat.SpaceId)
+		match:toggleGates()
+		return if flipped + 3 <= now then 3 * urgency else 0
 	elseif id == "SwapTicket" then
 		local target, gain = BotBrain.bestSwap(match, seat)
 		if target and gain >= 6 and coins >= price - 5 then
@@ -2966,6 +2978,21 @@ return {
 				return ("%s's Coin Shield stopped %s's Crown Heist"):format(target.Participant.Name, seat.Participant.Name)
 			end
 			return ("%s stole a %s from %s!"):format(seat.Participant.Name, match.CollectibleName, target.Participant.Name)
+		end,
+	},
+	{
+		Id = "GateKey",
+		Name = "Gate Key",
+		Description = "Open or close the Sunny Loop shortcut from anywhere",
+		Price = 4,
+		Weight = 2,
+		Boards = { "Classic" },
+		Use = function(match, seat)
+			if #(match.Board.Gates or {}) == 0 then
+				return nil, "this board has no gates"
+			end
+			local open = match:toggleGates()
+			return ("%s used a Gate Key: the shortcut is %s"):format(seat.Participant.Name, if open > 0 then "open" else "closed")
 		end,
 	},
 	{
@@ -11404,7 +11431,7 @@ function BoardView:refreshMap()
 		order += 1
 		mapLine(self, order, text, color, swatch)
 	end
-	line("MAP", Theme.Colors.Accent)
+	line("MAP" .. (if layout and layout.Name then " · " .. layout.Name else ""), Theme.Colors.Accent)
 	line(("%s: space %s · %d coins"):format(state.CollectibleName or "Crown", tostring(state.CollectibleSpace), state.CollectiblePrice or 0), Theme.Colors.Accent)
 	for _, gate in state.Gates or {} do
 		line(("Gate %s: %s%s"):format(gate.Id, if gate.Open then "open" else "CLOSED", if gate.Open and gate.Toll > 0 then (" · toll %d"):format(gate.Toll) else ""))
