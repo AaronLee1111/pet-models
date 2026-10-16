@@ -51,3 +51,10 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - No board picker until there's a second board (picker appears automatically when `Config.Match.Boards` has more than one).
 - Bank coins still have nothing to spend on (permanent cosmetics shop planned for the polish phase).
 - Leaving and rejoining with a real player wasn't tested with real DataStores (Studio uses memory; the DataStore layer is covered by fake-store unit tests).
+
+## Cosmetics Shop (2026-10-16)
+
+- Card "hero" is a flat colour swatch. Needs a real rendered image per item (style guide: one big clear hero image per card).
+- Client preview (`ShopScreen`) duplicates the server's cosmetic drawing code (`CosmeticService`). Move both to one shared drawer when cosmetics get real models.
+- The shop's bank balance refreshes on purchases, equips and end-of-match payouts only (no live push for other changes).
+- The BUY → PAY confirmation lasts 3 s; fine on touch but untested with a gamepad.

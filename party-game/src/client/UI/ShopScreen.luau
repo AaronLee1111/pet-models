@@ -279,7 +279,7 @@ function ShopScreen:render()
 
 		local action
 		if isWorn then
-			action = cardButton(row, 2, "REMOVE", Theme.Colors.CardLight, Theme.Colors.Text)
+			action = cardButton(row, 2, "REMOVE", Theme.Colors.Hot) -- must stand out from the worn card
 			action.Activated:Connect(function()
 				self:setStatus("Taking it off...")
 				self.Send({ Kind = "Unequip", Slot = item.Slot })

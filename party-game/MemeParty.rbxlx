@@ -12057,6 +12057,7 @@ return ActionBar
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Theme = require(script.Parent.Theme)
@@ -12068,6 +12069,9 @@ BoardView.__index = BoardView
 local ROLL_ACTION = "PartyBoardRoll"
 local CAMERA_BIND = "PartyBoardCamera"
 local CAMERA_OFFSET = Vector3.new(0, 42, 34)
+-- Landscape phones need extra breathing room around the board so the near row and
+-- world labels stay clear of the HUD and rounded screen edges. Desktop is unchanged.
+local TOUCH_CAMERA_OFFSET = Vector3.new(0, 60, 50)
 local MAP_OFFSET = Vector3.new(0, 115, 60) -- MAP view: high enough to see the whole board
 local MAP_ACTION = "PartyBoardMap"
 
@@ -12578,7 +12582,8 @@ function BoardView:show()
 		end
 		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
 		camera.CameraType = Enum.CameraType.Scriptable
-		camera.CFrame = CFrame.lookAt(self.Focus + (if self.MapOpen then MAP_OFFSET else CAMERA_OFFSET), self.Focus)
+		local playOffset = if UserInputService.TouchEnabled then TOUCH_CAMERA_OFFSET else CAMERA_OFFSET
+		camera.CFrame = CFrame.lookAt(self.Focus + (if self.MapOpen then MAP_OFFSET else playOffset), self.Focus)
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
