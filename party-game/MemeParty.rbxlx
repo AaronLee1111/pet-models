@@ -4094,6 +4094,15 @@ function Match:step(seat): number
 	if #options == 0 then
 		options = self:nextOptions(here)
 	end
+	-- No turning around mid-move: on two-way stretches (the festival bridge) the space you
+	-- just came from isn't offered, unless it's the only way on.
+	if seat.MoveFrom and #options > 1 then
+		local back = table.find(options, seat.MoveFrom)
+		if back then
+			options = table.clone(options)
+			table.remove(options, back)
+		end
+	end
 	local nextId = options[1]
 	if #options > 1 then
 		local space = self.Board:get(here)
@@ -4123,6 +4132,7 @@ function Match:step(seat): number
 	if gate and gate.Toll and gate.Toll > 0 then
 		self.Deps.Wallet.spend(seat.Participant, gate.Toll)
 	end
+	seat.MoveFrom = here
 	seat.SpaceId = nextId
 	seat.Stats.SpacesMoved += 1
 	return nextId
@@ -4135,6 +4145,7 @@ end
 	Returns the feed line for the landing (may be nil).
 ]]
 function Match:move(seat, steps: number, onHop, onNotice)
+	seat.MoveFrom = nil -- a new move may set off in either direction
 	for remaining = steps - 1, 0, -1 do
 		local id = self:step(seat)
 		if onHop then
