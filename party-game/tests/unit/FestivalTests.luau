@@ -159,6 +159,27 @@ test("Crown and trap markers travel with bridge tiles",function()
  local ok2=(w.TrapMarkers[35].Position-w.Tops[35]-Vector3.new(0,0.2,0)).Magnitude<0.01
  w:destroy();assert(ok1 and ok2)
 end)
+test("no turning around mid-move on the two-way bridge",function()
+ Wallet.resetAll()
+ local seats={}
+ for i=1,4 do seats[i]={Id="festivalrev"..i,Name="R"..i,IsBot=true} end
+ local asked={}
+ local m=Match.new(BoardLayout.load(Data,Types),seats,{Rounds=8,Difficulty="Hard"},{Wallet=Wallet,Inventory=Inventory,Rng=Random.new(9),Ask=function(_,q)
+  table.insert(asked,q)
+  for i,label in q.Options do if string.find(label,"bridge") then return i end end
+  return q.Default
+ end})
+ local seat=m.Seats[1]
+ seat.SpaceId=1 -- north dock; N-S alignment is open at the start
+ m.CollectibleSpace=4
+ m:move(seat,3)
+ eq(seat.SpaceId,35) -- 1 -> 33 -> 34 -> 35, never back to 1 or 33
+ eq(#asked,1) -- only the dock fork asks; the bridge doesn't offer the way back
+ local before=#asked
+ m:move(seat,1)
+ eq(#asked,before+1) -- a fresh move from 35 may set off either way
+end)
+
 return function()
  local passed,failed=0,0
  for _,t in tests do
