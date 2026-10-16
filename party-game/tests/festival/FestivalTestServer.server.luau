@@ -13,12 +13,20 @@ local remote=Instance.new("RemoteEvent");remote.Name="FestivalTestReport";remote
 local reports={}
 remote.OnServerEvent:Connect(function(p,data)
  if type(data)~="table" then return end
- data.Passed=data.Finished==true and data.Automatic>=3 and data.Rotations>=4 and data.SawRider==true
+ data.Passed=data.Finished==true and data.Turns>=3 and data.Players==4 and data.Automatic>=3 and data.Rotations>=4 and data.SawRider==true
  reports[p.Name]=data
  print("[FestivalSmoke] "..p.Name.." "..game:GetService("HttpService"):JSONEncode(data))
  workspace:SetAttribute("FestivalReports",game:GetService("HttpService"):JSONEncode(reports))
  if #game:GetService("Players"):GetPlayers()>=2 then
   local n=0;for _ in reports do n+=1 end
   if n>=2 then pcall(function() game:GetService("StudioTestService"):EndTest(game:GetService("HttpService"):JSONEncode(reports)) end) end
+ end
+end)
+
+-- A failed client launch must not leave a local multi-client test running indefinitely.
+task.delay(600,function()
+ local count=0;for _ in reports do count+=1 end
+ if count<2 then
+  pcall(function() game:GetService("StudioTestService"):EndTest("INCOMPLETE: fewer than two reports after 600 seconds") end)
  end
 end)

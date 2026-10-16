@@ -74,7 +74,7 @@ In that place's edit-mode command bar:
 require(game.ServerStorage.PartyTests.RunAll)()
 ```
 
-Latest result: **132 passed, 0 failed**, including 21 festival tests and 111 existing tests.
+Latest result: **132 passed, 0 failed**, including 20 festival tests and 112 existing tests.
 Coverage includes all four local loops for 48 moves in both alignments, disconnected exits,
 no bypass, graph cache invalidation, round timing, revision snapshots, Crown relocation,
 item ownership/stage/cooldown, bots, invalid definitions, moving markers and recovery geometry.
@@ -110,3 +110,28 @@ Do not merge by overwriting the other checkout. Preserve its uncommitted phone-c
 commit or stash those there first, review conflicts (particularly BoardView and Config), then
 merge this branch. Re-run the unit suite and the festival smoke project after resolving conflicts.
 Rebuild with `rojo build place.project.json -o MemeParty.rbxlx`. No Roblox publishing is needed.
+
+### Recorded Studio checks (2026-10-16)
+
+- Complete unit suite: 132 passed / 0 failed; festival subset: 20 passed / 0 failed.
+- One Studio player + three bots: three-round match reached final standings; five rotations
+  total, three automatic, Moon Dial exercised, moving-platform riders observed; harness Passed=true.
+- Forced recovery: server moved the anchored player 80 studs below the board; the watchdog
+  restored the player to a valid height. No task-related game-script errors in the server log.
+- Fresh Ready request returned 36-space layout, current revision/alignment, next alignment,
+  all four dock states and cooldown, rather than resetting to the initial orientation.
+- Desktop and iPhone 17 Pro landscape checked in play mode. Whole-board geometry and MAP
+  were visible without clipping the near island. MAP showed closed local loops and the next
+  alignment. Phone MAP button is approximately 48 points high; roll approximately 83 points.
+  Studio device simulation was reset to the default viewport afterward.
+- Two-client harness was attempted through StudioTestService. Both client processes launched,
+  but only one joined the server; the second remained in an edit window. The run was ended
+  as INCOMPLETE. Two-client gameplay remains to be rechecked; no multiplayer pass is claimed.
+- Lune is not installed in this environment. The mock-engine headless simulation was not run;
+  real Studio unit tests and gameplay runs were used instead. No dependencies were installed.
+- Studio emitted unrelated CorePackages/UIBlox and existing asset-type warnings. These are
+  outside this board's source and were not changed.
+
+Fixed during verification: camera framing was too distant; Crown/trap markers now follow
+moving spaces throughout rotation; closed docks now have physical red barriers and tile text,
+and the turn header explicitly identifies isolation. Sunny Loop regressions remained green.

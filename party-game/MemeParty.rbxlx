@@ -61,7 +61,7 @@ Config.Match = {
 	},
 	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
 	Board = "Classic", -- default board: module name in PartyServer/Board/Boards
-	Boards = { "Classic" }, -- boards the host can pick (in this order)
+	Boards = { "Classic", "MagicalFestival" }, -- boards the host can pick (in this order)
 	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
 	Mode = "Board",
 	Modes = { "Board", "Minigames" },
@@ -1103,7 +1103,7 @@ local function layoutMessage(board)
 	for key, spaceType in SpaceTypes do
 		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
 	end
-	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend }
+	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend, Festival = board.Bridge ~= nil }
 end
 
 local function describeItems(seat)
@@ -1132,6 +1132,7 @@ local function stateMessage()
 			Coins = match:coinsOf(seat),
 			Collectibles = match:collectiblesOf(seat),
 			SpaceId = seat.SpaceId,
+			Zone = match.Board:get(seat.SpaceId).Zone,
 			Character = participant:GetCharacter(),
 		})
 	end
@@ -1143,6 +1144,7 @@ local function stateMessage()
 		end
 	end
 	return {
+		Bridge = match:bridgeState(),
 		OrderPending = pending,
 		Dice = match.Turn and match.Turn.Dice,
 		ItemUsed = match.Turn and match.Turn.ItemUsed,
@@ -1189,6 +1191,8 @@ local function publish()
 		match.CollectibleSpace,
 		("%s · %d coins"):format(Config.Collectible.Name, match.CollectiblePrice)
 	)
+	current.World:setFestivalLighting(current.Stage ~= "Minigame")
+	current.World:setBridgeState(match:bridgeState())
 	current.World:setTraps(match.Traps)
 	current.World:setGates(match.Board.Gates, match.GateOpen)
 	current.StateMessage = stateMessage()
@@ -1222,9 +1226,13 @@ local function placeSeat(seat)
 	if not participant:IsAlive() then
 		return
 	end
-	local facing = current.Match.Board:nextOptions(seat.SpaceId)[1]
+	local facing = current.Match:nextOptions(seat.SpaceId)[1]
 	participant:Teleport(current.World:spaceCFrame(seat.SpaceId, slotOf(seat), facing))
 	participant:Freeze()
+	if current.Match.Board.Bridge then
+		local root = participant:GetRoot()
+		if root then root.Anchored = true end
+	end
 	-- Pieces bumping on a shared tile can tip over; stand bots back up (players' own
 	-- clients do the same in BoardView).
 	local humanoid = participant:GetHumanoid()
@@ -1239,13 +1247,56 @@ local function placeAll()
 	end
 end
 
+-- Board pieces are anchored on this board: clients cannot jump/walk across a gap.
+-- Release before any minigame/duel or lobby transition.
+local function releasePieces()
+ if not current or not current.Match or not current.Match.Board.Bridge then return end
+ for _,seat in current.Match.Seats do
+  local root=seat.Participant:GetRoot()
+  if root then root.Anchored=false end
+ end
+end
+
+local function warnRotation()
+ local state=current.Match:bridgeState()
+ current.Stage="RotationWarning"
+ feed("Moon bridge: " .. state.Alignment .. " → " .. state.NextAlignment .. ". Stay on your space!")
+ publish()
+ task.wait(current.Match.Board.Bridge.WarningSeconds)
+end
+
+local function animateRotation()
+ local match=current.Match
+ current.Stage="Rotating"
+ -- State and connectivity have already committed together; no turns or seam hops
+ -- can run until this synchronous presentation finishes.
+ publish()
+ local startAngle=current.BridgeAngle or 0
+ local duration=match.Board.Bridge.RotationSeconds
+ local started=now()
+ repeat
+  local alpha=math.clamp((now()-started)/duration,0,1)
+  current.World:setBridgeAngle(startAngle+((if match.Orientation==0 then 0 else -math.pi/2)-startAngle)*(alpha*alpha*(3-2*alpha)))
+  for _,seat in match.Seats do
+   if seat.SpaceId>=33 then placeSeat(seat) end
+  end
+  task.wait()
+ until now()-started>=duration
+ current.BridgeAngle=if match.Orientation==0 then 0 else -math.pi/2
+ current.World:setBridgeAngle(current.BridgeAngle)
+ placeAll()
+ current.LayoutMessage=layoutMessage(match.Board)
+ MinigameManager.broadcast(current.LayoutMessage)
+ feed("Moon bridge now " .. match:bridgeState().Alignment .. ". Closed zones keep looping.")
+end
+
 --[[
 	Safe recovery: while the board is up, any piece that has been knocked off its space,
 	fallen off the board or lost its body is put back (bots get a new body first). Runs once
 	a second; Match positions are the truth, the world just follows them.
 ]]
 local function recoverPieces()
-	if not current or current.Stage == "Minigame" or current.Stage == "Finished" then
+	if not current or current.Stage == "Minigame" or current.Stage == "Finished" or current.Stage == "Rotating" then
 		return 0
 	end
 	local fixed = 0
@@ -1373,6 +1424,7 @@ local function playDuel(seatA, seatB)
 	current.Stage = "Minigame"
 	publish()
 	task.wait(1)
+	releasePieces()
 	local ok, winner = xpcall(MinigameManager.runDuel, debug.traceback, seatA.Participant, seatB.Participant)
 	if not ok then
 		warn("[BoardGame] Duel crashed, using dice instead:\n" .. tostring(winner))
@@ -1490,7 +1542,13 @@ local function useItem(seat, slot, target, choice)
 			return false
 		end
 	end
-	local used, text = match:useItem(seat, slot, target, choice)
+	local previousStage=current.Stage
+ local revision=match.BridgeRevision
+ if id=="MoonDial" and match:canUseMoonDial() and match.Turn and match.Turn.Seat==seat
+  and match.Turn.Stage=="PreRoll" and not match.Turn.ItemUsed then warnRotation() end
+ local used, text = match:useItem(seat, slot, target, choice)
+ if match.BridgeRevision~=revision then animateRotation() end
+ current.Stage=previousStage
 	if used then
 		feed(text)
 		placeAll() -- swaps and warps move pieces
@@ -1661,11 +1719,16 @@ function BoardGame.play(participants, settings)
 		end
 
 		current.Turn = nil
+  if match:rotationDue() then
+   warnRotation()
+   if match:finishBoardRound() then animateRotation() end
+  end
 		current.Stage = "Minigame"
 		current.Text = "Minigame time!"
 		publish()
 		task.wait(1)
 		refreshSeats()
+		releasePieces()
 		local ok, results, rows = xpcall(MinigameManager.runRound, debug.traceback, match:participants())
 		if ok then
 			match:recordMinigame(results, rows)
@@ -1722,6 +1785,7 @@ end
 -- Tears the match down and sends everyone back to the lobby. Safe to call any time.
 function BoardGame.cleanup()
 	local match = current and current.Match
+	releasePieces()
 	if current then
 		current.World:destroy()
 	end
@@ -1784,7 +1848,7 @@ MinigameManager.onReady(function(player)
 	if current and current.LayoutMessage then
 		MinigameManager.sendTo(player, current.LayoutMessage)
 		if current.StateMessage then
-			MinigameManager.sendTo(player, current.StateMessage)
+			MinigameManager.sendTo(player, stateMessage())
 		end
 	end
 end)
@@ -1843,6 +1907,7 @@ return BoardGame
 	                   (Switch spaces flip them) and/or costs Toll coins to take
 ]]
 
+local RotatingBridge = require(script.Parent.RotatingBridge)
 local BoardLayout = {}
 
 local Board = {}
@@ -1933,6 +1998,9 @@ function BoardLayout.validate(data, spaceTypes): string?
 		end
 	end
 
+	local bridgeProblem = RotatingBridge.validate(data)
+	if bridgeProblem then return bridgeProblem end
+
 	-- Every space must be reachable from Start, and Start reachable again from every space
 	-- (otherwise someone could get stuck on a branch forever).
 	local function reach(from, edges)
@@ -1979,6 +2047,8 @@ function BoardLayout.load(data, spaceTypes)
 		Start = data.Start,
 		CrownSpaces = table.clone(data.CrownSpaces),
 		Gates = data.Gates or {},
+		Bridge = data.Bridge,
+		Zones = data.Zones,
 		Spaces = {},
 		Order = {},
 	}, Board)
@@ -2012,6 +2082,8 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 
+local FestivalScene = require(script.Parent.FestivalScene)
+
 local BoardWorld = {}
 BoardWorld.__index = BoardWorld
 
@@ -2038,7 +2110,7 @@ local function part(props): Part
 end
 
 function BoardWorld.build(board, spaceTypes, origin: Vector3)
-	local self = setmetatable({ Board = board, Origin = origin, Tops = {} }, BoardWorld)
+	local self = setmetatable({ Board = board, Origin = origin, Tops = {}, Tiles = {} }, BoardWorld)
 	local spacing = Config.Board.SpaceSpacing
 	local folder = Instance.new("Folder")
 	folder.Name = "PartyBoard"
@@ -2056,6 +2128,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		return origin + Vector3.new(at[1] * spacing, 0, -at[2] * spacing) - centre
 	end
 
+	if not board.Bridge then
 	part({
 		Name = "Base",
 		Size = Vector3.new((maxX - minX) * spacing + 30, 2, (maxZ - minZ) * spacing + 30),
@@ -2065,6 +2138,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		Parent = folder,
 	})
 
+	end
 	for _, id in board.Order do
 		local space = board.Spaces[id]
 		local spaceType = spaceTypes[space.Type]
@@ -2078,6 +2152,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 			Color = spaceType.Color,
 			Parent = folder,
 		})
+		self.Tiles[id] = tile
 		tile:SetAttribute("SpaceId", id)
 		tile:SetAttribute("SpaceType", space.Type)
 		if spaceType.Short ~= "" then
@@ -2099,6 +2174,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 
 		-- Paths to the next spaces
 		for _, nextId in space.Next do
+			if board.Bridge and (id >= 33 or nextId >= 33) then continue end
 			local target = worldAt(board.Spaces[nextId].At)
 			local length = (target - position).Magnitude - TILE_SIZE
 			if length > 0 then
@@ -2114,6 +2190,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		end
 	end
 
+	if board.Bridge then FestivalScene.build(self) end
 	-- The collectible marker: a floating gold gem with a price tag.
 	local marker = part({
 		Name = "Collectible",
@@ -2169,6 +2246,7 @@ function BoardWorld:isMisplaced(position: Vector3, id: number): boolean
 end
 
 function BoardWorld:setCollectible(id: number?, label: string)
+	self.MarkerId = id
 	local top = id and self.Tops[id]
 	self.Marker.Transparency = if top then 0 else 1
 	self.MarkerLabel.Text = label
@@ -2246,7 +2324,32 @@ function BoardWorld:setTraps(traps)
 	end
 end
 
+function BoardWorld:setBridgeAngle(angle)
+ FestivalScene.align(self,angle)
+ if self.MarkerId and self.MarkerId>=33 then self.Marker.Position=self.Tops[self.MarkerId]+Vector3.new(0,7,0) end
+ for id,marker in self.TrapMarkers or {} do
+  if id>=33 then marker.Position=self.Tops[id]+Vector3.new(0,0.2,0) end
+ end
+end
+function BoardWorld:setBridgeState(state)
+ if state then FestivalScene.status(self,state) end
+end
+
+function BoardWorld:setFestivalLighting(active)
+ if not self.Board.Bridge then return end
+ local lighting=game:GetService("Lighting")
+ if active and not self.SavedLighting then
+  self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
+  lighting.ClockTime=17.8;lighting.Ambient=Color3.fromRGB(145,130,180)
+  lighting.OutdoorAmbient=Color3.fromRGB(155,150,190);lighting.Brightness=2
+ elseif not active and self.SavedLighting then
+  for key,value in self.SavedLighting do lighting[key]=value end
+  self.SavedLighting=nil
+ end
+end
+
 function BoardWorld:destroy()
+ self:setFestivalLighting(false)
 	self.Folder:Destroy()
 end
 
@@ -2339,8 +2442,51 @@ return {
 ]]></string>
             </Properties>
           </Item>
+          <Item class="ModuleScript" referent="16">
+            <Properties>
+              <string name="Name">MagicalFestival</string>
+              <string name="Source"><![CDATA[-- Four eight-space loops and four spaces on ONE straight rotating bridge.
+local spaces = {}
+local zones = { "Moonflower Plaza", "Crystal-Flower Garden", "Moon-Tree Grove", "Lantern Fair" }
+local points = { {0,2.8}, {1.25,3.25}, {1.7,4.5}, {1.25,5.75}, {0,6.2}, {-1.25,5.75}, {-1.7,4.5}, {-1.25,3.25} }
+local kinds = {
+ {"Neutral","Gain","Item","Gain","Switch","Reward","Lose","Shop"},
+ {"Neutral","Gain","Reward","Gain","Event","Item","Lose","Shop"},
+ {"Neutral","Gain","Chaos","Gain","Event","Reward","Item","Shop"},
+ {"Neutral","Gain","Duel","Gain","Lose","Reward","Item","Shop"},
+}
+for zone = 1, 4 do
+ for i, at in points do
+  local x,z = at[1],at[2]
+  for _ = 2, zone do x,z = z,-x end
+  local id = (zone-1)*8+i
+  local nextIds = { (zone-1)*8+i%8+1 }
+  local paths = nil
+  if i == 1 then
+   table.insert(nextIds, if zone <= 2 then 33 else 36)
+   paths = { "Local loop", "Moon bridge" }
+  end
+  table.insert(spaces, { Id=id, Type=kinds[zone][i], At={x,z}, Next=nextIds, Paths=paths, Zone=zone })
+ end
+end
+for i = 1,4 do
+ local nextIds = {}
+ if i > 1 then table.insert(nextIds,32+i-1) end
+ if i < 4 then table.insert(nextIds,32+i+1) end
+ if i == 1 then table.insert(nextIds,1); table.insert(nextIds,9) end
+ if i == 4 then table.insert(nextIds,17); table.insert(nextIds,25) end
+ table.insert(spaces,{Id=32+i,Type=if i==2 then "Reward" elseif i==3 then "Gain" else "Neutral",At={0,2.25-(i-1)*1.5},Next=nextIds,Zone=0})
+end
+return {
+ Name="MagicalFestival", DisplayName="Magical Festival Island", Start=17,
+ CrownSpaces={4,12,20,28,34,35}, Spaces=spaces, Zones=zones,
+ Bridge={ EveryRounds=1, WarningSeconds=2, RotationSeconds=1.5, DialCooldownRounds=2 },
+}
+]]></string>
+            </Properties>
+          </Item>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">BotBrain</string>
             <string name="Source"><![CDATA[--[[
@@ -2389,6 +2535,7 @@ BotBrain.ItemValue = {
 	CrownHeist = 4,
 	Snare = 1,
 	GateKey = 2,
+	MoonDial = 4,
 }
 -- Items an opponent could hurt you with; a bot that sees one in an opponent's (public)
 -- inventory values its own Coin Shield more.
@@ -2427,7 +2574,7 @@ function BotBrain.branchScore(match, seat, startId: number, profile): number
 	for step = 0, profile.LookAhead - 1 do
 		local space = match.Board:get(id)
 		score += (BotBrain.SpaceValue[space.Type] or 0) * 0.85 ^ step
-		id = space.Next[1]
+		id = match:nextOptions(id)[1]
 	end
 	-- The Crown matters most when you can (nearly) pay for it.
 	local coins, price = match:coinsOf(seat), match:collectiblePriceFor(seat)
@@ -2525,7 +2672,7 @@ function BotBrain.bestFace(match, seat): (number, number)
 	local bestFace, bestValue = 1, -math.huge
 	local id = seat.SpaceId
 	for face = 1, Config.Board.DieSides do
-		id = match.Board:get(id).Next[1]
+		id = match:nextOptions(id)[1]
 		local value = BotBrain.SpaceValue[match.Board:get(id).Type] or 0
 		if value > bestValue then
 			bestFace, bestValue = face, value
@@ -2545,7 +2692,25 @@ function BotBrain.itemScore(match, seat, id: string)
 	local late = isLastRound(match)
 	local urgency = if isBehind(match, seat) then 1.3 else 1
 
-	if id == "DoubleDice" or id == "TripleDice" then
+	if id == "MoonDial" then
+  if not match:canUseMoonDial() then return 0 end
+  local nextOrientation=1-match.Orientation
+  local crown=match.CollectibleSpace
+  local zone=match.Board:get(crown).Zone
+  if zone~=0 and ((nextOrientation==0 and zone%2==0) or (nextOrientation==1 and zone%2==1)) then crown=34 end
+  local after=match:distanceAt(seat.SpaceId,crown,nextOrientation)
+  local before=math.min(distance,40)
+  local score=if canBuy and after+3<before then (before-after)*0.3 else 0
+  for _,other in match:opponentsOf(seat) do
+   if match:collectiblesOf(other)>match:collectiblesOf(seat) and match:coinsOf(other)>=price
+    and crownDistance(match,other.SpaceId)<=6 and match:distanceAt(other.SpaceId,crown,nextOrientation)>12 then score+=2 end
+  end
+  -- Saving the item is preferable when the next automatic rotation already opens
+  -- our zone and we cannot reach its dock on this roll.
+  local dock=(math.max(1,match.Board:get(seat.SpaceId).Zone)-1)*8+1
+  if distance==math.huge and match:distance(seat.SpaceId,dock)>Config.Board.DieSides then score=0 end
+  return score
+ elseif id == "DoubleDice" or id == "TripleDice" then
 		local dice = if id == "TripleDice" then 3 else 2
 		if canBuy and distance > Config.Board.DieSides and distance <= Config.Board.DieSides * dice then
 			return (3 + dice) * urgency
@@ -2697,7 +2862,7 @@ return BotBrain
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">ChaosEvents</string>
             <string name="Source"><![CDATA[--[[
@@ -2791,7 +2956,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Events</string>
             <string name="Source"><![CDATA[--[[
@@ -2923,7 +3088,146 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
+          <Properties>
+            <string name="Name">FestivalScene</string>
+            <string name="Source"><![CDATA[-- Editable procedural blockout: shared lamps, rocks, crystals and seven landmark groups.
+-- No external assets, unions, textures, or per-frame effects. All decoration is noncolliding.
+local Scene={}
+local gold=Color3.fromRGB(241,180,67)
+local stone=Color3.fromRGB(156,133,185)
+local cyan=Color3.fromRGB(95,221,255)
+local pink=Color3.fromRGB(220,120,255)
+local function part(parent,name,size,cf,color,material,collide,shape)
+ local p=Instance.new("Part");p.Name=name;p.Size=size;p.CFrame=cf;p.Color=color
+ p.Material=material or Enum.Material.SmoothPlastic;p.Anchored=true;p.CanCollide=collide==true
+ p.CanTouch=false;p.TopSurface=Enum.SurfaceType.Smooth;p.BottomSurface=Enum.SurfaceType.Smooth
+ if shape then p.Shape=shape end
+ p.Parent=parent;return p
+end
+local function cylinder(parent,name,radius,height,cf,color,collide)
+ return part(parent,name,Vector3.new(height,radius*2,radius*2),cf*CFrame.Angles(0,0,math.pi/2),color,nil,collide,Enum.PartType.Cylinder)
+end
+local function group(parent,name) local m=Instance.new("Model");m.Name=name;m.Parent=parent;return m end
+local function lamp(parent,at)
+ part(parent,"LanternPost",Vector3.new(0.7,6,0.7),CFrame.new(at+Vector3.new(0,3,0)),gold)
+ part(parent,"Lantern",Vector3.new(2,2.8,2),CFrame.new(at+Vector3.new(0,6.5,0)),Color3.fromRGB(255,204,85),Enum.Material.Neon)
+end
+local function crystal(parent,at,color,scale)
+ local p=part(parent,"Crystal",Vector3.new(2,6,2)*scale,CFrame.new(at+Vector3.new(0,3*scale,0))*CFrame.Angles(0,0,0.2),color,Enum.Material.Neon)
+ return p
+end
+function Scene.build(world)
+ local origin=world.Origin
+ local folder=world.Folder
+ local centers={Vector3.new(0,0,-54),Vector3.new(54,0,0),Vector3.new(0,0,54),Vector3.new(-54,0,0)}
+ for zone,offset in centers do
+  local island=group(folder,world.Board.Zones[zone])
+  local c=origin+offset
+  cylinder(island,"Island",25,4,CFrame.new(c-Vector3.new(0,2,0)),stone,true)
+  cylinder(island,"Garden",23,0.5,CFrame.new(c+Vector3.new(0,0.1,0)),Color3.fromRGB(97,151,147),false)
+  for i=1,8 do
+   local a=i*math.pi/4
+   local rim=c+Vector3.new(math.cos(a)*22,-5,math.sin(a)*22)
+   part(island,"FloatingRock",Vector3.new(9,12+(i%3)*3,9),CFrame.new(rim)*CFrame.Angles(0,a,0.15),stone)
+   if i%2==0 then lamp(island,rim+Vector3.new(0,6,0)) end
+   crystal(island,rim+Vector3.new(0,7,0),if i%2==0 then cyan else pink,0.4)
+  end
+ end
+ local plaza=group(folder,"MoonflowerFountain")
+ local c=origin+centers[1]
+ cylinder(plaza,"Basin",8,2,CFrame.new(c+Vector3.new(0,2,0)),gold)
+ cylinder(plaza,"Water",7,0.3,CFrame.new(c+Vector3.new(0,3.2,0)),cyan)
+ for i=1,6 do
+  local angle=i*math.pi/3
+  part(plaza,"Petal",Vector3.new(4,2,7),CFrame.new(c+Vector3.new(math.cos(angle)*3,6,math.sin(angle)*3))*CFrame.Angles(0,-angle,0.5),pink,Enum.Material.Neon,false,Enum.PartType.Ball)
+ end
+ crystal(plaza,c+Vector3.new(0,5,0),gold,0.8)
+ local pavilion=group(folder,"CrystalPavilion");c=origin+centers[2]
+ for _,x in {-5,5} do for _,z in {-5,5} do part(pavilion,"Pillar",Vector3.new(1.3,10,1.3),CFrame.new(c+Vector3.new(x,5,z)),gold) end end
+ part(pavilion,"Canopy",Vector3.new(14,3,14),CFrame.new(c+Vector3.new(0,11,0)),stone)
+ crystal(pavilion,c+Vector3.new(0,12,0),cyan,0.8)
+ for _,x in {-7,0,7} do crystal(pavilion,c+Vector3.new(x,1,0),if x==0 then pink else cyan,0.7) end
+ local tree=group(folder,"MoonTree");c=origin+centers[3]
+ part(tree,"Trunk",Vector3.new(5,11,5),CFrame.new(c+Vector3.new(0,5,0)),Color3.fromRGB(115,80,120))
+ for _,x in {-5,0,5} do
+  part(tree,"Canopy",Vector3.new(13,7,12),CFrame.new(c+Vector3.new(x,12-math.abs(x)*0.3,0)),Color3.fromRGB(89,129,235),nil,false,Enum.PartType.Ball)
+  lamp(tree,c+Vector3.new(x,4,1))
+ end
+ for _,x in {-10,10} do
+  local gate=group(folder,"ShrineGate")
+  for _,z in {-3,3} do part(gate,"Post",Vector3.new(1.2,7,1.2),CFrame.new(c+Vector3.new(x,3.5,z)),gold) end
+  part(gate,"Lintel",Vector3.new(2,1.5,10),CFrame.new(c+Vector3.new(x,7,0)),Color3.fromRGB(175,78,131))
+ end
+ local wheel=group(folder,"LanternWheel");c=origin+centers[4]+Vector3.new(0,10,-3)
+ for i=1,8 do
+  local a=i*math.pi/4
+  local p=c+Vector3.new(math.cos(a)*8,math.sin(a)*8,0)
+  part(wheel,"Spoke",Vector3.new(0.5,8,0.5),CFrame.new((p+c)/2)*CFrame.Angles(0,0,a-math.pi/2),gold)
+  part(wheel,"WheelLantern",Vector3.new(2,2,2),CFrame.new(p),gold,Enum.Material.Neon)
+ end
+ part(wheel,"Support",Vector3.new(2,11,2),CFrame.new(c-Vector3.new(0,5,0)),stone)
+ for _,x in {-9,9} do
+  local tent=group(folder,"FestivalTent")
+  local t=origin+centers[4]+Vector3.new(x,0,6)
+  part(tent,"Counter",Vector3.new(6,3,4),CFrame.new(t+Vector3.new(0,1.5,0)),gold)
+  part(tent,"Roof",Vector3.new(8,2,7),CFrame.new(t+Vector3.new(0,6,0)),pink)
+  for _,dx in {-3,3} do part(tent,"Pole",Vector3.new(0.5,6,0.5),CFrame.new(t+Vector3.new(dx,3,0)),gold) end
+ end
+ -- Decorative circular mechanism has NO walkable surface outside the straight deck.
+ cylinder(folder,"MoonMechanism",27,2,CFrame.new(origin-Vector3.new(0,2,0)),stone,false)
+ local moving=group(folder,"RotatingMoonBridge")
+ moving.WorldPivot=CFrame.new(origin)
+ part(moving,"SingleStraightDeck",Vector3.new(10,1,63),CFrame.new(origin),Color3.fromRGB(233,215,198),nil,true)
+ for _,x in {-5.5,5.5} do
+  part(moving,"Rail",Vector3.new(0.6,2,61),CFrame.new(origin+Vector3.new(x,1,0)),gold)
+ end
+ world.Moving=moving
+ world.MovingLocal={}
+ for id=33,36 do
+  world.Tiles[id].Parent=moving
+  world.MovingLocal[id]=world.Tops[id]-origin
+ end
+ world.DockLabels={}
+ world.DockBarriers={}
+ for zone,id in {1,9,17,25} do
+  local at=world.Tops[id]
+  local sign=part(folder,"DockStatus"..zone,Vector3.new(1,1,1),CFrame.new(at+Vector3.new(0,5,0)),gold)
+  sign.Transparency=1
+  local gui=Instance.new("BillboardGui");gui.Size=UDim2.fromOffset(135,30);gui.AlwaysOnTop=true;gui.Parent=sign
+  local label=Instance.new("TextLabel");label.Size=UDim2.fromScale(1,1);label.BackgroundTransparency=0.3
+  label.BackgroundColor3=stone;label.TextColor3=Color3.new(1,1,1);label.TextScaled=true;label.Font=Enum.Font.FredokaOne;label.Parent=gui
+  world.DockLabels[zone]=label
+  local inward=(origin-at)*Vector3.new(1,0,1)
+  inward=inward.Unit
+  local position=at+inward*4.7+Vector3.new(0,1,0)
+  world.DockBarriers[zone]=part(folder,"ClosedDockBarrier"..zone,Vector3.new(9,2,0.7),CFrame.lookAt(position,position+inward),Color3.fromRGB(255,105,120),Enum.Material.Neon,true)
+  local surface=Instance.new("SurfaceGui");surface.Face=Enum.NormalId.Top;surface.Parent=world.Tiles[id]
+  local status=Instance.new("TextLabel");status.Name="ExitStatus";status.Size=UDim2.fromScale(1,1);status.BackgroundTransparency=1
+  status.TextScaled=true;status.Font=Enum.Font.FredokaOne;status.TextColor3=Color3.new(1,1,1);status.Parent=surface
+ end
+ Scene.align(world,0)
+end
+function Scene.align(world,angle)
+ world.Moving:PivotTo(CFrame.new(world.Origin)*CFrame.Angles(0,angle,0))
+ for id,offset in world.MovingLocal do world.Tops[id]=(CFrame.new(world.Origin)*CFrame.Angles(0,angle,0)):PointToWorldSpace(offset) end
+end
+function Scene.status(world,state)
+ for zone,label in world.DockLabels do
+  local open=state.Docks[zone].Open
+  label.Text=if open then "BRIDGE OPEN" else "CLOSED · LOOP"
+  local barrier=world.DockBarriers[zone]
+  barrier.Transparency=if open then 1 else 0
+  barrier.CanCollide=not open
+  world.Tiles[({1,9,17,25})[zone]].SurfaceGui.ExitStatus.Text=if open then "OPEN" else "CLOSED"
+  label.TextColor3=if open then Color3.fromRGB(110,255,180) else Color3.fromRGB(255,170,130)
+ end
+end
+return Scene
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">Items</string>
             <string name="Source"><![CDATA[--[[
@@ -2950,6 +3254,9 @@ return {
 ]]
 
 return {
+ { Id="MoonDial", Name="Moon Dial", Description="Rotate the bridge before rolling. Shared cooldown: 2 rounds; automatic rotation still happens.",
+ Price=7, Weight=2, Boards={"MagicalFestival"},
+ Use=function(match) return match:useMoonDial() end },
 	{
 		Id = "DoubleDice",
 		Name = "Double Dice",
@@ -3095,7 +3402,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Match</string>
             <string name="Source"><![CDATA[--[[
@@ -3131,6 +3438,8 @@ local ChaosEvents = require(script.Parent.ChaosEvents)
 local Events = require(script.Parent.Events)
 local Items = require(script.Parent.Items)
 local SpaceTypes = require(script.Parent.SpaceTypes)
+
+local Bridge = require(script.Parent.RotatingBridge)
 
 local Match = {}
 Match.__index = Match
@@ -3171,6 +3480,10 @@ function Match.new(board, participants, settings, deps)
 		Rounds = settings.Rounds or Config.Match.BoardRounds,
 		Difficulty = settings.Difficulty or Config.Match.BotDifficulty,
 		Round = 0,
+		Orientation = 0,
+		BridgeRevision = 0,
+		LastRotationRound = 0,
+		DialReadyRound = 1,
 		Seats = {},
 		Order = {}, -- seat order until decideTurnOrder runs
 		CollectibleSpace = nil,
@@ -3358,6 +3671,9 @@ function Match:useItem(seat, slot, target, choice): (boolean, string)
 	if not item then
 		return false, "unknown item"
 	end
+	if item.Boards and not table.find(item.Boards, self.Board.Name) then
+		return false, "item belongs to another board"
+	end
 	if item.Target == "Opponent" then
 		if type(target) ~= "table" or target == seat or not table.find(self.Seats, target) then
 			return false, "pick an opponent"
@@ -3499,7 +3815,7 @@ function Match:relocateCollectible()
 		occupied[seat.SpaceId] = true
 	end
 	for _, id in self.Board.CrownSpaces do
-		if id ~= self.CollectibleSpace then
+		if id ~= self.CollectibleSpace and (not self.Board.Bridge or Bridge.connected(self.Board:get(id).Zone,self.Orientation)) then
 			table.insert(candidates, id)
 			if not occupied[id] then
 				table.insert(free, id)
@@ -3648,6 +3964,9 @@ end
 
 -- Where a piece can go from `id` right now: closed gates are left out (never all of them).
 function Match:nextOptions(id: number): { number }
+	if self.Board.Bridge then
+		return Bridge.options(self.Board, id, self.Orientation)
+	end
 	local all = self.Board:nextOptions(id)
 	local open = {}
 	for _, nextId in all do
@@ -3671,6 +3990,53 @@ function Match:toggleGates(): number
 end
 
 -- Fewest moves from -> to with the gates as they are now (math.huge if unreachable).
+function Match:bridgeState()
+ return Bridge.snapshot(self)
+end
+
+function Match:canUseMoonDial()
+ return self.Board.Bridge ~= nil and self.Round >= self.DialReadyRound
+end
+
+-- Commit orientation, route cache and Crown together without yielding. Only the turn
+-- driver invokes automatic rotation, after all four turns have ended (no seam crossing).
+function Match:rotateBridge()
+ if not self.Board.Bridge or (self.Turn and self.Turn.Stage ~= "PreRoll") then return false end
+ local nextOrientation = 1-self.Orientation
+ local crown = self.CollectibleSpace
+ if not crown or not Bridge.connected(self.Board:get(crown).Zone,nextOrientation) then
+  crown = if self.CollectibleSpace == 34 then 35 else 34
+ end
+ self.Orientation = nextOrientation
+ self.CollectibleSpace = crown
+ self.DistanceCache = nil
+ self.BridgeRevision += 1
+ return true
+end
+
+function Match:rotationDue()
+ return self.Board.Bridge ~= nil and self.Turn == nil
+  and self.Round >= self.LastRotationRound+self.Board.Bridge.EveryRounds
+end
+
+function Match:finishBoardRound()
+ if not self:rotationDue() then return false end
+ if not self:rotateBridge() then return false end
+ self.LastRotationRound = self.Round
+ return true
+end
+
+function Match:useMoonDial()
+ if not self:canUseMoonDial() then return nil,"Moon Dial is cooling down until round " .. self.DialReadyRound end
+ if not self:rotateBridge() then return nil,"bridge is busy" end
+ self.DialReadyRound = self.Round+self.Board.Bridge.DialCooldownRounds*self.Board.Bridge.EveryRounds
+ return "Moon Dial: bridge rotated to " .. self:bridgeState().Alignment .. "; automatic rotation still happens this round"
+end
+
+function Match:distanceAt(from, to, orientation)
+ return Bridge.distance(self.Board,from,to,orientation)
+end
+
 function Match:distance(from: number, to: number): number
 	self.DistanceCache = self.DistanceCache or {}
 	local row = self.DistanceCache[from]
@@ -3709,7 +4075,7 @@ function Match:routeInfo(_seat, firstId: number, toll: number)
 	end
 	return {
 		CrownDistance = 1 + self:distance(firstId, self.CollectibleSpace),
-		Preview = table.concat(shorts, " "),
+		Preview = table.concat(shorts, " ") .. (if self.Board.Bridge and not Bridge.connected(self.Board:get(firstId).Zone, self.Orientation) then " · bridge CLOSED; local loop" else ""),
 		Toll = toll,
 	}
 end
@@ -4136,7 +4502,83 @@ return Match
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="23">
+          <Properties>
+            <string name="Name">RotatingBridge</string>
+            <string name="Source"><![CDATA[-- Pure topology; no yields, rendering, randomness or mutation during queries.
+local Bridge = {}
+Bridge.Docks = {1,9,17,25}
+function Bridge.isMoving(id) return id >= 33 and id <= 36 end
+function Bridge.connected(zone, orientation)
+ return zone == 0 or (if orientation == 0 then zone == 1 or zone == 3 else zone == 2 or zone == 4)
+end
+function Bridge.options(board, id, orientation)
+ local options = {}
+ for _, target in board:nextOptions(id) do
+  local fromZone,toZone = board:get(id).Zone,board:get(target).Zone
+  if fromZone == toZone or (Bridge.connected(fromZone,orientation) and Bridge.connected(toZone,orientation)) then
+   table.insert(options,target)
+  end
+ end
+ return options
+end
+function Bridge.distance(board, from, target, orientation)
+ local queue,seen,head = {from},{[from]=0},1
+ while queue[head] do
+  local id=queue[head]; head+=1
+  if id==target then return seen[id] end
+  for _,nextId in Bridge.options(board,id,orientation) do
+   if seen[nextId]==nil then seen[nextId]=seen[id]+1;table.insert(queue,nextId) end
+  end
+ end
+ return math.huge
+end
+function Bridge.snapshot(match)
+ if not match.Board.Bridge then return nil end
+ local docks={}
+ for zone,id in Bridge.Docks do
+  table.insert(docks,{SpaceId=id,Name=match.Board.Zones[zone],Open=Bridge.connected(zone,match.Orientation)})
+ end
+ return { Orientation=match.Orientation, Alignment=if match.Orientation==0 then "N–S" else "E–W",
+  NextAlignment=if match.Orientation==0 then "E–W" else "N–S", Revision=match.BridgeRevision,
+  DialReadyRound=match.DialReadyRound, NextRound=match.LastRotationRound+match.Board.Bridge.EveryRounds,
+  Docks=docks }
+end
+-- Validate this mechanism's contract as well as the union graph checked by BoardLayout.
+function Bridge.validate(data)
+ if not data.Bridge then return nil end
+ local rule=data.Bridge
+ if type(rule.EveryRounds)~="number" or rule.EveryRounds<1 or rule.EveryRounds%1~=0 then return "bridge needs a positive round interval" end
+ if type(rule.WarningSeconds)~="number" or rule.WarningSeconds<0 or type(rule.RotationSeconds)~="number" or rule.RotationSeconds<=0 then return "bridge needs valid warning and rotation durations" end
+ if type(rule.DialCooldownRounds)~="number" or rule.DialCooldownRounds<2 then return "Moon Dial cooldown must preserve a full automatic interval" end
+ if not data.Zones or #data.Zones~=4 or #data.Spaces~=36 then return "moon bridge needs four eight-space zones and four moving spaces" end
+ local byId={}
+ for _,space in data.Spaces do byId[space.Id]=space end
+ for zone=1,4 do
+  for n=1,8 do
+   local id=(zone-1)*8+n
+   local space=byId[id]
+   if not space or space.Zone~=zone or space.Next[1]~=(zone-1)*8+n%8+1 then return "each zone needs an uninterrupted local loop" end
+   for _,target in space.Next do
+    local allowed=target==(zone-1)*8+n%8+1 or (n==1 and target==(if zone<=2 then 33 else 36))
+    if not allowed then return "zone edge bypasses the rotating bridge" end
+   end
+  end
+ end
+ local expected={ [33]={34,1,9}, [34]={33,35}, [35]={34,36}, [36]={35,17,25} }
+ for id,edges in expected do
+  local space=byId[id]
+  if not space or space.Zone~=0 or #space.Next~=#edges then return "invalid straight bridge" end
+  for _,target in edges do if not table.find(space.Next,target) then return "invalid bridge connection" end end
+ end
+ if not table.find(data.CrownSpaces,34) or not table.find(data.CrownSpaces,35) then return "bridge needs configured Crown fallback spaces" end
+ return nil
+end
+return Bridge
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">SpaceTypes</string>
             <string name="Source"><![CDATA[--[[
@@ -4255,7 +4697,7 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="25">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -4535,7 +4977,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="23">
+      <Item class="ModuleScript" referent="26">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -4675,7 +5117,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="24">
+      <Item class="ModuleScript" referent="27">
         <Properties>
           <string name="Name">CosmeticService</string>
           <string name="Source"><![CDATA[--[[
@@ -4917,7 +5359,7 @@ return CosmeticService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="25">
+      <Item class="ModuleScript" referent="28">
         <Properties>
           <string name="Name">CosmeticShop</string>
           <string name="Source"><![CDATA[--[[
@@ -5045,7 +5487,7 @@ return CosmeticShop
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="26">
+      <Item class="ModuleScript" referent="29">
         <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
@@ -5175,7 +5617,7 @@ return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="27">
+      <Item class="Script" referent="30">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -5278,7 +5720,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="28">
+      <Item class="ModuleScript" referent="31">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -5410,7 +5852,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="29">
+      <Item class="ModuleScript" referent="32">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -6137,7 +6579,7 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="30">
+      <Item class="ModuleScript" referent="33">
         <Properties>
           <string name="Name">MinigameMode</string>
           <string name="Source"><![CDATA[--[[
@@ -6272,11 +6714,11 @@ return MinigameMode
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="31">
+      <Item class="Folder" referent="34">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">Bullseye</string>
             <string name="Source"><![CDATA[--[[
@@ -6524,7 +6966,7 @@ return Bullseye
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -6837,7 +7279,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -7333,7 +7775,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -8006,7 +8448,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -8516,7 +8958,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -8673,7 +9115,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">PatternRecall</string>
             <string name="Source"><![CDATA[--[[
@@ -8928,7 +9370,7 @@ return PatternRecall
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -9345,7 +9787,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">QuickDraw</string>
             <string name="Source"><![CDATA[--[[
@@ -9537,7 +9979,7 @@ return QuickDraw
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -9663,7 +10105,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="42">
+      <Item class="ModuleScript" referent="45">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -9807,7 +10249,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="43">
+      <Item class="ModuleScript" referent="46">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -9939,7 +10381,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -10062,7 +10504,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -10093,7 +10535,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -10228,7 +10670,7 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="47">
+      <Item class="ModuleScript" referent="50">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -10344,7 +10786,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="48">
+      <Item class="ModuleScript" referent="51">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -10469,7 +10911,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="49">
+      <Item class="ModuleScript" referent="52">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -10587,19 +11029,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="50">
+  <Item class="StarterPlayer" referent="53">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="51">
+    <Item class="StarterPlayerScripts" referent="54">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="52">
+      <Item class="Folder" referent="55">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -10822,7 +11264,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -10933,7 +11375,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="55">
+        <Item class="LocalScript" referent="58">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -11340,11 +11782,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="56">
+        <Item class="Folder" referent="59">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -11629,7 +12071,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -11885,11 +12327,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="59">
+        <Item class="Folder" referent="62">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -12037,7 +12479,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -12294,7 +12736,14 @@ function BoardView:setState(message)
 			then ("Tap ROLL to roll %d dice!"):format(message.Dice)
 			else "Use an item, or tap ROLL to roll the die!"
 	end
-	self.Subtitle.Text = sub
+	if message.Bridge and message.Stage ~= "RotationWarning" and message.Stage ~= "Rotating" then sub ..= " · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
+	if message.Bridge and message.Stage == "Roll" then
+  for _,seat in message.Seats do
+   local dock=seat.Zone and message.Bridge.Docks[seat.Zone]
+   if seat.Id==message.TurnId and dock and not dock.Open then sub="Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
+  end
+ end
+ self.Subtitle.Text = sub
 
 	-- Standings rows (turn order)
 	for _, row in self.Rows do
@@ -12451,6 +12900,11 @@ function BoardView:refreshMap()
 	end
 	line("MAP" .. (if layout and layout.Name then " · " .. layout.Name else ""), Theme.Colors.Accent)
 	line(("%s: space %s · %d coins"):format(state.CollectibleName or "Crown", tostring(state.CollectibleSpace), state.CollectiblePrice or 0), Theme.Colors.Accent)
+	if state.Bridge then
+  line("Bridge " .. state.Bridge.Alignment .. " · next " .. state.Bridge.NextAlignment,Theme.Colors.Accent)
+  line("Rotates after round " .. state.Bridge.NextRound .. " · Moon Dial ready round " .. state.Bridge.DialReadyRound)
+  for _,dock in state.Bridge.Docks do line(dock.Name .. ": " .. (if dock.Open then "OPEN" else "EXIT CLOSED · local loop")) end
+ end
 	for _, gate in state.Gates or {} do
 		line(("Gate %s: %s%s"):format(gate.Id, if gate.Open then "open" else "CLOSED", if gate.Open and gate.Toll > 0 then (" · toll %d"):format(gate.Toll) else ""))
 	end
@@ -12572,13 +13026,20 @@ function BoardView:show()
 	local camera = Workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Scriptable
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
-		local goal = if self.MapOpen then self.Centre else turnFocus(self)
+		local festival = self.Layout and self.Layout.Festival
+		local goal = if self.MapOpen or festival then self.Centre else turnFocus(self)
 		if not goal then
 			return
 		end
 		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
 		camera.CameraType = Enum.CameraType.Scriptable
-		camera.CFrame = CFrame.lookAt(self.Focus + (if self.MapOpen then MAP_OFFSET else CAMERA_OFFSET), self.Focus)
+		local offset=if self.MapOpen then MAP_OFFSET else CAMERA_OFFSET
+  if festival then
+   local aspect=camera.ViewportSize.X/math.max(1,camera.ViewportSize.Y)
+   local distance=math.max(190,190/math.max(0.5,aspect))
+   offset=Vector3.new(0,distance,distance*0.38)
+  end
+  camera.CFrame = CFrame.lookAt(self.Focus + offset, self.Focus)
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -12642,7 +13103,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="62">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -12867,7 +13328,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -13014,7 +13475,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -13214,7 +13675,7 @@ local function settingRow(self, order: number, label: string, key: string, choic
 			Font = Theme.BodyFont,
 			TextScaled = true,
 			TextColor3 = if isSelected then Theme.Colors.Overlay else Theme.Colors.Text,
-			Text = tostring(choice),
+			Text = if choice == "MagicalFestival" then "Magical Festival Island" else tostring(choice),
 			Parent = buttons,
 		}, { Theme.corner(12), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 24 }) })
 		if isHost then
@@ -13270,7 +13731,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -13385,7 +13846,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -13522,7 +13983,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -13640,7 +14101,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -14054,7 +14515,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -14143,7 +14604,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -14314,7 +14775,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -14434,7 +14895,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -14611,18 +15072,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="73">
+  <Item class="Workspace" referent="76">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="74">
+    <Item class="Model" referent="77">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="75">
+      <Item class="Part" referent="78">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -14642,7 +15103,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="76">
+      <Item class="SpawnLocation" referent="79">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
