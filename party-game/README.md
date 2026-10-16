@@ -5,7 +5,8 @@ A 4-player board-and-minigame party game for Roblox. A match goes:
 waiting room (the host picks rounds and bot difficulty) → **board rounds** (each seat rolls a die,
 moves and resolves the space it lands on) → a **minigame** after every full turn cycle → repeat for
 the chosen number of rounds → **final standings** (most Crowns wins, coins break ties) → back to
-the waiting room. Bots fill empty seats and take over from players who leave. The server owns all
+the waiting room. Bots fill empty seats and take over from players who leave; a player who rejoins
+gets their own seat back (see Seat reclaim). The server owns all
 game state; clients only send inputs.
 
 Six placeholder minigames exercise the framework:
@@ -161,6 +162,30 @@ Bots see only what players see: Crown position and price, board distances, coins
 standings and round. They never read upcoming dice or rewards. All their item uses go through
 `Match:useItem`, same as players.
 
+### Seat reclaim (leaving and rejoining)
+`src/server/SeatClaims.luau`, wired into `Board/BoardGame` and `MinigameMode`; on/off in
+`Config.SeatReclaim.Enabled`.
+- When a real player leaves mid-match, a bot takes over the same seat (position, coins, Crowns,
+  items, stats, turn order) and the seat is reserved for the player's numeric UserId until the
+  match ends.
+- If that UserId rejoins, their claim is queued and the seat is handed back at a safe moment:
+  - board, another seat's turn waiting to roll (or between turns / round start / standings): right away
+  - the reserved seat's own turn: when that turn ends (dice, movement, Crown purchase, item
+    targets and space events all finish first)
+  - another seat moving or deciding, the turn-order roll, a bridge rotation: at the next safe point
+  - a minigame or duel: they watch it, then get the seat after results, before the next board turn
+    ("Rejoining your seat after this minigame.")
+  - Minigames mode: after the current minigame.
+- It is the same seat object, so nothing is copied or reset. The takeover bot is removed
+  (`BotService.release`); lobby-fill bots stay. The returning client gets the full board layout
+  and state on Ready (each seat carries `Stats`; a bot-held reserved seat carries `ReservedFor`),
+  and their character is moved to the seat.
+- Guards: only the reserved UserId can claim a seat; one seat per user and one user per seat; a seat
+  owned by a present player can't be claimed; a second session of the same user can't claim while
+  the first is waiting; a claim is dropped if they leave again; reservations end with the match
+  (anyone still waiting is told). Bank coins are paid once per seat at the end, so a rejoin can't
+  be paid twice. New late joiners with no reservation still watch until the next match.
+
 ### Add a cosmetic
 Append to `src/shared/Cosmetics.luau`:
 `{ Id, Name, Slot, Price, Rarity, Visual = { Kind = "Hat" | "Trail" | "Sparkles", ... } }`
@@ -222,6 +247,7 @@ ServerScriptService/PartyServer    (src/server)
   RoundContext        the per-round toolbox minigames get (Eliminate, ReportProgress, …)
   BotService          bot bodies + think loop that calls each minigame's UpdateBot
   Participant         one seat: wraps a real Player or a Bot behind one API
+  SeatClaims          seat reservations for players who leave and rejoin (by UserId)
   Arena / CoinService / ResultsUtil
   Minigames/          one ModuleScript per minigame (_Template is ignored)
 StarterPlayerScripts/PartyClient   (src/client)
@@ -302,7 +328,7 @@ minigame actions) alongside two bots:
 
 ## Tests and lint
 
-- Unit tests (board rules, turn order, items, bonuses, bot decisions, cosmetics, profiles):
+- Unit tests (board rules, turn order, items, bonuses, bot decisions, cosmetics, profiles, seat reclaim):
   `rojo build tests/unit.project.json -o UnitTests.rbxlx`, open it in Studio and run
   `require(game.ServerStorage.PartyTests.RunAll)()` in the command bar (edit mode is fine).
 

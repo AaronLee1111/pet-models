@@ -23,13 +23,14 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 
 ## Mechanics to revisit
 
-- No Crown-steal item or event yet.
-- Bot item use only looks at the Crown and the bot's own coins. It doesn't plan around other players' items or shields.
-- Late joiners watch until the next match; they can't take over a bot's seat mid-match.
-- Players who leave are replaced by a bot permanently (rejoining doesn't get the seat back).
+- ~~No Crown-steal item or event yet.~~ Done: Crown Heist item (with a fee; Coin Shield counters it).
+- Bot item use plans around the Crown, its own coins and opponents' Coin Shields (it won't rob a shielded seat). It still doesn't plan around other players' held items.
+- New late joiners (no reserved seat) watch until the next match; they can't take over a lobby-fill bot's seat mid-match. By design for now.
+- ~~Players who leave are replaced by a bot permanently.~~ Done (seat reclaim): the seat is reserved for their UserId and handed back when they rejoin.
+- Seat reclaim was smoke-tested in Studio by running the real leave and rejoin handlers on a live match; a true disconnect and reconnect of the same account on a live server is still untested.
 - `tests/sim.luau` (lune) predates the board game and still expects the old lobby → vote loop; lune isn't installed on this machine. Board rules are covered by `tests/unit` instead.
-- Persistence: profiles use the in-memory backend (lost when the server shuts down). DataStoreBackend is a documented stub. Session locking and autosave are still to build.
-- Bank coins have nothing to spend on yet.
+- ~~Persistence stubbed.~~ Done: DataStore backend with retries, session lock, autosave and shutdown save (Studio uses the memory backend).
+- ~~Bank coins have nothing to spend on yet.~~ Done: permanent Cosmetics Shop.
 
 ## Seen during the mechanics pass (presentation only)
 
@@ -48,8 +49,8 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - Reaction and timing minigames (Quick Draw, Bullseye) judge presses on the server clock, so high-ping players are slightly late. Consider latency compensation later.
 - Fork prompt labels are two lines ("Main road / Crown in 9 · -3 +3 GIFT"). They work, but want icons.
 - MAP panel is a text list. A minimap with tile colours and piece markers would be clearer.
-- No board picker until there's a second board (picker appears automatically when `Config.Match.Boards` has more than one).
-- Bank coins still have nothing to spend on (permanent cosmetics shop planned for the polish phase).
+- ~~No board picker until there's a second board.~~ Done: Magical Festival Island is the second board and the picker shows both.
+- ~~Bank coins still have nothing to spend on.~~ Done: Cosmetics Shop.
 - Leaving and rejoining with a real player wasn't tested with real DataStores (Studio uses memory; the DataStore layer is covered by fake-store unit tests).
 
 ## Cosmetics Shop (2026-10-16)
