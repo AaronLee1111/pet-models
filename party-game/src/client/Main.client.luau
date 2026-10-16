@@ -313,6 +313,7 @@ end
 
 phaseHandlers[Phase.Instructions] = function(message)
 	hideOverlays()
+	boardView:hide() -- duels from a board space skip the vote, so the board HUD goes here too
 	hud:setLobby(nil)
 	setCardOpen(true)
 	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
