@@ -113,6 +113,25 @@ commit or stash those there first, review conflicts (particularly BoardView and 
 merge this branch. Re-run the unit suite and the festival smoke project after resolving conflicts.
 Rebuild with `rojo build place.project.json -o MemeParty.rbxlx`. No Roblox publishing is needed.
 
+### Merge preview (checked 2026-10-16, not merged)
+
+`git merge-tree` against `claude/optimistic-bohr-pcrxph` (4239833) shows two conflicts:
+- `MemeParty.rbxlx`: take either side, then rebuild it from the merged source.
+- `BoardView.luau`, camera block in `BoardView:show()`: main added a touch-only play offset
+  (`TOUCH_CAMERA_OFFSET` + `UserInputService`, committed in 4910ed2 together with the shop
+  REMOVE fix). Keep both: festival framing first, then main's touch offset for other boards:
+  ```lua
+  local offset = if self.MapOpen then MAP_OFFSET
+      elseif UserInputService.TouchEnabled then TOUCH_CAMERA_OFFSET
+      else CAMERA_OFFSET
+  if festival then
+      -- festival whole-board framing (unchanged from this branch)
+  end
+  camera.CFrame = CFrame.lookAt(self.Focus + offset, self.Focus)
+  ```
+  and keep main's `UserInputService` and `TOUCH_CAMERA_OFFSET` declarations.
+After resolving: run the unit suite and the festival harness, then rebuild the place.
+
 ### Recorded Studio checks (2026-10-16)
 
 - Complete unit suite: 132 passed / 0 failed; festival subset: 20 passed / 0 failed.
