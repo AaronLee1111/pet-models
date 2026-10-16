@@ -353,6 +353,24 @@ minigame actions) alongside two bots:
    prompts it had, which minigames ran and the final standings; the server adds any errors.
    Look for the `[MultiTest]` line in Output.
 
+`tests/foundation` is the full four-player regression: one local server, **four real clients,
+zero bots**, running back to back a Sunny Loop board match, a Magical Festival Island board match
+(Moon Dial to start), Individual Minigames forced to Trail Tangle (FFA), Mash Dash (2v2) and
+Bullseye (1v3), a Sunny Loop match with Duel spaces in place of its coin spaces (in memory, so
+Quick Draw and Bumper Bout duels with real duellists and spectators are certain), then a board
+match where the fourth client is kicked (a bot must take its reserved seat; Studio can't
+reconnect the same test identity, so rejoining is covered by `tests/reclaim`). Each client plays on autopilot, checks its own screen as it goes (its single
+seat, ROLL only on its own turn, no board HUD over a minigame, controls only when it's playing,
+spectator view when it isn't, its bank payout equals its standings row, the shop button and a
+purchase) and reports; the server checks all four reports agree with each other and with what it
+sent (final board, Crown, bridge timeline, MAP state, results, teams, standings, duels).
+
+1. `rojo build tests/foundation/foundation.project.json -o Foundation.rbxlx` and open it.
+2. Command bar: `task.spawn(function() print(game:GetService("StudioTestService"):ExecuteMultiplayerTestAsync(4, {})) end)`
+3. Look for `FOUNDATION PASS` / `FOUNDATION FAIL` (with every problem) in the server Output; it
+   takes about 25–35 minutes. If only three clients join (Studio sometimes stalls one), stop the test and run it again. Keep the server window in front: Studio slows background test windows
+   (and everything while the screen is locked), which looks like lag but isn't a network fault.
+
 `tests/reclaim` is the same setup for seat reclaim on Magical Festival Island (two clients,
 two bots, 3 rounds). The second client leaves and rejoins twice through
 `BoardGame.onPlayerLeft` / `BoardGame.requestReclaim` (what PlayerRemoving / PlayerAdded call;
