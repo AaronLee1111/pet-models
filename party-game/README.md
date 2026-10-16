@@ -326,6 +326,15 @@ minigame actions) alongside two bots:
    prompts it had, which minigames ran and the final standings; the server adds any errors.
    Look for the `[MultiTest]` line in Output.
 
+`tests/reclaim` is the same setup for seat reclaim on Magical Festival Island (two clients,
+two bots, 3 rounds). The second client leaves and rejoins twice through
+`BoardGame.onPlayerLeft` / `BoardGame.requestReclaim` (what PlayerRemoving / PlayerAdded call;
+Studio can't reconnect the same test client): once on the board (seat back immediately) and once
+during a minigame (seat back after results). Build `tests/reclaim/reclaim.project.json`, run the
+same command, and look for `RECLAIM PASS` (both clients and the server agree on the final board,
+Crown, bridge and standings; the returning player has exactly one standings row). Studio slows
+background test windows, so keep the server window in front.
+
 ## Tests and lint
 
 - Unit tests (board rules, turn order, items, bonuses, bot decisions, cosmetics, profiles, seat reclaim):

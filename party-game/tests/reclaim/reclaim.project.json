@@ -1,0 +1,34 @@
+{
+  "name": "ReclaimSmoke",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "PartyShared": {
+        "$path": "../../src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "PartyServer": {
+        "$path": "../../src/server"
+      },
+      "ReclaimTestServer": {
+        "$path": "ReclaimTestServer.server.luau"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "PartyClient": {
+          "$path": "../../src/client"
+        },
+        "ReclaimTestClient": {
+          "$path": "ReclaimTestClient.client.luau"
+        }
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true
+      }
+    }
+  }
+}
