@@ -67,3 +67,10 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - The speed-up warning is the normal toast. A short on-screen pulse or sound would be clearer.
 - No pickups yet (optional in the brief; the core game stands without them).
 - The lune headless sim (`tests/sim.luau`) still can't run here (lune not installed); Trail Tangle's rules are covered by `tests/unit/TrailTangleTests`.
+
+## Bumper Bout (2026-10-16)
+
+- Bot-vs-bot bouts ran 10–11 s with frequent bumps before the dash cooldown went from 1.6 s to 2.0 s; a time-limit bout ran the full 18 s. A player who stands still is pushed off by a bot in 4–8 s. Watch real players' bout lengths against the 12–20 s target.
+- Characters are small from the overhead camera, especially on phones (the platform is fully framed). The dash cue is an outline and the impact flash a short white fill; a clearer dash trail would read better in the visual pass.
+- The round timer reads 0:00 during sudden death (the status line says "Sudden death!"); there's no countdown for those extra seconds.
+- Hit detection uses the server's view of player positions, so on a laggy connection a lunge can connect or miss slightly differently from what the attacker saw. Lag compensation is a later improvement.

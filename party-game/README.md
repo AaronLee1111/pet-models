@@ -22,6 +22,7 @@ These placeholder minigames exercise the framework:
 | Pattern Recall | FFA (memory) | AngledOverhead | **movement locked**, colour buttons RED / BLUE / GREEN / YELLOW (1-4, gamepad B/X/A/Y, on-screen) | colours recalled |
 | Bullseye | 1v3 (timing, precision) | AngledOverhead | **movement locked**, **STOP** (Space / ButtonA / on-screen) | points |
 | Quick Draw | Duel (reaction) | SideView | **movement locked**, **DRAW** (Space / ButtonA / on-screen) | points (first to 2) |
+| Bumper Bout | Duel (positioning) | AngledOverhead (whole platform) | move (WASD / stick / thumbstick), no jump, **DASH** (E or Space / ButtonX or R1 / on-screen) | hits |
 | Trail Tangle | FFA (strategy over time) | AngledOverhead (whole grid) | **auto-forward on a grid**, tap **LEFT / RIGHT** to turn (A / D, arrows, D-pad or shoulder buttons, on-screen) | cells claimed, ✕ when out |
 
 **Trail Tangle** (`Minigames/TrailTangle`, presentation in `client/Minigames/TrailTangle`) is the
@@ -38,6 +39,20 @@ enter, and space they'd claim first; skill sets look-ahead, judgement noise and 
 Duel minigames (`Layout = "Duel"`) are never in the normal vote: a board Duel space plays one
 between the two duellists while everyone else watches (`MinigameManager.runDuel`), and the
 stake goes to the winner. If no Duel minigame is registered, Duel spaces fall back to dice.
+
+**Bumper Bout** (`Minigames/BumperBout`, client part `client/Minigames/BumperBout`) is the second
+Duel, picked at random alongside Quick Draw. Two players on a small round platform: walk around
+and DASH to lunge; a lunge that reaches the rival knocks them back (one hit per dash; two lunges
+meeting bounce both). Fall off and you lose. After 4 s the platform shrinks smoothly from radius
+22 to 10 (warned first; the safe radius, which the visible platform follows, decides ring-outs).
+At 18 s whoever is closest to the middle wins, then most hits, then 6 s of sudden death; a dead
+level result is a draw (no coins move). Both out at once: whoever was hit first loses, then
+whoever is farther out. The server validates every dash (phase, cooldown, finite direction),
+judges hits, knockback and ring-outs itself, drives lunges and pushes with velocity constraints
+(so it works whoever simulates the body) and snaps back implausible movement. Bots use the same
+dash path: they keep off the (upcoming) edge, line up on the middle side of the rival, lead a
+moving target, never lunge themselves off, and sidestep incoming lunges when skilled. Tuning is
+at the top of the file.
 
 ## Play it in Studio (1 real player + 3 bots)
 
