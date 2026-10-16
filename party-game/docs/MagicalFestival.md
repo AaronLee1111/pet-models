@@ -91,7 +91,9 @@ prompt answers, and reports final counters. It deliberately starts test pieces o
 space 34 to exercise riders and uses faster board timings. These overrides are **not mapped
 into `place.project.json` or the playable `MemeParty.rbxlx`**.
 
-For two clients, in the harness place's edit-mode command bar:
+For two clients, in the harness place's edit-mode command bar (keep the Mac awake and
+unlocked, with the test server window in front: Studio throttles background test windows to a
+crawl, and a locked screen throttles all of them):
 
 ```lua
 task.spawn(function()
@@ -124,9 +126,8 @@ Rebuild with `rojo build place.project.json -o MemeParty.rbxlx`. No Roblox publi
   were visible without clipping the near island. MAP showed closed local loops and the next
   alignment. Phone MAP button is approximately 48 points high; roll approximately 83 points.
   Studio device simulation was reset to the default viewport afterward.
-- Two-client harness was attempted through StudioTestService. Both client processes launched,
-  but only one joined the server; the second remained in an edit window. The run was ended
-  as INCOMPLETE. Two-client gameplay remains to be rechecked; no multiplayer pass is claimed.
+- Two-client harness, first attempt: both client processes launched but only one joined the
+  server; the run ended INCOMPLETE (see the 2026-10-16 review below for the cause and the pass).
 - Lune is not installed in this environment. The mock-engine headless simulation was not run;
   real Studio unit tests and gameplay runs were used instead. No dependencies were installed.
 - Studio emitted unrelated CorePackages/UIBlox and existing asset-type warnings. These are
@@ -135,3 +136,43 @@ Rebuild with `rojo build place.project.json -o MemeParty.rbxlx`. No Roblox publi
 Fixed during verification: camera framing was too distant; Crown/trap markers now follow
 moving spaces throughout rotation; closed docks now have physical red barriers and tile text,
 and the turn header explicitly identifies isolation. Sunny Loop regressions remained green.
+
+### Review and two-client verification (2026-10-16)
+
+Reviewed both Astra commits against the intended mechanic:
+- One straight two-ended deck (33–36); only N–S (docks 1 + 17) and E–W (docks 9 + 25).
+  `RotatingBridge.options` removes the closed docks' bridge edges in both directions, so
+  rotation changes the live graph; `Bridge.validate` rejects any zone edge that bypasses the
+  bridge; every dock keeps its local-loop edge, so no zone is a dead end.
+- Pieces are anchored on this board and moved only by the server; the recovery watchdog
+  restores misplaced pieces; riders are re-placed every frame of the rotation.
+- Crown: a Crown in a zone about to close moves to bridge space 34 (35 if already there);
+  relocation only picks connected zones or the bridge, so it is always reachable.
+- Moon Dial goes through `Match:useItem` (turn, stage, one per turn, ownership, board) and
+  `useMoonDial` (shared cooldown); a refused Dial is kept.
+
+Fixed: on the two-way bridge a mover was offered the space they had just come from
+(1 → 33 → 1, 33 → 34 → 33), letting them hover around the Crown and bots dither. Within one
+move the previous space is no longer offered unless it is the only way on (new unit test).
+
+Results:
+- Unit suite: **133 passed, 0 failed** (21 festival tests).
+- Two-client run (one local server, two real Studio clients, two bots, 3 board rounds):
+  `TWO-CLIENT PASS: sameTimeline=true sameStandings=true bothAlignments=true gaps=0/0`.
+  Both clients saw the same five rotations (E–W, N–S, E–W, N–S, E–W: Moon Dial in round 1 plus
+  three automatic) with the same Crown space at each, identical final standings, riders on the
+  moving deck, and zero dock-to-bridge hops through a closed dock. Server log: only the
+  pre-existing asset-type warning. Client consoles weren't readable after the test closed
+  them; the clients' own reports carried no errors.
+- Why the first attempt failed: Studio throttles background test windows (and every window
+  while the screen is locked) to a crawl. The match only advanced at full speed while the
+  server window was in front or being queried. Not a project-code problem.
+- iPhone 17 Pro landscape: whole board framed; header shows current → next alignment; MAP lists
+  Crown space, alignment, next rotation, Moon Dial readiness and each dock OPEN / EXIT CLOSED;
+  MAP panel (y 112–307) clears the CLOSE button (313–360) and the top bar (58). Desktop
+  (1301×616): whole board framed, header and MAP usable.
+
+Design notes (not defects): every rotation closes the zones that were open, so a Crown placed
+in an open zone is always moved onto the bridge at the next rotation; in the two-client run the
+Crown sat on space 34 at every rotation. The board renders small on phones because the camera
+frames the whole island.
