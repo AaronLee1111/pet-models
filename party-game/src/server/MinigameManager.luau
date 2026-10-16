@@ -148,6 +148,9 @@ end
 -- Registry ----------------------------------------------------------------------------
 
 local function loadMinigames()
+	if #registry > 0 then
+		return -- already loaded (init, or a test that loaded it first)
+	end
 	local folder = script.Parent:WaitForChild("Minigames")
 	for _, module in folder:GetChildren() do
 		if not module:IsA("ModuleScript") or string.sub(module.Name, 1, 1) == "_" then
@@ -556,6 +559,16 @@ function MinigameManager.runRound(participants, options)
 	})
 	task.wait(Config.ResultsDuration)
 	return results, rows
+end
+
+-- Minigames the normal 4-player vote draws from (never Duel ones).
+function MinigameManager.voteMinigames()
+	return votePool()
+end
+
+-- Loads the minigame registry without starting anything else (tests; init does this too).
+MinigameManager.loadMinigames = function()
+	loadMinigames()
 end
 
 -- Duel minigames (Info.Layout = "Duel") registered, for Duel spaces.
