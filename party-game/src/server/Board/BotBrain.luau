@@ -16,6 +16,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
+local Bridge = require(script.Parent.RotatingBridge)
 
 local BotBrain = {}
 
@@ -206,8 +207,18 @@ function BotBrain.itemScore(match, seat, id: string)
   local nextOrientation=1-match.Orientation
   local crown=match.CollectibleSpace
   local zone=match.Board:get(crown).Zone
-  if zone~=0 and ((nextOrientation==0 and zone%2==0) or (nextOrientation==1 and zone%2==1)) then crown=34 end
-  local after=match:distanceAt(seat.SpaceId,crown,nextOrientation)
+  local after
+  if zone~=0 and not Bridge.connected(zone,nextOrientation) then
+   -- The Crown would move to one of the newly reachable zone spaces; a bot can't know which,
+   -- so it plans on the average distance to them (or the bridge fallback).
+   local candidates=match:crownCandidates(nextOrientation)
+   if #candidates==0 then candidates={34} end
+   local total=0
+   for _,id in candidates do total+=math.min(match:distanceAt(seat.SpaceId,id,nextOrientation),40) end
+   after=total/#candidates
+  else
+   after=match:distanceAt(seat.SpaceId,crown,nextOrientation)
+  end
   local before=math.min(distance,40)
   local score=if canBuy and after+3<before then (before-after)*0.3 else 0
   for _,other in match:opponentsOf(seat) do

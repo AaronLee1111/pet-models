@@ -86,7 +86,7 @@ test("state snapshot includes current next alignment and every closed dock",func
  eq(fresh.Docks[1].Open,false);eq(fresh.Docks[2].Open,true);eq(fresh.Revision,1)
 end)
 test("Crown relocates off closing zone and preserves an accessible Crown",function()
- local m=new();m.CollectibleSpace=4;m:rotateBridge();eq(m.CollectibleSpace,34)
+ local m=new();m.CollectibleSpace=4;m:rotateBridge();assert(m.CollectibleSpace==12 or m.CollectibleSpace==28,"moved into a newly opened zone, not the bridge")
  m.CollectibleSpace=20;m:rotateBridge();eq(m.CollectibleSpace,20)
  for _=1,20 do m:relocateCollectible();assert(Bridge.connected(m.Board:get(m.CollectibleSpace).Zone,m.Orientation)) end
 end)
@@ -178,6 +178,78 @@ test("no turning around mid-move on the two-way bridge",function()
  local before=#asked
  m:move(seat,1)
  eq(#asked,before+1) -- a fresh move from 35 may set off either way
+end)
+
+-- Crown relocation on rotation ------------------------------------------------------------------
+
+test("crown candidates: configured zone spaces that will be open, never the bridge",function()
+ local m=new();m.CollectibleSpace=4
+ local c=m:crownCandidates(1);table.sort(c)
+ eq(table.concat(c,","),"12,28")
+ local same=m:crownCandidates(0);eq(table.concat(same,","),"20") -- current space excluded
+end)
+
+test("repeated rotations: Crown moves zone to zone, never repeats a space back to back",function()
+ local m=new();m.CollectibleSpace=4
+ local seq={}
+ for _=1,12 do
+  m:rotateBridge()
+  local id=m.CollectibleSpace
+  assert(id~=34 and id~=35,"used the bridge although zone spaces existed")
+  assert(Bridge.connected(m.Board:get(id).Zone,m.Orientation),"Crown in a closed zone")
+  table.insert(seq,id)
+ end
+ for i=3,#seq do assert(seq[i]~=seq[i-2],"same space again: "..table.concat(seq,",")) end
+ local used={}
+ for _,id in seq do used[id]=true end
+ assert(used[4] and used[12] and used[20] and used[28],"not every zone got the Crown: "..table.concat(seq,","))
+end)
+
+test("relocation keeps the Crown away from the leading player",function()
+ for seed=1,8 do
+  Wallet.resetAll()
+  local seats={}
+  for i=1,4 do seats[i]={Id="festlead"..seed.."_"..i,Name="L"..i,IsBot=true} end
+  local m=Match.new(BoardLayout.load(Data,Types),seats,{Rounds=8,Difficulty="Hard"},{Wallet=Wallet,Inventory=Inventory,Rng=Random.new(seed),Ask=function(_,q) return q.Default end})
+  Wallet.addCollectibles(m.Seats[2].Participant,3)
+  m.Seats[2].SpaceId=11 -- one step before space 12
+  m.CollectibleSpace=4
+  m:rotateBridge()
+  eq(m.CollectibleSpace,28)
+ end
+end)
+
+test("fallback: no open-zone Crown space left means bridge space 34 (or 35)",function()
+ local data=table.clone(Data);data.CrownSpaces={4,20,34,35}
+ Wallet.resetAll()
+ local seats={}
+ for i=1,4 do seats[i]={Id="festfall"..i,Name="F"..i,IsBot=true} end
+ local m=Match.new(BoardLayout.load(data,Types),seats,{Rounds=8,Difficulty="Hard"},{Wallet=Wallet,Inventory=Inventory,Rng=Random.new(4),Ask=function(_,q) return q.Default end})
+ m.CollectibleSpace=4;m:rotateBridge();eq(m.CollectibleSpace,34)
+ m:rotateBridge();eq(m.CollectibleSpace,34) -- still reachable: stays put
+ m.CollectibleSpace=34;m.Orientation=0;m:rotateBridge();eq(m.CollectibleSpace,34)
+end)
+
+test("relocation is deterministic, reachable and live for routes and bots",function()
+ local function run()
+  local m=new();m.CollectibleSpace=4
+  local out={}
+  for _=1,6 do
+   m:distance(1,4) -- warm the cache; rotation must clear it
+   m:rotateBridge()
+   eq(m.DistanceCache,nil)
+   local open=if m.Orientation==0 then {1,17} else {9,25}
+   for _,dock in open do assert(m:distance(dock,m.CollectibleSpace)<math.huge,"Crown unreachable") end
+   table.insert(out,m.CollectibleSpace..":"..m.BridgeRevision)
+  end
+  return table.concat(out,","),m
+ end
+ local a,m=run()
+ local b=run()
+ eq(a,b) -- same seed, same server choices: every client is sent the same destination
+ local seat=m.Seats[1];seat.SpaceId=if m.Orientation==0 then 1 else 9
+ local info=m:routeInfo(seat,seat.SpaceId,0)
+ eq(info.CrownDistance,1+m:distance(seat.SpaceId,m.CollectibleSpace))
 end)
 
 return function()

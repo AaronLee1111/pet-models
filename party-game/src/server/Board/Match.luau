@@ -591,6 +591,82 @@ function Match:canUseMoonDial()
  return self.Board.Bridge ~= nil and self.Round >= self.DialReadyRound
 end
 
+-- Configured Crown spaces inside zones that are open under `orientation` (never the bridge),
+-- excluding the Crown's current space. Pure: bots use it to predict a relocation.
+function Match:crownCandidates(orientation: number): { number }
+ local list = {}
+ for _, id in self.Board.CrownSpaces do
+  local zone = self.Board:get(id).Zone
+  if zone ~= 0 and id ~= self.CollectibleSpace and Bridge.connected(zone, orientation) then
+   table.insert(list, id)
+  end
+ end
+ return list
+end
+
+-- The seat leading the standings, or nil when the top is tied.
+local function leaderOf(match)
+ local rows = match:standings()
+ if rows[2] and rows[2].Placement == rows[1].Placement then return nil end
+ return match:seatOf(rows[1].Participant)
+end
+
+--[[
+	Where the Crown goes when a rotation to `orientation` would strand it. Each filter only
+	applies if it leaves at least one option:
+	  1. configured Crown spaces in zones open after the rotation
+	  2. prefer zones that this rotation newly opens
+	  3. skip spaces / zones used by the last few relocations (Bridge.CrownMemory)
+	  4. skip spaces within Bridge.CrownLeaderBuffer moves of the leading player
+	then pick one with the match's Rng. Bridge spaces 34 / 35 only as the fallback when no
+	zone space qualifies. Records the choice for the repeat check.
+]]
+function Match:chooseCrownSpace(orientation: number): number
+ local rule = self.Board.Bridge
+ local memory = rule.CrownMemory or 2
+ local buffer = rule.CrownLeaderBuffer or 4
+ local pool = self:crownCandidates(orientation)
+ if #pool == 0 then
+  return if self.CollectibleSpace == 34 then 35 else 34
+ end
+ local function narrow(keep)
+  local kept = {}
+  for _, id in pool do if keep(id) then table.insert(kept, id) end end
+  if #kept > 0 then pool = kept end
+ end
+ narrow(function(id) return not Bridge.connected(self.Board:get(id).Zone, self.Orientation) end)
+ self.CrownHistory = self.CrownHistory or {}
+ local function avoidRecent()
+  narrow(function(id)
+   for i = math.max(1, #self.CrownHistory - memory + 1), #self.CrownHistory do
+    local past = self.CrownHistory[i]
+    if past == id or self.Board:get(past).Zone == self.Board:get(id).Zone then return false end
+   end
+   return true
+  end)
+ end
+ local leader = leaderOf(self)
+ local function nearLeader(id)
+  return leader ~= nil and Bridge.distance(self.Board, leader.SpaceId, id, orientation) <= buffer
+ end
+ local function avoidLeader()
+  narrow(function(id) return not nearLeader(id) end)
+ end
+ -- If the last relocation already landed near this same leader, keeping it away from them
+ -- now matters more than variety; otherwise variety first.
+ if leader and self.CrownNearLeader == leader then
+  avoidLeader()
+  avoidRecent()
+ else
+  avoidRecent()
+  avoidLeader()
+ end
+ local pick = pool[self.Rng:NextInteger(1, #pool)]
+ table.insert(self.CrownHistory, pick)
+ self.CrownNearLeader = if nearLeader(pick) then leader else nil
+ return pick
+end
+
 -- Commit orientation, route cache and Crown together without yielding. Only the turn
 -- driver invokes automatic rotation, after all four turns have ended (no seam crossing).
 function Match:rotateBridge()
@@ -598,7 +674,7 @@ function Match:rotateBridge()
  local nextOrientation = 1-self.Orientation
  local crown = self.CollectibleSpace
  if not crown or not Bridge.connected(self.Board:get(crown).Zone,nextOrientation) then
-  crown = if self.CollectibleSpace == 34 then 35 else 34
+  crown = self:chooseCrownSpace(nextOrientation)
  end
  self.Orientation = nextOrientation
  self.CollectibleSpace = crown

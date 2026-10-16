@@ -39,8 +39,15 @@ automatic rotation. This guarantees an uninterrupted scheduled connection window
 players may wait locally instead of spending an item. The cooldown and next alignment are public.
 
 New Crown destinations are chosen from the currently connected zones or the moving bridge.
-Before a rotation, a Crown in a zone that will close moves to configured bridge space 34
-(or 35 when appropriate). A Crown in a zone that stays connected is preserved. Disconnected
+When a rotation would strand the Crown, `Match:chooseCrownSpace` moves it to a configured Crown
+space in a zone that is open after the rotation, applying each filter only if it leaves an
+option: prefer newly opened zones; skip spaces and zones used by the last `CrownMemory` (2)
+relocations; skip spaces within `CrownLeaderBuffer` (4) moves of the leading player (this one
+wins over variety if the previous relocation already landed near the same leader). It then
+picks with the match's seeded Rng. Bridge spaces 34 / 35 are only the fallback when no zone
+space qualifies. A Crown in a zone that stays connected is preserved. Orientation, Crown and
+the route cache change in one step, so routes, bots and every client see the new spot at once.
+Disconnected
 players have future scheduled access; access is an opportunity, not a guaranteed purchase
 before the finite match ends. Dice, route decisions and purchases still matter.
 
@@ -191,7 +198,6 @@ Results:
   MAP panel (y 112–307) clears the CLOSE button (313–360) and the top bar (58). Desktop
   (1301×616): whole board framed, header and MAP usable.
 
-Design notes (not defects): every rotation closes the zones that were open, so a Crown placed
-in an open zone is always moved onto the bridge at the next rotation; in the two-client run the
-Crown sat on space 34 at every rotation. The board renders small on phones because the camera
+Design notes: the Crown used to land on bridge space 34 at every rotation (fair but
+repetitive); since the relocation change it moves into a newly opened zone instead. The board renders small on phones because the camera
 frames the whole island.

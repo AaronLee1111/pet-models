@@ -33,5 +33,7 @@ end
 return {
  Name="MagicalFestival", DisplayName="Magical Festival Island", Start=17,
  CrownSpaces={4,12,20,28,34,35}, Spaces=spaces, Zones=zones,
- Bridge={ EveryRounds=1, WarningSeconds=2, RotationSeconds=1.5, DialCooldownRounds=2 },
+ Bridge={ EveryRounds=1, WarningSeconds=2, RotationSeconds=1.5, DialCooldownRounds=2,
+  -- Crown relocation when a rotation strands it (Match:chooseCrownSpace).
+  CrownMemory=2, CrownLeaderBuffer=4 },
 }
