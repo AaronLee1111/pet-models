@@ -4,7 +4,10 @@ local remotes=RS:WaitForChild("PartyRemotes")
 local input=remotes:WaitForChild("PartyInput")
 local report=RS:WaitForChild("FestivalTestReport")
 local me="player_"..Players.LocalPlayer.UserId
-local seen={Turns=0,Rotations=0,Automatic=0,MoonDial=false,Prompts=0,Errors={},Finished=false,Layouts=0}
+local seen={Turns=0,Rotations=0,Automatic=0,MoonDial=false,Prompts=0,Errors={},Finished=false,Layouts=0,
+ Track={},Alignments={},GapCrossings=0,Final=""}
+local lastSpace={} -- seat id -> last space seen
+local DOCK_END={[1]=33,[9]=33,[17]=36,[25]=36} -- dock -> the bridge end it joins
 local configured=false
 local lastRevision=0
 local turnKey=nil
@@ -26,11 +29,30 @@ remotes.PartyState.OnClientEvent:Connect(function(m)
    for i,choice in m.Choices do if (choice.Duration or 999)<(m.Choices[best].Duration or 999) then best=i end end
    sendLater({Kind="Vote",Choice=best})
   elseif m.Phase=="Standings" and m.Stage=="Final" and not sent then
-   sent=true;seen.Finished=true;seen.Players=#m.Rows;report:FireServer(seen)
+   sent=true;seen.Finished=true;seen.Players=#m.Rows
+   local rows={}
+   for _,row in m.Rows do table.insert(rows,("%d.%s/%d/%d"):format(row.Placement,row.Name,row.Collectibles,row.Coins)) end
+   seen.Final=table.concat(rows," ")
+   report:FireServer(seen)
   end
  elseif m.Type=="BoardState" then
   seen.Round=m.Round;seen.Stage=m.Stage
+  if m.Bridge then
+   seen.Alignments[m.Bridge.Alignment]=true
+   -- A hop straight between a dock and its bridge end while that dock is closed is a gap crossing.
+   local open={}
+   for _,dock in m.Bridge.Docks do open[dock.SpaceId]=dock.Open end
+   for _,seat in m.Seats do
+    local from,to=lastSpace[seat.Id],seat.SpaceId
+    if from and from~=to then
+     local dock=if DOCK_END[from]==to then from elseif DOCK_END[to]==from then to else nil
+     if dock and not open[dock] and m.Stage=="Moving" then seen.GapCrossings+=1 end
+    end
+    lastSpace[seat.Id]=to
+   end
+  end
   if m.Bridge and m.Bridge.Revision>lastRevision then
+   table.insert(seen.Track,("%d:%s:%s"):format(m.Bridge.Revision,m.Bridge.Alignment,tostring(m.CollectibleSpace)))
    seen.Rotations+=m.Bridge.Revision-lastRevision
    if m.TurnId==nil then seen.Automatic+=1 else seen.MoonDial=true end
    lastRevision=m.Bridge.Revision

@@ -19,7 +19,20 @@ remote.OnServerEvent:Connect(function(p,data)
  workspace:SetAttribute("FestivalReports",game:GetService("HttpService"):JSONEncode(reports))
  if #game:GetService("Players"):GetPlayers()>=2 then
   local n=0;for _ in reports do n+=1 end
-  if n>=2 then pcall(function() game:GetService("StudioTestService"):EndTest(game:GetService("HttpService"):JSONEncode(reports)) end) end
+  if n>=2 then
+   -- Both clients must have seen the same bridge timeline (revision, alignment, Crown) and
+   -- the same final standings, both alignments, and no gap crossings.
+   local list={}
+   for _,r in reports do table.insert(list,r) end
+   local a,b=list[1],list[2]
+   local same=table.concat(a.Track,",")==table.concat(b.Track,",") and a.Final==b.Final
+   local both=(a.Alignments["N–S"] and a.Alignments["E–W"]) and true or false
+   local verdict=("TWO-CLIENT %s: sameTimeline=%s sameStandings=%s bothAlignments=%s gaps=%d/%d"):format(
+    if same and both and a.GapCrossings==0 and b.GapCrossings==0 and a.Passed and b.Passed then "PASS" else "FAIL",
+    tostring(table.concat(a.Track,",")==table.concat(b.Track,",")),tostring(a.Final==b.Final),tostring(both),a.GapCrossings,b.GapCrossings)
+   print("[FestivalSmoke] "..verdict)
+   pcall(function() game:GetService("StudioTestService"):EndTest(verdict.."\n"..game:GetService("HttpService"):JSONEncode(reports)) end)
+  end
  end
 end)
 
