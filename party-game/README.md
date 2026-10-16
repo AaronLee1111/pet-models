@@ -9,7 +9,7 @@ the waiting room. Bots fill empty seats and take over from players who leave; a 
 gets their own seat back (see Seat reclaim). The server owns all
 game state; clients only send inputs.
 
-Six placeholder minigames exercise the framework:
+These placeholder minigames exercise the framework:
 
 | Minigame | Layout | Camera | Controls | Chips show |
 |---|---|---|---|---|
@@ -22,6 +22,18 @@ Six placeholder minigames exercise the framework:
 | Pattern Recall | FFA (memory) | AngledOverhead | **movement locked**, colour buttons RED / BLUE / GREEN / YELLOW (1-4, gamepad B/X/A/Y, on-screen) | colours recalled |
 | Bullseye | 1v3 (timing, precision) | AngledOverhead | **movement locked**, **STOP** (Space / ButtonA / on-screen) | points |
 | Quick Draw | Duel (reaction) | SideView | **movement locked**, **DRAW** (Space / ButtonA / on-screen) | points (first to 2) |
+| Trail Tangle | FFA (strategy over time) | AngledOverhead (whole grid) | **auto-forward on a grid**, tap **LEFT / RIGHT** to turn (A / D, arrows, D-pad or shoulder buttons, on-screen) | cells claimed, ✕ when out |
+
+**Trail Tangle** (`Minigames/TrailTangle`, presentation in `client/Minigames/TrailTangle`) is the
+strategy game: four riders on a 26×26 grid move one cell per step on their own and leave solid
+trails; hitting the edge, any trail, or entering the same cell as another rider in the same step
+knocks you out. Last rider wins; at the 35 s limit survivors rank by cells claimed, and riders
+knocked out on the same step are separated by cells. It starts at 0.32 s per step and ramps to
+0.13 s (tuning at the top of the file). The server runs a fixed-step simulation (all moves
+resolved together each step, one buffered turn per rider, turn spam dropped) and sends one small
+message per step; clients glide riders between cells. Bots plan right after each step with the
+same turn requests: open space down each option, dead-end pockets, cells an opponent could also
+enter, and space they'd claim first; skill sets look-ahead, judgement noise and slip rate.
 
 Duel minigames (`Layout = "Duel"`) are never in the normal vote: a board Duel space plays one
 between the two duellists while everyone else watches (`MinigameManager.runDuel`), and the

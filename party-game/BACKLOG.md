@@ -43,7 +43,7 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 
 ## Seen during the mechanics foundation pass (2026-10-15)
 
-- Action-button key hints ("[One]") still show on phones when the emulator reports a keyboard.
+- ~~Action-button key hints ("[One]") still show on phones when the emulator reports a keyboard.~~ Fixed: no key hints on any touch screen.
 - Duel spaces use dice when no Duel minigame is registered. There's only one Duel minigame (Quick Draw) so far.
 - Bullseye's marker moves via server-side part CFrames, so it can look steppy at 20 Hz replication. A client-side sweep would be smoother. Scoring is unaffected (server clock).
 - Reaction and timing minigames (Quick Draw, Bullseye) judge presses on the server clock, so high-ping players are slightly late. Consider latency compensation later.
@@ -59,3 +59,11 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - Client preview (`ShopScreen`) duplicates the server's cosmetic drawing code (`CosmeticService`). Move both to one shared drawer when cosmetics get real models.
 - The shop's bank balance refreshes on purchases, equips and end-of-match payouts only (no live push for other changes).
 - The BUY → PAY confirmation lasts 3 s; fine on touch but untested with a gamepad.
+
+## Trail Tangle (2026-10-16)
+
+- Rounds in Studio ended by last-rider-standing at 20–31 s (Normal/Hard bots, one player); none reached the 35 s limit. Fine by the rules, but if rounds should run longer, try a 28×28 grid or a gentler ramp.
+- Riders are small from the steep overhead camera (on phones especially). The colour highlight helps; a bigger head marker or arrow showing heading would read better in the visual pass.
+- The speed-up warning is the normal toast. A short on-screen pulse or sound would be clearer.
+- No pickups yet (optional in the brief; the core game stands without them).
+- The lune headless sim (`tests/sim.luau`) still can't run here (lune not installed); Trail Tangle's rules are covered by `tests/unit/TrailTangleTests`.
