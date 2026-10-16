@@ -50,6 +50,7 @@ Net.Message = {
 	BoardState = "BoardState", -- seats, coins, collectibles, whose turn, dice, moves left
 	Prompt = "Prompt", -- to one player: pick an option (fork, buy, shop); Prompt = nil closes it
 	Inventory = "Inventory", -- to one player: owned cosmetics, what's equipped, bank coins
+	ShopResult = "ShopResult", -- to one player: { Ok, ItemId, Text } after a lobby shop purchase
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -62,6 +63,7 @@ Net.Input = {
 	UseItem = "UseItem", -- your turn, before rolling: payload.Slot = index into your items
 	Equip = "Equip", -- payload.ItemId: wear a cosmetic you own
 	Unequip = "Unequip", -- payload.Slot: take off whatever is in that slot
+	BuyCosmetic = "BuyCosmetic", -- payload.ItemId: buy a cosmetic with bank coins (price is server-side)
 	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
 	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
 }

@@ -191,6 +191,21 @@ saves and releases on leave, and saves everyone in parallel on shutdown (`BindTo
 - Match coins, Crowns, items and stats are never stored. The only thing a match writes is
   permanent bank coins (`Config.Profile.BankCoinsByPlacement`) at the final standings.
 
+### Cosmetics Shop (bank coins)
+In the waiting room, SHOP (or B / gamepad Select) opens the permanent shop on the right of
+the screen: one card per cosmetic with its name, slot, rarity, bank price and owned/worn
+state. TRY previews it on your own character (only you see it), BUY asks once more ("PAY n?")
+before sending, and WEAR / REMOVE equip and unequip what you own.
+
+- Prices are bank coins from the catalog: `Cosmetics.BankPriceByRarity` (Common 40, Rare 80,
+  Epic 150) or an item's own `BankPrice`. Match coins can't pay.
+- `src/server/CosmeticShop.luau` checks everything: the item id, that you don't own it, your
+  balance (from the catalog price; anything a client says about price is ignored), one
+  purchase at a time and at most one attempt every 0.75 s. Codes: ok, bad_request,
+  unknown_item, owned, too_fast, no_profile, insufficient; each comes back as a message.
+- A purchase is written into the profile (Owned / Equipped) and saved straight away.
+- Bots never use the shop.
+
 ### Rewards and prices
 Gift-space rewards (`Config.Economy.Rewards`, weighted), coin space amounts, starting coins,
 the Crown price, item prices (`Items.luau`), shop offer counts and bank coins are all in

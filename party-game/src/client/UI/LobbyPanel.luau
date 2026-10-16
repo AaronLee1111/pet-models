@@ -87,12 +87,22 @@ local function wardrobeRow(self, order: number)
 		BackgroundTransparency = 1,
 		Parent = self.SettingRows,
 	})
-	Theme.label({
-		Size = UDim2.new(0.28, 0, 1, 0),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = "Wear",
+	-- Opens the permanent Cosmetics Shop (bank coins).
+	local shopButton = make("TextButton", {
+		Name = "ShopButton",
+		Size = UDim2.new(0.26, 0, 1, 0),
+		BackgroundColor3 = Theme.Colors.Accent,
+		Font = Theme.TitleFont,
+		TextScaled = true,
+		TextColor3 = Theme.Colors.Overlay,
+		Text = "SHOP",
 		Parent = row,
-	}, 22)
+	}, { Theme.corner(12), Theme.padding(8), make("UITextSizeConstraint", { MaxTextSize = 24 }) })
+	shopButton.Activated:Connect(function()
+		if self.OnShop then
+			self.OnShop()
+		end
+	end)
 	local buttons = make("ScrollingFrame", {
 		Position = UDim2.fromScale(0.28, 0),
 		Size = UDim2.fromScale(0.72, 1),

@@ -6,7 +6,8 @@
 	  Id      unique, never reuse or rename once players own it
 	  Name    shown to players
 	  Slot    one equipped item per slot (Cosmetics.Slots)
-	  Price   coins at a shop space
+	  Price   match coins at a board Shop space
+	  BankPrice  permanent bank coins in the lobby Cosmetics Shop (Cosmetics.bankPrice)
 	  Rarity  "Common" | "Rare" | "Epic" (for the later visual pass)
 	  Visual  placeholder look, drawn by PartyServer.CosmeticService:
 	            { Kind = "Hat", Shape = "Block"|"Ball"|"Cylinder", Size = {x, y, z}, Color = {r, g, b} }
@@ -51,11 +52,19 @@ Cosmetics.Items = {
 	},
 }
 
+-- Lobby shop prices in permanent bank coins, by rarity (an item can override with BankPrice).
+Cosmetics.BankPriceByRarity = { Common = 40, Rare = 80, Epic = 150 }
+
 local byId = {}
 for _, item in Cosmetics.Items do
 	assert(not byId[item.Id], "duplicate cosmetic id " .. item.Id)
 	assert(table.find(Cosmetics.Slots, item.Slot), "unknown slot for " .. item.Id)
 	byId[item.Id] = item
+end
+
+-- What an item costs in the lobby shop (bank coins). Server-side truth; never from a client.
+function Cosmetics.bankPrice(item): number
+	return item.BankPrice or Cosmetics.BankPriceByRarity[item.Rarity] or 100
 end
 
 function Cosmetics.get(id: string)

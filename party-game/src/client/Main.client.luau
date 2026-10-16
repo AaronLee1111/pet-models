@@ -23,6 +23,7 @@ local LobbyPanel = require(UI:WaitForChild("LobbyPanel"))
 local PlayerChips = require(UI:WaitForChild("PlayerChips"))
 local ProgressBar = require(UI:WaitForChild("ProgressBar"))
 local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
+local ShopScreen = require(UI:WaitForChild("ShopScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
@@ -98,6 +99,11 @@ end)
 Controls.setActionBar(ActionBar.new(screen))
 local boardView = BoardView.new(screen, sendInput)
 local lobbyPanel = LobbyPanel.new(screen, sendInput)
+local shopScreen = ShopScreen.new(screen, sendInput)
+lobbyPanel.OnShop = function()
+	shopScreen:toggle()
+end
+
 local standings = StandingsScreen.new(screen)
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
@@ -117,10 +123,11 @@ local HUD_STRIPS = {
 	"BoardMap",
 	"BoardMapPanel",
 	"WaitingRoom",
+	"CosmeticShop",
 }
 local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
-local HUD_MIN_SCALE = { WaitingRoom = 0.85, BoardPrompt = 0.75, BoardMap = 0.85, BoardMapPanel = 0.75 }
+local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75, BoardMap = 0.85, BoardMapPanel = 0.75 }
 local hudBasePositions = {}
 
 local function fitHudToScreen()
@@ -152,6 +159,13 @@ local function setCardOpen(open: boolean)
 	pcall(function()
 		GuiService.TouchControlsEnabled = not open
 	end)
+end
+
+-- The shop takes the waiting-room card's place while it's open, and the mobile thumbstick and
+-- jump button step aside so they never sit on top of it.
+shopScreen.OnOpenChanged = function(open)
+	lobbyPanel.Root.Visible = not open and lobbyPanel.LastMessage ~= nil and lobbyPanel.Showing == true
+	setCardOpen(open)
 end
 
 local function hideOverlays()
@@ -246,15 +260,24 @@ phaseHandlers[Phase.Lobby] = function(message)
 	hud:setStatus(nil)
 	if message.WaitingRoom then
 		hud:setLobby(nil)
+		lobbyPanel.Showing = true
 		lobbyPanel:show(message)
+		shopScreen:setAvailable(true)
+		if shopScreen.Open then
+			lobbyPanel.Root.Visible = false
+		end
 	else
+		lobbyPanel.Showing = false
 		lobbyPanel:hide()
+		shopScreen:setAvailable(false)
 		hud:setLobby(message.Text or "Lobby", message.EndsAt)
 	end
 end
 
 phaseHandlers[Phase.Board] = function(_message)
 	hideOverlays()
+	lobbyPanel.Showing = false
+	shopScreen:setAvailable(false)
 	endRound()
 	lobbyPanel:hide()
 	hud:setLobby(nil)
@@ -266,6 +289,8 @@ end
 
 phaseHandlers[Phase.Standings] = function(message)
 	hideOverlays()
+	lobbyPanel.Showing = false
+	shopScreen:setAvailable(false)
 	endRound()
 	lobbyPanel:hide()
 	boardView:show()
@@ -277,6 +302,8 @@ end
 
 phaseHandlers[Phase.Vote] = function(message)
 	hideOverlays()
+	lobbyPanel.Showing = false
+	shopScreen:setAvailable(false)
 	boardView:hide()
 	lobbyPanel:hide()
 	hud:setLobby(nil)
@@ -356,6 +383,9 @@ stateRemote.OnClientEvent:Connect(function(message)
 		boardView:showPrompt(message)
 	elseif message.Type == Net.Message.Inventory then
 		lobbyPanel:setInventory(message)
+		shopScreen:setInventory(message)
+	elseif message.Type == Net.Message.ShopResult then
+		shopScreen:showResult(message)
 	end
 end)
 
