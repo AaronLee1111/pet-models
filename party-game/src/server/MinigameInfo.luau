@@ -10,6 +10,8 @@
 	    Camera = {                 optional, defaults to AngledOverhead
 	      Mode = "AngledOverhead" | "FollowBehind" | "SideView",
 	      ...any Config.CameraModes[Mode] number to override (Height, Distance, ...)
+	      TouchZoom = 1           optional: replaces Config.TouchCamera's Zoom on phones/tablets
+	      TouchLookAhead = 6      optional: replaces Config.TouchCamera's LookAhead on phones/tablets
 	    },
 	    Controls = {               optional, defaults to free movement + no actions
 	      Move = true,             false = can't walk (server sets WalkSpeed 0)
@@ -17,6 +19,7 @@
 	      WalkSpeed = 16,
 	      Actions = { { Action = "Pass", Label = "Pass!", Key = "E" } },
 	        per action, optional:  Keys = { "A", "Left" }  several keys instead of one Key
+	                               Gamepads = { "DPadLeft", "ButtonL1" }  several pad buttons
 	                               Hold = true             OnInput gets "<Action>" on press and
 	                                                       "<Action>Stop" on release
 	                               Side = "Left"           on-screen button goes bottom-left
@@ -97,6 +100,7 @@ function MinigameInfo.normalize(id: string, info)
 			Key = action.Key or (action.Keys and action.Keys[1]), -- Enum.KeyCode name, e.g. "E"
 			Keys = action.Keys, -- optional list of Enum.KeyCode names (overrides Key for binding)
 			Gamepad = action.Gamepad, -- optional Enum.KeyCode name, e.g. "ButtonX"
+			Gamepads = action.Gamepads, -- optional list of Enum.KeyCode names (overrides Gamepad)
 			Hold = action.Hold == true, -- also sends "<Action>Stop" when released
 			Side = action.Side, -- "Left" puts the on-screen button in the bottom-left corner
 			Color = if typeof(action.Color) == "Color3" then action.Color else nil, -- on-screen button colour

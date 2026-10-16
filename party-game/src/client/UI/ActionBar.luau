@@ -62,7 +62,9 @@ function ActionBar:show(actions, send: (string) -> (), low: boolean?)
 	if #actions == 0 then
 		return
 	end
-	local showKeys = UserInputService.KeyboardEnabled
+	-- Key hints only off touch screens: phones (and Studio's phone emulator) can report a
+	-- keyboard and even a mouse, so any touch screen gets the plain button.
+	local showKeys = UserInputService.KeyboardEnabled and not UserInputService.TouchEnabled
 	for index, action in actions do
 		local button = make("TextButton", {
 			Name = "Action_" .. action.Action,

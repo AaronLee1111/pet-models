@@ -57,9 +57,11 @@ function Controls.bind(controls, send: (string) -> ())
 				table.insert(inputs, key)
 			end
 		end
-		local pad = keyCode(action.Gamepad or DEFAULT_GAMEPAD[index])
-		if pad then
-			table.insert(inputs, pad)
+		for _, name in action.Gamepads or { action.Gamepad or DEFAULT_GAMEPAD[index] } do
+			local pad = keyCode(name)
+			if pad then
+				table.insert(inputs, pad)
+			end
 		end
 		ContextActionService:BindActionAtPriority(bindName, function(_, inputState)
 			if inputState == Enum.UserInputState.Begin then

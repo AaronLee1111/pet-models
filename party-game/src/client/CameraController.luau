@@ -55,9 +55,10 @@ function CameraController.start(cameraConfig, origin: CFrame)
 	params = table.clone(cameraConfig)
 	local touch = UserInputService.TouchEnabled and Config.TouchCamera[params.Mode]
 	if touch then
-		params.Height *= touch.Zoom
-		params.Distance *= touch.Zoom
-		params.LookAhead = touch.LookAhead
+		local zoom = params.TouchZoom or touch.Zoom -- a minigame can ask for its own phone zoom
+		params.Height *= zoom
+		params.Distance *= zoom
+		params.LookAhead = params.TouchLookAhead or touch.LookAhead
 	end
 	arenaOrigin = origin
 	active = true
