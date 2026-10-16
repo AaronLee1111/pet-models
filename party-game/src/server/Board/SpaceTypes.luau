@@ -41,7 +41,7 @@ return {
 		Short = "+" .. Config.Economy.GainSpaceCoins,
 		Color = Color3.fromRGB(70, 140, 255),
 		Resolve = function(match, seat)
-			return coinsText(seat.Participant.Name, match:changeCoins(seat, Config.Economy.GainSpaceCoins))
+			return coinsText(seat.Participant.Name, match:changeCoins(seat, match:spaceCoins(Config.Economy.GainSpaceCoins)))
 		end,
 	},
 	Lose = {
@@ -49,7 +49,7 @@ return {
 		Short = "-" .. Config.Economy.LoseSpaceCoins,
 		Color = Color3.fromRGB(240, 70, 70),
 		Resolve = function(match, seat)
-			local delta, shielded = match:changeCoins(seat, -Config.Economy.LoseSpaceCoins)
+			local delta, shielded = match:changeCoins(seat, -match:spaceCoins(Config.Economy.LoseSpaceCoins))
 			return coinsText(seat.Participant.Name, delta, shielded)
 		end,
 	},

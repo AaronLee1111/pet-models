@@ -111,6 +111,25 @@ Config.Economy = {
 	CrownMovePrice = 8, -- Switch space: pay this to send the Crown somewhere else
 }
 
+-- Comeback help for trailing players. Kept small and late so early play still matters.
+--   StartRound            no help before this round
+--   LastPlaceCoins        coins for the last-place seat(s) at the start of each round
+--   UnderdogGap           a seat this many Crowns behind the leader is an "underdog" ...
+--   UnderdogDiscount      ... and pays this much less for a Crown (never below MinCrownPrice)
+--   UnderdogGiftBoost     ... and its Gift-space Item/Crown chances are multiplied by this
+--   FinalFrenzy           in the last round Gain/Lose spaces are worth FrenzyMultiplier times more
+Config.Comeback = {
+	Enabled = true,
+	StartRound = 2,
+	LastPlaceCoins = 5,
+	UnderdogGap = 2,
+	UnderdogDiscount = 5,
+	MinCrownPrice = 10,
+	UnderdogGiftBoost = 2,
+	FinalFrenzy = true,
+	FrenzyMultiplier = 2,
+}
+
 -- Board items (Board/Items has the list). One item may be used per turn, before rolling.
 Config.Items = {
 	MaxHeld = 3,

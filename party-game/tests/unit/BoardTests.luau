@@ -1082,6 +1082,80 @@ test("bots: flip a gate that helps, duel the leader, gamble only when behind", f
 	eq(match:botDecision(me, stake), 1, "ahead: small stake")
 end)
 
+-- Comeback ----------------------------------------------------------------------------------------
+
+test("comeback: underdog needs the round and the Crown gap", function()
+	local match = newMatch()
+	local me = match.Seats[1]
+	CoinService.addCollectibles(match.Seats[2].Participant, Config.Comeback.UnderdogGap)
+	match.Round = Config.Comeback.StartRound - 1
+	eq(match:isUnderdog(me), false, "too early")
+	match.Round = Config.Comeback.StartRound
+	eq(match:isUnderdog(me), true, "behind by the gap")
+	eq(match:isUnderdog(match.Seats[2]), false, "the leader")
+	CoinService.addCollectibles(me.Participant, 1)
+	eq(match:isUnderdog(me), false, "gap closed")
+end)
+
+test("comeback: underdog Crown discount, never below the floor", function()
+	local match, asked = newMatch({ Collectible = 1 })
+	local me = match.Seats[1]
+	match.Round = Config.Comeback.StartRound
+	CoinService.addCollectibles(match.Seats[2].Participant, 3)
+	eq(match:collectiblePriceFor(me), Config.Collectible.Price - Config.Comeback.UnderdogDiscount, "discount")
+	eq(match:collectiblePriceFor(match.Seats[2]), Config.Collectible.Price, "leader pays full")
+	setCoins(match, me, 30)
+	match:offerCollectible(me)
+	eq(match:coinsOf(me), 30 - (Config.Collectible.Price - Config.Comeback.UnderdogDiscount), "paid the discounted price")
+	ok(string.find(asked[1].Prompt, "discount"), "prompt says discount")
+	match.CollectiblePrice = Config.Comeback.MinCrownPrice + 1
+	CoinService.addCollectibles(match.Seats[2].Participant, 3)
+	eq(match:collectiblePriceFor(me), Config.Comeback.MinCrownPrice, "floor")
+end)
+
+test("comeback: last place gets catch-up coins from StartRound on", function()
+	local match = newMatch()
+	eq(match:startRound(1), nil, "round 1: nothing")
+	for i, seat in match.Seats do
+		setCoins(match, seat, 10 + i)
+	end
+	setCoins(match, match.Seats[1], 2)
+	setCoins(match, match.Seats[2], 2)
+	local text = match:startRound(Config.Comeback.StartRound)
+	ok(text and string.find(text, "Catch%-up"), "feed")
+	eq(match:coinsOf(match.Seats[1]), 2 + Config.Comeback.LastPlaceCoins, "tied last 1")
+	eq(match:coinsOf(match.Seats[2]), 2 + Config.Comeback.LastPlaceCoins, "tied last 2")
+	eq(match:coinsOf(match.Seats[4]), 14, "leader untouched")
+	local even = newMatch()
+	eq(even:startRound(Config.Comeback.StartRound), nil, "everyone tied: nothing")
+end)
+
+test("comeback: final frenzy doubles Gain and Lose spaces in the last round only", function()
+	local match = newMatch()
+	local seat = match.Seats[1]
+	match.Round = match.Rounds - 1
+	seat.SpaceId = 2
+	match:land(seat)
+	eq(match:coinsOf(seat), Config.Economy.GainSpaceCoins, "normal round")
+	match.Round = match.Rounds
+	eq(match:isFrenzy(), true, "frenzy")
+	match:land(seat)
+	eq(match:coinsOf(seat), Config.Economy.GainSpaceCoins * (1 + Config.Comeback.FrenzyMultiplier), "doubled gain")
+end)
+
+test("comeback: underdogs get better gift odds for items and Crowns only", function()
+	local match = newMatch()
+	local me = match.Seats[1]
+	match.Round = Config.Comeback.StartRound
+	eq(match:rewardsFor(me), Config.Economy.Rewards, "not an underdog: normal table")
+	CoinService.addCollectibles(match.Seats[2].Participant, 3)
+	local boosted = match:rewardsFor(me)
+	for i, reward in Config.Economy.Rewards do
+		local factor = if reward.Kind == "Collectible" or reward.Kind == "Item" then Config.Comeback.UnderdogGiftBoost else 1
+		eq(boosted[i].Weight, reward.Weight * factor, reward.Kind .. " weight")
+	end
+end)
+
 -- Bonuses -----------------------------------------------------------------------------------------
 
 test("stats: spaces travelled, coins earned (not balance), minigame points", function()

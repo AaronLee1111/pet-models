@@ -84,7 +84,7 @@ function BotBrain.branchScore(match, seat, startId: number, profile): number
 		id = space.Next[1]
 	end
 	-- The Crown matters most when you can (nearly) pay for it.
-	local coins, price = match:coinsOf(seat), match.CollectiblePrice
+	local coins, price = match:coinsOf(seat), match:collectiblePriceFor(seat)
 	local weight = if coins >= price then 4 elseif coins >= price - 6 then 1.5 else 0.3
 	local distance = math.min(crownDistance(match, startId), 20)
 	return score + weight * (20 - distance) * 0.5
@@ -109,7 +109,7 @@ end
 
 -- Coins a bot keeps back for the Crown before buying anything.
 function BotBrain.reserve(match, seat, profile): number
-	local reserve = match.CollectiblePrice * profile.SaveFactor
+	local reserve = match:collectiblePriceFor(seat) * profile.SaveFactor
 	if isLastRound(match) and crownDistance(match, seat.SpaceId) > 2 * AVERAGE_ROLL + 2 then
 		reserve = 0 -- can't reach the Crown again anyway: spend
 	end
@@ -193,7 +193,7 @@ end
 	and die-face choice where the item needs them. To teach bots a new item, add a branch here.
 ]]
 function BotBrain.itemScore(match, seat, id: string)
-	local coins, price = match:coinsOf(seat), match.CollectiblePrice
+	local coins, price = match:coinsOf(seat), match:collectiblePriceFor(seat)
 	local canBuy = coins >= price
 	local distance = crownDistance(match, seat.SpaceId)
 	local late = isLastRound(match)

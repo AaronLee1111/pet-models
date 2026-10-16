@@ -194,7 +194,12 @@ function BoardView:setState(message)
 	-- Header
 	local myTurn = message.TurnId == myId
 	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
-	self.Title.Text = ("Round %d / %d%s"):format(message.Round or 0, message.Rounds or 0, if who then "  ·  " .. who .. " turn" else "")
+	self.Title.Text = ("%s %d / %d%s"):format(
+		if message.Frenzy then "FINAL FRENZY · Round" else "Round",
+		message.Round or 0,
+		message.Rounds or 0,
+		if who then "  ·  " .. who .. " turn" else ""
+	)
 	local sub = message.Text or ""
 	if message.Stage == "OrderRoll" then
 		self.Title.Text = ("Round %d / %d  ·  Turn order"):format(message.Round or 0, message.Rounds or 0)
@@ -241,6 +246,9 @@ function BoardView:setState(message)
 			line ..= ("  ·  %d item%s"):format(#(seat.Items or {}), if #(seat.Items or {}) == 1 then "" else "s")
 			if seat.Shield then
 				line ..= "  ·  shield"
+			end
+			if seat.Underdog then
+				line ..= "  ·  underdog"
 			end
 		end
 		Theme.label({

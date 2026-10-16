@@ -409,9 +409,88 @@ function Match:relocateCollectible()
 	return self.CollectibleSpace
 end
 
+-- Comeback ------------------------------------------------------------------------------------
+
+local function comebackOn(match): boolean
+	return Config.Comeback.Enabled and match.Round >= Config.Comeback.StartRound
+end
+
+-- An underdog is far enough behind the Crown leader to get help (discount, better gifts).
+function Match:isUnderdog(seat): boolean
+	if not comebackOn(self) then
+		return false
+	end
+	local leader = 0
+	for _, other in self.Seats do
+		leader = math.max(leader, self:collectiblesOf(other))
+	end
+	return leader - self:collectiblesOf(seat) >= Config.Comeback.UnderdogGap
+end
+
+-- What this seat pays for the collectible right now (underdogs get a discount).
+function Match:collectiblePriceFor(seat): number
+	if self:isUnderdog(seat) then
+		return math.max(Config.Comeback.MinCrownPrice, self.CollectiblePrice - Config.Comeback.UnderdogDiscount)
+	end
+	return self.CollectiblePrice
+end
+
+-- True in the last round when Final Frenzy is on.
+function Match:isFrenzy(): boolean
+	return Config.Comeback.Enabled and Config.Comeback.FinalFrenzy and self.Round >= self.Rounds
+end
+
+-- Coins a Gain / Lose space is worth this round.
+function Match:spaceCoins(base: number): number
+	return if self:isFrenzy() then base * Config.Comeback.FrenzyMultiplier else base
+end
+
+--[[
+	Start of a round: the last-place seat(s) get a few coins (from Comeback.StartRound on).
+	Returns feed text or nil.
+]]
+function Match:startRound(round: number): string?
+	self.Round = round
+	if not comebackOn(self) then
+		return nil
+	end
+	local rows = self:standings()
+	local last = rows[#rows].Placement
+	if last == 1 then
+		return nil -- everyone tied
+	end
+	local names = {}
+	for _, row in rows do
+		if row.Placement == last then
+			local seat = self:seatOf(row.Participant)
+			self:changeCoins(seat, Config.Comeback.LastPlaceCoins)
+			table.insert(names, row.Participant.Name)
+		end
+	end
+	return ("Catch-up: %s +%d coins"):format(table.concat(names, ", "), Config.Comeback.LastPlaceCoins)
+end
+
+-- Gift-space reward table for this seat (underdogs get better odds on items and Crowns).
+function Match:rewardsFor(seat)
+	if not self:isUnderdog(seat) then
+		return Config.Economy.Rewards
+	end
+	local boosted = {}
+	for _, reward in Config.Economy.Rewards do
+		local copy = table.clone(reward)
+		if copy.Kind == "Collectible" or copy.Kind == "Item" then
+			copy.Weight *= Config.Comeback.UnderdogGiftBoost
+		end
+		table.insert(boosted, copy)
+	end
+	return boosted
+end
+
+-- Collectible purchase ---------------------------------------------------------------------------
+
 -- Pays for the collectible. Returns true if bought (and moves it).
 function Match:buyCollectible(seat): boolean
-	if not self.Deps.Wallet.spend(seat.Participant, self.CollectiblePrice) then
+	if not self.Deps.Wallet.spend(seat.Participant, self:collectiblePriceFor(seat)) then
 		return false
 	end
 	self.Deps.Wallet.addCollectibles(seat.Participant, 1)
@@ -423,12 +502,17 @@ end
 -- Reached the collectible's space (passing or landing): offer it if affordable.
 function Match:offerCollectible(seat): string
 	local name = seat.Participant.Name
-	if self:coinsOf(seat) < self.CollectiblePrice then
-		return ("%s needs %d coins for a %s"):format(name, self.CollectiblePrice, self.CollectibleName)
+	local price = self:collectiblePriceFor(seat)
+	if self:coinsOf(seat) < price then
+		return ("%s needs %d coins for a %s"):format(name, price, self.CollectibleName)
 	end
 	local pick = self:ask(seat, {
 		Kind = "Collectible",
-		Prompt = ("Buy a %s for %d coins?"):format(self.CollectibleName, self.CollectiblePrice),
+		Prompt = ("Buy a %s for %d coins?%s"):format(
+			self.CollectibleName,
+			price,
+			if price < self.CollectiblePrice then " (underdog discount)" else ""
+		),
 		Options = { "Buy", "Not now" },
 		Default = 1,
 	})
@@ -716,7 +800,7 @@ end
 
 function Match:giveReward(seat): string
 	local name = seat.Participant.Name
-	local reward = weightedPick(self.Rng, Config.Economy.Rewards)
+	local reward = weightedPick(self.Rng, self:rewardsFor(seat))
 	if reward.Kind == "Item" then
 		local item = self:giveRandomItem(seat)
 		if item then

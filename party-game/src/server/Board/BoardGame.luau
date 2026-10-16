@@ -88,6 +88,7 @@ local function stateMessage()
 		table.insert(seats, {
 			Items = describeItems(seat),
 			Shield = seat.Shield,
+			Underdog = match:isUnderdog(seat),
 			OrderRolls = current.OrderRolls and current.OrderRolls[seat],
 			Id = participant.Id,
 			Name = participant.Name,
@@ -124,7 +125,8 @@ local function stateMessage()
 		CollectibleSpace = match.CollectibleSpace,
 		CollectibleName = Config.Collectible.Name,
 		CollectiblePlural = Config.Collectible.Plural,
-		CollectiblePrice = Config.Collectible.Price,
+		CollectiblePrice = match.CollectiblePrice,
+		Frenzy = match:isFrenzy(),
 		Seats = seats,
 	}
 end
@@ -136,7 +138,7 @@ local function publish()
 	local match = current.Match
 	current.World:setCollectible(
 		match.CollectibleSpace,
-		("%s · %d coins"):format(Config.Collectible.Name, Config.Collectible.Price)
+		("%s · %d coins"):format(Config.Collectible.Name, match.CollectiblePrice)
 	)
 	current.World:setTraps(match.Traps)
 	current.World:setGates(match.Board.Gates, match.GateOpen)
@@ -525,16 +527,22 @@ function BoardGame.play(participants, settings)
 	MinigameManager.broadcast(current.LayoutMessage)
 
 	for round = 1, match.Rounds do
-		match.Round = round
+		local catchUp = match:startRound(round)
 		current.Turn = nil
 		current.Stage = "Start"
 		current.Text = ("Round %d of %d"):format(round, match.Rounds)
+			.. (if match:isFrenzy() then "  ·  FINAL FRENZY: coin spaces x2" else "")
 		MinigameManager.setPhase(Net.Phase.Board, { Round = round, Rounds = match.Rounds })
 		refreshSeats()
 		ensureBodies()
 		placeAll()
 		publish()
 		task.wait(1.5)
+		if catchUp then
+			feed(catchUp)
+			publish()
+			task.wait(1.5)
+		end
 		if round == 1 then
 			rollForTurnOrder()
 		end

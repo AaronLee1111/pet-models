@@ -135,6 +135,12 @@ After the last round: standings before bonuses -> bonus card -> final standings.
 gained on the board or in minigames, never reduced by losses or spending) and `SpacesMoved`
 (warps and swaps don't count). A bonus whose best value is 0 goes to nobody.
 
+### Comeback rules (`Config.Comeback`)
+From round 2: the last-place seat(s) get 5 catch-up coins at the start of each round. A seat
+2+ Crowns behind the leader is an underdog: Crowns cost it 5 less (never below 10) and its
+Gift-space chances for items and Crowns are doubled. In the final round Gain/Lose spaces are
+worth double (Final Frenzy). All of it can be tuned or switched off.
+
 ### Bots
 `src/server/Board/BotBrain.luau`, tuned per difficulty in `Config.Match.BotBehavior`
 (random-choice chance, item-use chance, Crown savings, fork look-ahead, cosmetic spending).
