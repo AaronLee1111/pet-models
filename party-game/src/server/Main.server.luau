@@ -92,5 +92,6 @@ while true do
 		warn("[Party] Match crashed, returning to the waiting room:\n" .. tostring(err))
 		MinigameManager.abort("Match crashed, back to the lobby!")
 		BoardGame.cleanup()
+		MinigameMode.cleanup()
 	end
 end

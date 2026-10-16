@@ -7,9 +7,14 @@
 	  BoardGame.play(participants, settings)   -> final standings rows (yields for the whole match)
 	  BoardGame.cleanup()                      safe teardown, also after a crash
 	  BoardGame.handleInput(player, payload)   -> true if it was a board input (Roll / Choice)
+	  BoardGame.onPlayerLeft(player) / BoardGame.requestReclaim(player)
+	                                           leave / rejoin entry points (PlayerRemoving and
+	                                           PlayerAdded call them; the reclaim harness too)
 
-	Players who leave are replaced by a bot that keeps their seat, coins and collectibles.
-	Players who join mid-match watch until the next match.
+	Players who leave are replaced by a bot that keeps their seat, coins and collectibles. The
+	seat stays reserved for their UserId; if they rejoin they get it back at a safe moment
+	(between turns, after a minigame; see SeatClaims). Players who join mid-match without a
+	reserved seat watch until the next match.
 ]]
 
 local Players = game:GetService("Players")
@@ -26,6 +31,7 @@ local Inventory = require(script.Parent.Parent.Inventory)
 local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
 local Profiles = require(script.Parent.Parent.Profiles)
+local SeatClaims = require(script.Parent.Parent.SeatClaims)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -98,6 +104,12 @@ local function stateMessage()
 			Collectibles = match:collectiblesOf(seat),
 			SpaceId = seat.SpaceId,
 			Zone = match.Board:get(seat.SpaceId).Zone,
+			Stats = table.clone(seat.Stats),
+			-- A bot holding a seat for a player who left: whose seat it is.
+			ReservedFor = (function()
+				local userId = current.Claims:reservedFor(seat)
+				return if userId and participant.IsBot then "player_" .. userId else nil
+			end)(),
 			Character = participant:GetCharacter(),
 		})
 	end
@@ -301,6 +313,9 @@ local function refreshSeats()
 			continue
 		end
 		leaver.Left = true
+		if leaver.UserId and Config.SeatReclaim.Enabled then
+			current.Claims:reserve(seat, leaver.UserId)
+		end
 		local seatedBots = {}
 		for _, other in match.Seats do
 			if other.Participant.IsBot then
@@ -329,6 +344,76 @@ local function refreshSeats()
 		end
 	end
 end
+
+-- Rejoining -----------------------------------------------------------------------------------
+
+local function tellPlayer(player: Player, text: string)
+	if player.Parent then
+		MinigameManager.sendTo(player, { Type = Net.Message.Toast, Text = text })
+	end
+end
+
+-- Hands a reserved seat back to its returning player. Callers make sure it's a safe moment.
+local function completeReclaim(seat): boolean
+	local claims = current.Claims
+	local player = claims:pendingFor(seat)
+	if not player then
+		return false
+	end
+	claims:consume(seat)
+	local previous = seat.Participant
+	local returning = Participant.fromPlayer(player)
+	local ok = current.Match:reclaimSeat(seat, returning)
+	if not ok then
+		return false
+	end
+	if previous.IsBot and previous.Bot then
+		BotService.release(previous.Bot) -- the takeover bot is done; lobby-fill bots stay
+	elseif previous.Player and previous.Player ~= player then
+		-- The earlier session's body, if Roblox hasn't removed it yet.
+		local old = previous.Player.Character
+		if old and old.Parent then
+			old:Destroy()
+		end
+	end
+	if returning:IsAlive() then
+		placeSeat(seat)
+	end -- otherwise watchCharacter seats the body when it spawns
+	feed(("%s is back and takes their seat again"):format(returning.Name))
+	tellPlayer(player, SeatClaims.Messages.now)
+	publish()
+	return true
+end
+
+-- Safe boundary (turn finished, minigame over, round start, standings): seat everyone waiting.
+-- Runs before refreshSeats, so someone who left and came back within one minigame gets their
+-- seat straight back instead of a bot taking it for a moment.
+local function settleReclaims()
+	if not current then
+		return
+	end
+	for _, seat in current.Match.Seats do
+		completeReclaim(seat)
+	end
+end
+
+-- A player joined: if a seat is reserved for their UserId, queue the claim and take it now
+-- if nothing is in progress for that seat.
+local function requestReclaim(player: Player)
+	if not current or not current.Claims or not Config.SeatReclaim.Enabled then
+		return
+	end
+	local seat = current.Claims:request(player)
+	if not seat then
+		return
+	end
+	local timing = SeatClaims.timing(current.Stage, current.Turn == seat)
+	if timing == "now" and completeReclaim(seat) then
+		return
+	end
+	tellPlayer(player, SeatClaims.Messages[timing] or SeatClaims.Messages.later)
+end
+BoardGame.requestReclaim = requestReclaim
 
 -- Choices -----------------------------------------------------------------------------------------
 
@@ -525,6 +610,7 @@ local function useItem(seat, slot, target, choice)
 end
 
 local function takeTurn(seat)
+	settleReclaims() -- the previous turn is over
 	refreshSeats()
 	local match = current.Match
 	local participant = seat.Participant
@@ -633,6 +719,7 @@ function BoardGame.play(participants, settings)
 	current = {
 		World = BoardWorld.build(board, SpaceTypes, Config.Board.Origin),
 		Stage = "Start",
+		Claims = SeatClaims.new(),
 	}
 	current.Match = Match.new(board, participants, { Rounds = settings.Rounds, Difficulty = settings.Difficulty }, {
 		Wallet = CoinService,
@@ -665,6 +752,7 @@ function BoardGame.play(participants, settings)
 		current.Text = ("Round %d of %d"):format(round, match.Rounds)
 			.. (if match:isFrenzy() then "  ·  FINAL FRENZY: coin spaces x2" else "")
 		MinigameManager.setPhase(Net.Phase.Board, { Round = round, Rounds = match.Rounds })
+		settleReclaims()
 		refreshSeats()
 		ensureBodies()
 		placeAll()
@@ -684,6 +772,8 @@ function BoardGame.play(participants, settings)
 		end
 
 		current.Turn = nil
+		settleReclaims() -- the last turn of the round is over
+		refreshSeats()
   if match:rotationDue() then
    warnRotation()
    if match:finishBoardRound() then animateRotation() end
@@ -701,9 +791,16 @@ function BoardGame.play(participants, settings)
 			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(results))
 			MinigameManager.abort("Minigame crashed, back to the board!")
 		end
+		-- Results are in: players who came back during the minigame get their seats now,
+		-- before the next board turn.
+		current.Stage = "Start"
+		settleReclaims()
+		refreshSeats()
 	end
 
 	-- Standings before bonuses -> bonus awards -> final standings.
+	current.Stage = "Standings"
+	settleReclaims()
 	refreshSeats()
 	MinigameManager.setPhase(Net.Phase.Standings, {
 		Stage = "Before",
@@ -724,7 +821,16 @@ function BoardGame.play(participants, settings)
 	})
 	task.wait(Config.Match.BonusDuration)
 
+	-- Last chance for anyone who came back during the standings; then the seats are final.
+	settleReclaims()
+	refreshSeats()
+	local claims = current.Claims
+	current.Claims = SeatClaims.new() -- reservations end with the match
+	for _, player in claims:clear() do
+		tellPlayer(player, SeatClaims.Messages.ended)
+	end
 	-- Permanent bank coins for real players (the only thing a match writes to a profile).
+	-- One row per seat, paid once, so a rejoin can't be paid twice.
 	local rows = match:standings()
 	local described = describeRows(rows)
 	for index, row in rows do
@@ -753,6 +859,9 @@ function BoardGame.cleanup()
 	releasePieces()
 	if current then
 		current.World:destroy()
+		for _, player in current.Claims:clear() do
+			tellPlayer(player, SeatClaims.Messages.ended)
+		end
 	end
 	current = nil
 	CoinService.resetAll()
@@ -815,6 +924,13 @@ MinigameManager.onReady(function(player)
 		if current.StateMessage then
 			MinigameManager.sendTo(player, stateMessage())
 		end
+		-- Still waiting for their seat (the queued message may have arrived before the
+		-- client was listening): say so again.
+		local seat = current.Claims:keyFor(player.UserId)
+		if seat and current.Claims:pendingFor(seat) == player then
+			local timing = SeatClaims.timing(current.Stage, current.Turn == seat)
+			tellPlayer(player, SeatClaims.Messages[if timing == "now" then "later" else timing])
+		end
 	end
 end)
 
@@ -833,20 +949,30 @@ local function watchCharacter(player: Player)
 		end
 	end)
 end
-Players.PlayerAdded:Connect(watchCharacter)
+Players.PlayerAdded:Connect(function(player)
+	watchCharacter(player)
+	requestReclaim(player)
+end)
 for _, player in Players:GetPlayers() do
 	watchCharacter(player)
 end
 
-Players.PlayerRemoving:Connect(function(player)
+-- A player left: their seat goes to a bot at the next turn and stays reserved for them.
+-- PlayerRemoving calls this; the multi-client harness calls it to simulate a leave.
+function BoardGame.onPlayerLeft(player: Player)
 	if not current then
 		return
 	end
+	current.Claims:cancel(player) -- left again while waiting for their seat
 	for _, seat in current.Match.Seats do
 		if seat.Participant.Player == player then
 			seat.Participant.Left = true -- the turn loop hands the seat to a bot
+			if Config.SeatReclaim.Enabled then
+				current.Claims:reserve(seat, player.UserId)
+			end
 		end
 	end
-end)
+end
+Players.PlayerRemoving:Connect(BoardGame.onPlayerLeft)
 
 return BoardGame

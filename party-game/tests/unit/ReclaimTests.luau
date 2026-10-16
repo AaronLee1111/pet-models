@@ -268,10 +268,12 @@ test("wrong UserId: no reservation, can't take someone else's seat", function()
 	claims.Pending[101] = stranger
 	eq(claims:pendingFor(seat), nil, "pending entry for the wrong user is dropped")
 	ok(seat.Participant.IsBot, "bot keeps the seat")
-	for _, bad in { "101", 0, -5, 1.5, nil } do
+	for _, bad in { "101", 0, 1.5, 0 / 0, math.huge } do
 		local _, badCode = claims:request({ UserId = bad, Parent = IN_GAME })
 		eq(badCode, "bad_user", tostring(bad))
 	end
+	local _, missing = claims:request({ Parent = IN_GAME })
+	eq(missing, "bad_user", "no UserId")
 end)
 
 test("two reserved seats: each returning player only gets their own", function()

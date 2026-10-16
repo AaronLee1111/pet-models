@@ -39,8 +39,9 @@ SeatClaims.Messages = {
 	ended = "The match ended before you could rejoin your seat.",
 }
 
+-- Live accounts have positive UserIds; Studio's local-server test players have negative ones.
 local function validUserId(id): boolean
-	return type(id) == "number" and id > 0 and id % 1 == 0
+	return type(id) == "number" and id ~= 0 and id % 1 == 0 and id == id
 end
 
 function SeatClaims.new()
