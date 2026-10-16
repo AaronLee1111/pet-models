@@ -83,6 +83,13 @@ Config.Match = {
 	},
 }
 
+-- Rejoining: a player who leaves mid-match has their seat kept for their UserId until the
+-- match ends (a bot plays it meanwhile) and gets it back if they rejoin. Off = old behavior
+-- (they watch until the next match).
+Config.SeatReclaim = {
+	Enabled = true,
+}
+
 Config.Board = {
 	Origin = Vector3.new(0, 0, -300), -- far from the lobby (0,0,0) and the arenas
 	SpaceSpacing = 12, -- studs between grid cells in board layouts
@@ -1042,9 +1049,14 @@ return Arena
 	  BoardGame.play(participants, settings)   -> final standings rows (yields for the whole match)
 	  BoardGame.cleanup()                      safe teardown, also after a crash
 	  BoardGame.handleInput(player, payload)   -> true if it was a board input (Roll / Choice)
+	  BoardGame.onPlayerLeft(player) / BoardGame.requestReclaim(player)
+	                                           leave / rejoin entry points (PlayerRemoving and
+	                                           PlayerAdded call them; the reclaim harness too)
 
-	Players who leave are replaced by a bot that keeps their seat, coins and collectibles.
-	Players who join mid-match watch until the next match.
+	Players who leave are replaced by a bot that keeps their seat, coins and collectibles. The
+	seat stays reserved for their UserId; if they rejoin they get it back at a safe moment
+	(between turns, after a minigame; see SeatClaims). Players who join mid-match without a
+	reserved seat watch until the next match.
 ]]
 
 local Players = game:GetService("Players")
@@ -1061,6 +1073,7 @@ local Inventory = require(script.Parent.Parent.Inventory)
 local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
 local Profiles = require(script.Parent.Parent.Profiles)
+local SeatClaims = require(script.Parent.Parent.SeatClaims)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -1133,6 +1146,12 @@ local function stateMessage()
 			Collectibles = match:collectiblesOf(seat),
 			SpaceId = seat.SpaceId,
 			Zone = match.Board:get(seat.SpaceId).Zone,
+			Stats = table.clone(seat.Stats),
+			-- A bot holding a seat for a player who left: whose seat it is.
+			ReservedFor = (function()
+				local userId = current.Claims:reservedFor(seat)
+				return if userId and participant.IsBot then "player_" .. userId else nil
+			end)(),
 			Character = participant:GetCharacter(),
 		})
 	end
@@ -1336,6 +1355,9 @@ local function refreshSeats()
 			continue
 		end
 		leaver.Left = true
+		if leaver.UserId and Config.SeatReclaim.Enabled then
+			current.Claims:reserve(seat, leaver.UserId)
+		end
 		local seatedBots = {}
 		for _, other in match.Seats do
 			if other.Participant.IsBot then
@@ -1364,6 +1386,76 @@ local function refreshSeats()
 		end
 	end
 end
+
+-- Rejoining -----------------------------------------------------------------------------------
+
+local function tellPlayer(player: Player, text: string)
+	if player.Parent then
+		MinigameManager.sendTo(player, { Type = Net.Message.Toast, Text = text })
+	end
+end
+
+-- Hands a reserved seat back to its returning player. Callers make sure it's a safe moment.
+local function completeReclaim(seat): boolean
+	local claims = current.Claims
+	local player = claims:pendingFor(seat)
+	if not player then
+		return false
+	end
+	claims:consume(seat)
+	local previous = seat.Participant
+	local returning = Participant.fromPlayer(player)
+	local ok = current.Match:reclaimSeat(seat, returning)
+	if not ok then
+		return false
+	end
+	if previous.IsBot and previous.Bot then
+		BotService.release(previous.Bot) -- the takeover bot is done; lobby-fill bots stay
+	elseif previous.Player and previous.Player ~= player then
+		-- The earlier session's body, if Roblox hasn't removed it yet.
+		local old = previous.Player.Character
+		if old and old.Parent then
+			old:Destroy()
+		end
+	end
+	if returning:IsAlive() then
+		placeSeat(seat)
+	end -- otherwise watchCharacter seats the body when it spawns
+	feed(("%s is back and takes their seat again"):format(returning.Name))
+	tellPlayer(player, SeatClaims.Messages.now)
+	publish()
+	return true
+end
+
+-- Safe boundary (turn finished, minigame over, round start, standings): seat everyone waiting.
+-- Runs before refreshSeats, so someone who left and came back within one minigame gets their
+-- seat straight back instead of a bot taking it for a moment.
+local function settleReclaims()
+	if not current then
+		return
+	end
+	for _, seat in current.Match.Seats do
+		completeReclaim(seat)
+	end
+end
+
+-- A player joined: if a seat is reserved for their UserId, queue the claim and take it now
+-- if nothing is in progress for that seat.
+local function requestReclaim(player: Player)
+	if not current or not current.Claims or not Config.SeatReclaim.Enabled then
+		return
+	end
+	local seat = current.Claims:request(player)
+	if not seat then
+		return
+	end
+	local timing = SeatClaims.timing(current.Stage, current.Turn == seat)
+	if timing == "now" and completeReclaim(seat) then
+		return
+	end
+	tellPlayer(player, SeatClaims.Messages[timing] or SeatClaims.Messages.later)
+end
+BoardGame.requestReclaim = requestReclaim
 
 -- Choices -----------------------------------------------------------------------------------------
 
@@ -1560,6 +1652,7 @@ local function useItem(seat, slot, target, choice)
 end
 
 local function takeTurn(seat)
+	settleReclaims() -- the previous turn is over
 	refreshSeats()
 	local match = current.Match
 	local participant = seat.Participant
@@ -1668,6 +1761,7 @@ function BoardGame.play(participants, settings)
 	current = {
 		World = BoardWorld.build(board, SpaceTypes, Config.Board.Origin),
 		Stage = "Start",
+		Claims = SeatClaims.new(),
 	}
 	current.Match = Match.new(board, participants, { Rounds = settings.Rounds, Difficulty = settings.Difficulty }, {
 		Wallet = CoinService,
@@ -1700,6 +1794,7 @@ function BoardGame.play(participants, settings)
 		current.Text = ("Round %d of %d"):format(round, match.Rounds)
 			.. (if match:isFrenzy() then "  ·  FINAL FRENZY: coin spaces x2" else "")
 		MinigameManager.setPhase(Net.Phase.Board, { Round = round, Rounds = match.Rounds })
+		settleReclaims()
 		refreshSeats()
 		ensureBodies()
 		placeAll()
@@ -1719,6 +1814,8 @@ function BoardGame.play(participants, settings)
 		end
 
 		current.Turn = nil
+		settleReclaims() -- the last turn of the round is over
+		refreshSeats()
   if match:rotationDue() then
    warnRotation()
    if match:finishBoardRound() then animateRotation() end
@@ -1736,9 +1833,16 @@ function BoardGame.play(participants, settings)
 			warn("[BoardGame] Minigame crashed, carrying on with the board:\n" .. tostring(results))
 			MinigameManager.abort("Minigame crashed, back to the board!")
 		end
+		-- Results are in: players who came back during the minigame get their seats now,
+		-- before the next board turn.
+		current.Stage = "Start"
+		settleReclaims()
+		refreshSeats()
 	end
 
 	-- Standings before bonuses -> bonus awards -> final standings.
+	current.Stage = "Standings"
+	settleReclaims()
 	refreshSeats()
 	MinigameManager.setPhase(Net.Phase.Standings, {
 		Stage = "Before",
@@ -1759,7 +1863,16 @@ function BoardGame.play(participants, settings)
 	})
 	task.wait(Config.Match.BonusDuration)
 
+	-- Last chance for anyone who came back during the standings; then the seats are final.
+	settleReclaims()
+	refreshSeats()
+	local claims = current.Claims
+	current.Claims = SeatClaims.new() -- reservations end with the match
+	for _, player in claims:clear() do
+		tellPlayer(player, SeatClaims.Messages.ended)
+	end
 	-- Permanent bank coins for real players (the only thing a match writes to a profile).
+	-- One row per seat, paid once, so a rejoin can't be paid twice.
 	local rows = match:standings()
 	local described = describeRows(rows)
 	for index, row in rows do
@@ -1788,6 +1901,9 @@ function BoardGame.cleanup()
 	releasePieces()
 	if current then
 		current.World:destroy()
+		for _, player in current.Claims:clear() do
+			tellPlayer(player, SeatClaims.Messages.ended)
+		end
 	end
 	current = nil
 	CoinService.resetAll()
@@ -1850,6 +1966,13 @@ MinigameManager.onReady(function(player)
 		if current.StateMessage then
 			MinigameManager.sendTo(player, stateMessage())
 		end
+		-- Still waiting for their seat (the queued message may have arrived before the
+		-- client was listening): say so again.
+		local seat = current.Claims:keyFor(player.UserId)
+		if seat and current.Claims:pendingFor(seat) == player then
+			local timing = SeatClaims.timing(current.Stage, current.Turn == seat)
+			tellPlayer(player, SeatClaims.Messages[if timing == "now" then "later" else timing])
+		end
 	end
 end)
 
@@ -1868,21 +1991,31 @@ local function watchCharacter(player: Player)
 		end
 	end)
 end
-Players.PlayerAdded:Connect(watchCharacter)
+Players.PlayerAdded:Connect(function(player)
+	watchCharacter(player)
+	requestReclaim(player)
+end)
 for _, player in Players:GetPlayers() do
 	watchCharacter(player)
 end
 
-Players.PlayerRemoving:Connect(function(player)
+-- A player left: their seat goes to a bot at the next turn and stays reserved for them.
+-- PlayerRemoving calls this; the multi-client harness calls it to simulate a leave.
+function BoardGame.onPlayerLeft(player: Player)
 	if not current then
 		return
 	end
+	current.Claims:cancel(player) -- left again while waiting for their seat
 	for _, seat in current.Match.Seats do
 		if seat.Participant.Player == player then
 			seat.Participant.Left = true -- the turn loop hands the seat to a bot
+			if Config.SeatReclaim.Enabled then
+				current.Claims:reserve(seat, player.UserId)
+			end
 		end
 	end
-end)
+end
+Players.PlayerRemoving:Connect(BoardGame.onPlayerLeft)
 
 return BoardGame
 ]]></string>
@@ -3437,7 +3570,7 @@ return {
 
 	A seat: { Index, Participant, SpaceId, Items = {item ids}, Shield, Stats }. Seats keep
 	their place in the turn order, inventory and stats when a bot takes over from a player
-	who left (replaceParticipant).
+	who left (replaceParticipant), and when that player comes back (reclaimSeat).
 
 	A turn: beginTurn(seat) -> [useItem(seat, slot, target)] -> rollTurn(seat) -> move(...) -> endTurn().
 ]]
@@ -4545,6 +4678,30 @@ function Match:replaceParticipant(seat, newParticipant)
 	seat.Participant = newParticipant
 end
 
+--[[
+	A returning player takes back the seat a bot kept for them. It is the same seat, so its
+	position, items, stats and turn order carry over untouched; only control (and the wallet)
+	moves. Refuses anything that would seat someone twice or push out a player who is here.
+	Who may claim which seat (by UserId) is checked by SeatClaims before this.
+	Returns ok, the participant who was replaced (or a reason).
+]]
+function Match:reclaimSeat(seat, participant): (boolean, any)
+	if not participant or participant.IsBot or not table.find(self.Seats, seat) then
+		return false, "invalid"
+	end
+	local previous = seat.Participant
+	if not (previous.IsBot or previous.Left) then
+		return false, "occupied"
+	end
+	for _, other in self.Seats do
+		if other ~= seat and other.Participant.Id == participant.Id then
+			return false, "seated"
+		end
+	end
+	self:replaceParticipant(seat, participant)
+	return true, previous
+end
+
 -- Bots ------------------------------------------------------------------------------------------
 
 -- What a bot picks for an Ask request. `skill` is 0..1.
@@ -5020,6 +5177,20 @@ function BotService.getBots(count: number, spawnAt: (number) -> CFrame)
 	return table.clone(bots)
 end
 
+-- Removes one bot for good (a takeover bot whose player came back for their seat). Other
+-- bots, including the ones filling empty seats, are left alone.
+function BotService.release(bot)
+	local index = table.find(bots, bot)
+	if index then
+		table.remove(bots, index)
+	end
+	bot.Participant = nil
+	if bot.Model then
+		bot.Model:Destroy()
+		bot.Model = nil
+	end
+end
+
 -- Respawns any bot whose body died during the round.
 function BotService.reviveAll(spawnAt: (number) -> CFrame)
 	for index, bot in bots do
@@ -5183,7 +5354,14 @@ function CoinService.spend(participant, amount: number): boolean
 end
 
 -- A bot taking over a seat inherits everything the leaver had.
+-- Also used when a returning player takes their seat back from that bot. A returning player
+-- whose seat never changed hands has the same Id, so the wallet already is theirs.
 function CoinService.transfer(from, to)
+	if from.Id == to.Id then
+		wallet(to)
+		mirror(to.Id)
+		return
+	end
 	local entry = wallet(from)
 	local target = wallet(to)
 	target.Coins += entry.Coins
@@ -5815,6 +5993,7 @@ while true do
 		warn("[Party] Match crashed, returning to the waiting room:\n" .. tostring(err))
 		MinigameManager.abort("Match crashed, back to the lobby!")
 		BoardGame.cleanup()
+		MinigameMode.cleanup()
 	end
 end
 ]]></string>
@@ -6689,9 +6868,14 @@ return MinigameManager
 	players get bank coins by placement, same as the board party.
 
 	  MinigameMode.play(participants, settings)   yields for the whole match; returns ranked rows
+	  MinigameMode.reclaim(participants, claims, index, player)   hand a kept seat back (tested)
+
+	A player who leaves keeps their seat (a bot plays it); if they rejoin they get it back
+	after the current minigame (see SeatClaims). New late joiners watch until the next match.
 	  MinigameMode.rank(participants, wallet)     pure ranking (tested)
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -6705,8 +6889,11 @@ local Inventory = require(script.Parent.Inventory)
 local MinigameManager = require(script.Parent.MinigameManager)
 local Participant = require(script.Parent.Participant)
 local Profiles = require(script.Parent.Profiles)
+local SeatClaims = require(script.Parent.SeatClaims)
 
 local MinigameMode = {}
+
+local running = nil -- { Participants, Claims } while a Minigames match is on
 
 local function isAway(participant): boolean
 	return participant.Left or (not participant.IsBot and (not participant.Player or participant.Player.Parent == nil))
@@ -6738,6 +6925,9 @@ local function replaceLeavers(participants)
 			continue
 		end
 		participant.Left = true
+		if running and participant.UserId and Config.SeatReclaim.Enabled then
+			running.Claims:reserve(index, participant.UserId)
+		end
 		local seated = {}
 		local count = 0
 		for _, other in participants do
@@ -6766,13 +6956,80 @@ local function replaceLeavers(participants)
 	end
 end
 
+--[[
+	Hands seat `index` back to `player`, whose UserId it is reserved for. Same slot, so the
+	turn order stays; the wallet moves from the bot back to them. Returns the new participant
+	and the one it replaced, or nil.
+]]
+function MinigameMode.reclaim(participants, claims, index, player)
+	if claims:pendingFor(index) ~= player then
+		return nil
+	end
+	claims:consume(index)
+	local previous = participants[index]
+	if not previous or not (previous.IsBot or isAway(previous)) then
+		return nil
+	end
+	local returning = Participant.fromPlayer(player)
+	for other, participant in participants do
+		if other ~= index and participant.Id == returning.Id then
+			return nil
+		end
+	end
+	CoinService.transfer(previous, returning)
+	participants[index] = returning
+	return returning, previous
+end
+
+-- Between minigames: everyone waiting gets their seat back.
+local function settleReclaims(participants)
+	for index in participants do
+		local player = running.Claims:pendingFor(index)
+		local returning, previous = if player then MinigameMode.reclaim(participants, running.Claims, index, player) else nil
+		if returning then
+			if previous.IsBot and previous.Bot then
+				BotService.release(previous.Bot)
+			end
+			MinigameManager.broadcast({
+				Type = Net.Message.Toast,
+				Text = ("%s is back and takes their seat again"):format(returning.Name),
+			})
+			MinigameManager.sendTo(player, { Type = Net.Message.Toast, Text = SeatClaims.Messages.now })
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function(player)
+	if running and Config.SeatReclaim.Enabled and running.Claims:request(player) then
+		MinigameManager.sendTo(player, { Type = Net.Message.Toast, Text = SeatClaims.Messages.after_minigame })
+	end
+end)
+Players.PlayerRemoving:Connect(function(player)
+	if not running then
+		return
+	end
+	running.Claims:cancel(player)
+	for index, participant in running.Participants do
+		if participant.Player == player and Config.SeatReclaim.Enabled then
+			running.Claims:reserve(index, player.UserId)
+		end
+	end
+end)
+
+-- Forget seat reservations (match crashed); safe any time.
+function MinigameMode.cleanup()
+	running = nil
+end
+
 function MinigameMode.play(participants, settings)
 	CoinService.resetAll()
 	Inventory.resetBots()
 	participants = table.clone(participants)
 	local rounds = settings.Rounds or Config.Match.BoardRounds
+	running = { Participants = participants, Claims = SeatClaims.new() }
 
 	for round = 1, rounds do
+		settleReclaims(participants)
 		replaceLeavers(participants)
 		MinigameManager.showLobby(("Minigame %d of %d"):format(round, rounds), Config.IntermissionDuration)
 		local ok, err = xpcall(MinigameManager.runRound, debug.traceback, participants)
@@ -6782,7 +7039,13 @@ function MinigameMode.play(participants, settings)
 		end
 	end
 
+	settleReclaims(participants)
 	replaceLeavers(participants)
+	-- Seats are final now: reservations end with the match.
+	for _, player in running.Claims:clear() do
+		MinigameManager.sendTo(player, { Type = Net.Message.Toast, Text = SeatClaims.Messages.ended })
+	end
+	running = nil
 	local rows = MinigameMode.rank(participants, CoinService)
 	local described = {}
 	for _, row in rows do
@@ -10218,6 +10481,7 @@ return Template
 	  Name    display name
 	  IsBot   true for bots
 	  Player  the Player (real players only)
+	  UserId  the player's numeric UserId (real players only; seat reservations use it)
 	  Bot     the Bot object from BotService (bots only)
 	  Team    team number for 1v3 / 2v2 layouts, nil in FFA
 	  Left    true once a real player leaves mid-round
@@ -10236,6 +10500,7 @@ function Participant.fromPlayer(player: Player)
 		Name = player.DisplayName,
 		IsBot = false,
 		Player = player,
+		UserId = player.UserId,
 		Bot = nil,
 		Team = nil,
 		Left = false,
@@ -11013,6 +11278,170 @@ return RoundContext
       </Item>
       <Item class="ModuleScript" referent="52">
         <Properties>
+          <string name="Name">SeatClaims</string>
+          <string name="Source"><![CDATA[--[[
+	SeatClaims
+	Seat reservations for players who leave a match and come back. When a real player
+	leaves, their seat is reserved for their numeric UserId until the match ends; a bot keeps
+	playing it meanwhile. If the same UserId rejoins, their claim is queued here and the
+	running mode hands the seat back at a safe moment (see SeatClaims.timing).
+
+	Pure bookkeeping, no networking or world, so it can be tested on its own. A `key` is
+	whatever the mode uses to name a seat: the Match seat table (board) or a seat index
+	(Minigames mode). Every check is by UserId, never by name.
+
+	  local claims = SeatClaims.new()
+	  claims:reserve(key, userId)    -> true if the seat is (now) reserved for that user
+	  claims:keyFor(userId)          -> the seat reserved for them, or nil
+	  claims:reservedFor(key)        -> the UserId a seat is reserved for, or nil
+	  claims:request(player)         -> key?, code: a returning player asks for their seat
+	      codes: "queued" | "bad_user" | "none" | "duplicate"
+	  claims:pendingFor(key)         -> the player waiting to take that seat back, or nil
+	  claims:consume(key)            forget the pending claim on that seat (done or refused)
+	  claims:cancel(player)          that player left again before getting their seat
+	  claims:clear()                 -> players still waiting (match over); forgets everything
+
+	  SeatClaims.timing(stage, isTurnSeat) -> "now" | "after_turn" | "after_minigame" | "later"
+]]
+
+local SeatClaims = {}
+SeatClaims.__index = SeatClaims
+
+-- Board stages where no dice, movement, prompt, event or bridge rotation is in progress for
+-- a seat that isn't taking its turn, so a seat can change hands right away.
+SeatClaims.SAFE_STAGES = { Start = true, Roll = true, Landed = true, OrderDone = true, Standings = true }
+
+-- Text the returning player sees for each timing.
+SeatClaims.Messages = {
+	now = "Welcome back! You're in your seat again.",
+	after_turn = "Rejoining your seat when this turn ends.",
+	after_minigame = "Rejoining your seat after this minigame.",
+	later = "Rejoining your seat in a moment.",
+	ended = "The match ended before you could rejoin your seat.",
+}
+
+-- Live accounts have positive UserIds; Studio's local-server test players have negative ones.
+local function validUserId(id): boolean
+	return type(id) == "number" and id ~= 0 and id % 1 == 0 and id == id
+end
+
+function SeatClaims.new()
+	return setmetatable({
+		ByUser = {}, -- [userId] = key
+		ByKey = {}, -- [key] = userId
+		Pending = {}, -- [userId] = Player waiting to take the seat back
+	}, SeatClaims)
+end
+
+-- Reserving the same seat for the same user again is fine (they left a second time).
+function SeatClaims:reserve(key, userId): boolean
+	if key == nil or not validUserId(userId) then
+		return false
+	end
+	local holder = self.ByKey[key]
+	if holder ~= nil and holder ~= userId then
+		return false -- one user per seat
+	end
+	local held = self.ByUser[userId]
+	if held ~= nil and held ~= key then
+		return false -- one seat per user
+	end
+	self.ByUser[userId] = key
+	self.ByKey[key] = userId
+	return true
+end
+
+function SeatClaims:keyFor(userId)
+	return self.ByUser[userId]
+end
+
+function SeatClaims:reservedFor(key): number?
+	return self.ByKey[key]
+end
+
+function SeatClaims:request(player)
+	local userId = player and player.UserId
+	if not validUserId(userId) then
+		return nil, "bad_user"
+	end
+	local key = self.ByUser[userId]
+	if key == nil then
+		return nil, "none" -- a genuinely new late joiner: they watch until the next match
+	end
+	local queued = self.Pending[userId]
+	if queued ~= nil and queued ~= player and queued.Parent ~= nil then
+		return nil, "duplicate" -- an earlier session of the same user is still waiting
+	end
+	self.Pending[userId] = player
+	return key, "queued"
+end
+
+-- Only a player whose UserId owns the reservation (and who is still in the game) counts.
+function SeatClaims:pendingFor(key)
+	local userId = self.ByKey[key]
+	local player = userId and self.Pending[userId]
+	if not player then
+		return nil
+	end
+	if player.Parent == nil or player.UserId ~= userId then
+		self.Pending[userId] = nil
+		return nil
+	end
+	return player
+end
+
+function SeatClaims:consume(key)
+	local userId = self.ByKey[key]
+	if userId then
+		self.Pending[userId] = nil
+	end
+end
+
+function SeatClaims:cancel(player)
+	local userId = player and player.UserId
+	if userId and self.Pending[userId] == player then
+		self.Pending[userId] = nil
+	end
+end
+
+function SeatClaims:clear()
+	local waiting = {}
+	for _, player in self.Pending do
+		table.insert(waiting, player)
+	end
+	table.clear(self.ByUser)
+	table.clear(self.ByKey)
+	table.clear(self.Pending)
+	return waiting
+end
+
+--[[
+	When a returning player may take their seat back on the board:
+	  during a minigame (or a duel)        after it, before the next board turn
+	  while it's their seat's turn         when that turn ends
+	  any other seat's dice/move/prompt,
+	  board event or bridge rotation       at the next safe stage
+	  otherwise                            now
+]]
+function SeatClaims.timing(stage: string?, isTurnSeat: boolean): string
+	if stage == "Minigame" then
+		return "after_minigame"
+	end
+	if isTurnSeat then
+		return "after_turn"
+	end
+	if stage and SeatClaims.SAFE_STAGES[stage] then
+		return "now"
+	end
+	return "later"
+end
+
+return SeatClaims
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="53">
+        <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
 	WaitingRoom
@@ -11129,19 +11558,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="53">
+  <Item class="StarterPlayer" referent="54">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="54">
+    <Item class="StarterPlayerScripts" referent="55">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="55">
+      <Item class="Folder" referent="56">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -11364,7 +11793,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -11475,7 +11904,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="58">
+        <Item class="LocalScript" referent="59">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -11882,11 +12311,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="59">
+        <Item class="Folder" referent="60">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -12171,7 +12600,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -12427,11 +12856,11 @@ return PoleShimmyClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="62">
+        <Item class="Folder" referent="63">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -12579,7 +13008,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -13212,7 +13641,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -13437,7 +13866,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -13584,7 +14013,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -13840,7 +14269,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -13955,7 +14384,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -14092,7 +14521,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -14210,7 +14639,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -14624,7 +15053,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -14713,7 +15142,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -14884,7 +15313,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -15004,7 +15433,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -15181,18 +15610,18 @@ return VoteScreen
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="76">
+  <Item class="Workspace" referent="77">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="77">
+    <Item class="Model" referent="78">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="78">
+      <Item class="Part" referent="79">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -15212,7 +15641,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="79">
+      <Item class="SpawnLocation" referent="80">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
