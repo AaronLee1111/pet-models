@@ -1,0 +1,18 @@
+{
+  "name": "MultiTest",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": { "PartyShared": { "$path": "../../src/shared" } },
+    "ServerScriptService": {
+      "PartyServer": { "$path": "../../src/server" },
+      "MultiTestServer": { "$path": "MultiTestServer.server.luau" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "PartyClient": { "$path": "../../src/client" },
+        "MultiTestClient": { "$path": "MultiTestClient.client.luau" }
+      }
+    },
+    "Workspace": { "$properties": { "FilteringEnabled": true } }
+  }
+}

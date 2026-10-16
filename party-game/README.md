@@ -267,11 +267,23 @@ needs checking with real latency. `tests/lag` builds a place with a small measur
 2. Quit Studio, set `IncomingReplicationLag` (seconds, each way) in
    `~/Library/Roblox/GlobalSettings_13.xml` (Studio Settings > Network on Windows), reopen
    Studio with the place. Studio only reads the value at startup.
-3. In the command bar: `print(game:GetService("StudioTestService"):ExecuteMultiplayerTestAsync(2))`.
+3. In the command bar: `print(game:GetService("StudioTestService"):ExecuteMultiplayerTestAsync(2, {}))`.
    One server and two clients play a round; the result lists, per client, how smoothly its
    own racer, the other player and a bot were drawn, plus input latency.
 4. Keep Studio in the foreground while it runs: background windows are throttled to ~15 fps.
 5. Set `IncomingReplicationLag` back to 0 afterwards.
+
+## Testing with several players
+
+`tests/multi` builds a place where two real Studio clients play a board match on autopilot
+(the host picks the shortest match; everyone rolls, answers prompts, votes and presses
+minigame actions) alongside two bots:
+
+1. `rojo build tests/multi/multi.project.json -o MultiTest.rbxlx` and open it.
+2. Command bar: `task.spawn(function() print(game:GetService("StudioTestService"):ExecuteMultiplayerTestAsync(2, {})) end)`
+3. Each client reports whether it was seated, rolled for turn order, how many turns and
+   prompts it had, which minigames ran and the final standings; the server adds any errors.
+   Look for the `[MultiTest]` line in Output.
 
 ## Tests and lint
 

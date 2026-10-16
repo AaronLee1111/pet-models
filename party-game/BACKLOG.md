@@ -39,3 +39,15 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - Item buttons are plain text tiles above ROLL. There are no item icons, no description tooltip, and the swap-target prompt is a list of names.
 - The bonus card has no reveal animation, and the three standings stages are the same plain card.
 - Bank coins only show in the waiting-room info line and on the final card.
+
+## Seen during the mechanics foundation pass (2026-10-15)
+
+- Action-button key hints ("[One]") still show on phones when the emulator reports a keyboard.
+- Duel spaces use dice when no Duel minigame is registered. There's only one Duel minigame (Quick Draw) so far.
+- Bullseye's marker moves via server-side part CFrames, so it can look steppy at 20 Hz replication. A client-side sweep would be smoother. Scoring is unaffected (server clock).
+- Reaction and timing minigames (Quick Draw, Bullseye) judge presses on the server clock, so high-ping players are slightly late. Consider latency compensation later.
+- Fork prompt labels are two lines ("Main road / Crown in 9 · -3 +3 GIFT"). They work, but want icons.
+- MAP panel is a text list. A minimap with tile colours and piece markers would be clearer.
+- No board picker until there's a second board (picker appears automatically when `Config.Match.Boards` has more than one).
+- Bank coins still have nothing to spend on (permanent cosmetics shop planned for the polish phase).
+- Leaving and rejoining with a real player wasn't tested with real DataStores (Studio uses memory; the DataStore layer is covered by fake-store unit tests).
