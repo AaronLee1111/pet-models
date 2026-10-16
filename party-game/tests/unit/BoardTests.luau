@@ -1082,6 +1082,26 @@ test("bots: flip a gate that helps, duel the leader, gamble only when behind", f
 	eq(match:botDecision(me, stake), 1, "ahead: small stake")
 end)
 
+-- Route info --------------------------------------------------------------------------------------
+
+test("route info: fork choices show Crown distance, a preview and the toll", function()
+	local match, asked = newMatch({ Path = 1 })
+	local seat = match.Seats[1]
+	match.CollectibleSpace = 20
+	setCoins(match, seat, 10)
+	seat.SpaceId = 5
+	match:move(seat, 1)
+	local request = asked[1]
+	local main, shortcut = request.Data.Info[1], request.Data.Info[2]
+	eq(main.CrownDistance, 1 + match:distance(6, 20), "main road distance")
+	eq(shortcut.CrownDistance, 1 + match:distance(27, 20), "shortcut distance")
+	ok(shortcut.CrownDistance < main.CrownDistance, "shortcut is shorter here")
+	eq(main.Preview, "-3 +3 GIFT", "main road preview")
+	eq(shortcut.Toll, 3, "toll")
+	ok(string.find(request.Options[1], "in " .. main.CrownDistance), "label has the distance")
+	ok(string.find(request.Options[2], "toll"), "label has the toll")
+end)
+
 -- Comeback ----------------------------------------------------------------------------------------
 
 test("comeback: underdog needs the round and the Crown gap", function()

@@ -187,7 +187,7 @@ function BoardWorld:setGates(gates, openState)
 				Parent = self.Folder,
 			})
 			local gui = Instance.new("BillboardGui")
-			gui.Size = UDim2.fromOffset(120, 30)
+			gui.Size = UDim2.fromScale(6, 1.5) -- studs, so it shrinks with distance like the board
 			gui.StudsOffset = Vector3.new(0, 3, 0)
 			gui.Parent = marker
 			local label = Instance.new("TextLabel")

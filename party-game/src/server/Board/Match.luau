@@ -590,6 +590,28 @@ function Match:distance(from: number, to: number): number
 	return row[to] or math.huge
 end
 
+--[[
+	What a fork choice leads to, shown with the choice so players can decide:
+	  CrownDistance  moves to the collectible going this way (math.huge if it can't be reached)
+	  Preview        tile text of the next 3 spaces down this way, e.g. "+3 ? SHOP"
+	  Toll           coins the route costs
+]]
+function Match:routeInfo(_seat, firstId: number, toll: number)
+	local shorts = {}
+	local id = firstId
+	for _ = 1, 3 do
+		local space = self.Board:get(id)
+		local short = SpaceTypes[space.Type].Short
+		table.insert(shorts, if short == "" then "·" else short)
+		id = self:nextOptions(id)[1]
+	end
+	return {
+		CrownDistance = 1 + self:distance(firstId, self.CollectibleSpace),
+		Preview = table.concat(shorts, " "),
+		Toll = toll,
+	}
+end
+
 -- One space forward. At a fork the mover chooses; a tolled route is only offered to (and
 -- charged to) someone who can pay.
 function Match:step(seat): number
@@ -611,9 +633,15 @@ function Match:step(seat): number
 		local labels, info = {}, {}
 		for i, id in options do
 			local index = table.find(all, id)
-			labels[i] = if space.Paths and index then space.Paths[index] else ("Space %d"):format(id)
 			local gate = self:gateOn(here, id)
-			info[i] = { Toll = gate and gate.Toll or 0 }
+			info[i] = self:routeInfo(seat, id, if gate then gate.Toll or 0 else 0)
+			local name = if space.Paths and index then space.Paths[index] else ("Space %d"):format(id)
+			labels[i] = ("%s\n%s %s · %s"):format(
+				name,
+				self.CollectibleName,
+				if info[i].CrownDistance == math.huge then "far" else ("in %d"):format(info[i].CrownDistance),
+				info[i].Preview
+			)
 		end
 		nextId = options[self:ask(seat, {
 			Kind = "Path",

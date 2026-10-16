@@ -26,6 +26,8 @@ BoardView.__index = BoardView
 local ROLL_ACTION = "PartyBoardRoll"
 local CAMERA_BIND = "PartyBoardCamera"
 local CAMERA_OFFSET = Vector3.new(0, 42, 34)
+local MAP_OFFSET = Vector3.new(0, 115, 60) -- MAP view: high enough to see the whole board
+local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
 
@@ -159,6 +161,42 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.PromptId = nil
 	self.PromptEndsAt = nil
 
+	-- MAP: inspect the whole board, the Crown, gates, traps and everyone's items
+	self.MapButton = make("TextButton", {
+		Name = "BoardMap",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 24, 1, -24),
+		Size = UDim2.fromOffset(130, 56),
+		BackgroundColor3 = Theme.Colors.Card,
+		Font = Theme.TitleFont,
+		TextScaled = true,
+		TextColor3 = Theme.Colors.Accent,
+		Text = "MAP",
+		Visible = false,
+		Parent = screen,
+	}, { Theme.corner(14), Theme.stroke(Theme.Colors.Accent, 2), Theme.padding(8) })
+	self.MapButton.Activated:Connect(function()
+		self:toggleMap()
+	end)
+	self.MapPanel = make("ScrollingFrame", {
+		Name = "BoardMapPanel",
+		Position = UDim2.new(0, 12, 0, 150),
+		Size = UDim2.fromOffset(330, 260),
+		BackgroundColor3 = Theme.Colors.Card,
+		BackgroundTransparency = 0.1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		Visible = false,
+		Parent = screen,
+	}, {
+		Theme.corner(14),
+		Theme.padding(10),
+		make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	self.MapOpen = false
+
 	self.State = nil
 	self.Layout = nil
 	self.Focus = nil
@@ -189,6 +227,9 @@ function BoardView:setState(message)
 	self.State = message
 	if not self.Visible then
 		return
+	end
+	if self.MapOpen then
+		self:refreshMap()
 	end
 
 	-- Header
@@ -323,6 +364,92 @@ function BoardView:roll()
 	end
 end
 
+-- Map ---------------------------------------------------------------------------------------------
+
+local function mapLine(self, order: number, text: string, color: Color3?, swatch: Color3?)
+	local row = make("Frame", {
+		LayoutOrder = order,
+		Size = UDim2.new(1, 0, 0, 24),
+		BackgroundTransparency = 1,
+		Parent = self.MapPanel,
+	})
+	if swatch then
+		make("Frame", {
+			Size = UDim2.fromOffset(18, 18),
+			Position = UDim2.fromOffset(0, 3),
+			BackgroundColor3 = swatch,
+			Parent = row,
+		}, { Theme.corner(4) })
+	end
+	Theme.label({
+		Position = UDim2.fromOffset(if swatch then 26 else 0, 0),
+		Size = UDim2.new(1, if swatch then -26 else 0, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = color or Theme.Colors.Text,
+		Text = text,
+		Parent = row,
+	}, 20)
+end
+
+-- Rebuilds the MAP panel from the latest state + layout.
+function BoardView:refreshMap()
+	for _, child in self.MapPanel:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	local state, layout = self.State, self.Layout
+	if not state then
+		return
+	end
+	local order = 0
+	local function line(text, color, swatch)
+		order += 1
+		mapLine(self, order, text, color, swatch)
+	end
+	line("MAP", Theme.Colors.Accent)
+	line(("%s: space %s · %d coins"):format(state.CollectibleName or "Crown", tostring(state.CollectibleSpace), state.CollectiblePrice or 0), Theme.Colors.Accent)
+	for _, gate in state.Gates or {} do
+		line(("Gate %s: %s%s"):format(gate.Id, if gate.Open then "open" else "CLOSED", if gate.Open and gate.Toll > 0 then (" · toll %d"):format(gate.Toll) else ""))
+	end
+	for _, trap in state.Traps or {} do
+		line(("Trap on space %d (%s)"):format(trap.SpaceId, trap.Owner), Theme.Colors.Hot)
+	end
+	line("Players", Theme.Colors.Accent)
+	for _, seat in state.Seats do
+		local names = {}
+		for _, item in seat.Items or {} do
+			table.insert(names, item.Name)
+		end
+		line(("%s: %d %s, %d coins"):format(if seat.Id == myId then "You" else seat.Name, seat.Collectibles, state.CollectiblePlural or "Crowns", seat.Coins))
+		line("   " .. (if #names > 0 then table.concat(names, ", ") else "no items") .. (if seat.Shield then " · shield up" else ""), Theme.Colors.Muted)
+	end
+	if layout and layout.Legend then
+		line("Spaces", Theme.Colors.Accent)
+		local legend = table.clone(layout.Legend)
+		table.sort(legend, function(a, b)
+			return a.Name < b.Name
+		end)
+		for _, entry in legend do
+			line(entry.Name .. (if entry.Short ~= "" then (" (%s)"):format(entry.Short) else ""), nil, entry.Color)
+		end
+	end
+end
+
+function BoardView:toggleMap(open: boolean?)
+	if open == nil then
+		open = not self.MapOpen
+	end
+	self.MapOpen = open and self.Visible
+	self.MapPanel.Visible = self.MapOpen
+	self.Standings.Visible = self.Visible and not self.MapOpen and self.Header.Visible
+	self.MapButton.Text = if self.MapOpen then "CLOSE" else "MAP"
+	self.Focus = nil
+	if self.MapOpen then
+		self:refreshMap()
+	end
+end
+
 -- Prompt ------------------------------------------------------------------------------------------
 
 function BoardView:showPrompt(message)
@@ -392,17 +519,24 @@ function BoardView:show()
 	self.Visible = true
 	self.Header.Visible = true
 	self.Standings.Visible = true
+	self.MapButton.Visible = true
+	ContextActionService:BindAction(MAP_ACTION, function(_, inputState)
+		if inputState == Enum.UserInputState.Begin then
+			self:toggleMap()
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.KeyCode.M, Enum.KeyCode.ButtonY)
 	self.Focus = nil
 	local camera = Workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Scriptable
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
-		local goal = turnFocus(self)
+		local goal = if self.MapOpen then self.Centre else turnFocus(self)
 		if not goal then
 			return
 		end
 		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
 		camera.CameraType = Enum.CameraType.Scriptable
-		camera.CFrame = CFrame.lookAt(self.Focus + CAMERA_OFFSET, self.Focus)
+		camera.CFrame = CFrame.lookAt(self.Focus + (if self.MapOpen then MAP_OFFSET else CAMERA_OFFSET), self.Focus)
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -423,6 +557,9 @@ function BoardView:hide()
 	self.Visible = false
 	self.Header.Visible = false
 	self.Standings.Visible = false
+	self.MapButton.Visible = false
+	self:toggleMap(false)
+	ContextActionService:UnbindAction(MAP_ACTION)
 	self.RollButton.Visible = false
 	self.ItemBar.Visible = false
 	self.ItemKey = nil
@@ -442,6 +579,9 @@ end
 function BoardView:hidePanels()
 	self.Header.Visible = false
 	self.Standings.Visible = false
+	self.MapButton.Visible = false
+	self:toggleMap(false)
+	ContextActionService:UnbindAction(MAP_ACTION)
 	self.RollButton.Visible = false
 	self.ItemBar.Visible = false
 	self.ItemKey = nil

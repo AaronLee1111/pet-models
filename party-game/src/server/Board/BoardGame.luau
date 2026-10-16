@@ -127,6 +127,20 @@ local function stateMessage()
 		CollectiblePlural = Config.Collectible.Plural,
 		CollectiblePrice = match.CollectiblePrice,
 		Frenzy = match:isFrenzy(),
+		Gates = (function()
+			local gates = {}
+			for _, gate in match.Board.Gates or {} do
+				table.insert(gates, { Id = gate.Id, Open = match.GateOpen[gate.Id], Toll = gate.Toll or 0, From = gate.From, To = gate.To })
+			end
+			return gates
+		end)(),
+		Traps = (function()
+			local traps = {}
+			for id, trap in match.Traps do
+				table.insert(traps, { SpaceId = id, Owner = trap.Owner.Participant.Name })
+			end
+			return traps
+		end)(),
 		Seats = seats,
 	}
 end

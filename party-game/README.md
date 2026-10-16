@@ -135,6 +135,12 @@ After the last round: standings before bonuses -> bonus card -> final standings.
 gained on the board or in minigames, never reduced by losses or spending) and `SpacesMoved`
 (warps and swaps don't count). A bonus whose best value is 0 goes to nobody.
 
+### Route info and the MAP
+Every fork choice shows, per route, how many moves it is to the Crown, the next three tiles and
+any toll (`Match:routeInfo`). The MAP button (bottom-left, or M / gamepad Y) raises the camera
+over the whole board and lists the Crown's space and price, gates, traps, every player's coins,
+Crowns and items, and the space legend.
+
 ### Comeback rules (`Config.Comeback`)
 From round 2: the last-place seat(s) get 5 catch-up coins at the start of each round. A seat
 2+ Crowns behind the leader is an underdog: Crowns cost it 5 less (never below 10) and its
