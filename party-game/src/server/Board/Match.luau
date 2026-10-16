@@ -9,6 +9,8 @@
 	      Wallet     CoinService-like: get, add, spend, getCollectibles, addCollectibles, transfer
 	      Inventory  Inventory-like: grant, equip, getEquipped, unowned
 	      Rng        Random
+	      Duel       optional function(seatA, seatB) -> winner seat or nil, played: plays a duel
+	                 minigame (BoardGame); without it, or if none was played, duels use dice
 	      Ask        function(seat, request) -> option index; may yield. request =
 	                 { Kind = "Path"|"Collectible"|"Shop"|"Target", Prompt, Options = {labels}, Default, Data }
 	    }
@@ -755,12 +757,25 @@ function Match:runDuel(seat): string
 		Default = 1,
 		Data = { Stakes = stakes, Rival = rival },
 	})]
-	local mine, theirs = self:roll(), self:roll()
-	local result = ("%s %d vs %s %d"):format(name, mine, rival.Participant.Name, theirs)
-	if mine == theirs then
-		return result .. ": a draw!"
+	local winner, loser, result
+	local duelWinner, played = nil, false
+	if self.Deps.Duel then
+		duelWinner, played = self.Deps.Duel(seat, rival)
 	end
-	local winner, loser = if mine > theirs then seat else rival, if mine > theirs then rival else seat
+	if played then
+		result = ("%s vs %s"):format(name, rival.Participant.Name)
+		if duelWinner ~= seat and duelWinner ~= rival then
+			return result .. ": a draw!"
+		end
+		winner, loser = duelWinner, if duelWinner == seat then rival else seat
+	else
+		local mine, theirs = self:roll(), self:roll()
+		result = ("%s %d vs %s %d"):format(name, mine, rival.Participant.Name, theirs)
+		if mine == theirs then
+			return result .. ": a draw!"
+		end
+		winner, loser = if mine > theirs then seat else rival, if mine > theirs then rival else seat
+	end
 	local _, taken = self.Deps.Wallet.add(loser.Participant, -stake)
 	self:changeCoins(winner, -taken)
 	return ("%s: %s wins %d coins"):format(result, winner.Participant.Name, -taken)

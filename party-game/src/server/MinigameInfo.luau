@@ -52,8 +52,8 @@ function MinigameInfo.validate(definition): string?
 	if type(info.Duration) ~= "number" or info.Duration <= 0 then
 		return "Info.Duration must be a positive number"
 	end
-	if not table.find({ "FFA", "1v3", "2v2" }, info.Layout) then
-		return "Info.Layout must be FFA, 1v3 or 2v2"
+	if not table.find({ "FFA", "1v3", "2v2", "Duel" }, info.Layout) then
+		return "Info.Layout must be FFA, 1v3, 2v2 or Duel"
 	end
 	local camera = info.Camera
 	if camera ~= nil and (type(camera) ~= "table" or not Config.CameraModes[camera.Mode]) then
@@ -99,6 +99,7 @@ function MinigameInfo.normalize(id: string, info)
 			Gamepad = action.Gamepad, -- optional Enum.KeyCode name, e.g. "ButtonX"
 			Hold = action.Hold == true, -- also sends "<Action>Stop" when released
 			Side = action.Side, -- "Left" puts the on-screen button in the bottom-left corner
+			Color = if typeof(action.Color) == "Color3" then action.Color else nil, -- on-screen button colour
 		})
 	end
 	local controls = {

@@ -68,7 +68,7 @@ function ActionBar:show(actions, send: (string) -> (), low: boolean?)
 			Name = "Action_" .. action.Action,
 			LayoutOrder = index,
 			Size = UDim2.fromOffset(BUTTON_SIZE, BUTTON_SIZE),
-			BackgroundColor3 = Theme.Colors.Hot,
+			BackgroundColor3 = action.Color or Theme.Colors.Hot,
 			BackgroundTransparency = 0.1,
 			Text = "",
 			AutoButtonColor = true,

@@ -16,6 +16,7 @@ Config.Layouts = {
 	FFA = "FFA", -- everyone for themselves
 	OneVsThree = "1v3", -- one solo player vs a team of three
 	TwoVsTwo = "2v2", -- two teams of two
+	Duel = "Duel", -- exactly two players (board Duel spaces); never in the normal vote
 }
 
 -- Phase timings (seconds) ----------------------------------------------------

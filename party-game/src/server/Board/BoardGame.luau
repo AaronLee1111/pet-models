@@ -327,6 +327,33 @@ local function ask(seat, request)
 	return answer
 end
 
+-- Duel space: play a Duel minigame between the two seats, then bring everyone back to the board.
+-- Returns winner seat (nil = draw) and whether a duel was played at all.
+local function playDuel(seatA, seatB)
+	if #MinigameManager.duelMinigames() == 0 then
+		return nil, false
+	end
+	local match = current.Match
+	local previousStage = current.Stage
+	current.Stage = "Minigame"
+	publish()
+	task.wait(1)
+	local ok, winner = xpcall(MinigameManager.runDuel, debug.traceback, seatA.Participant, seatB.Participant)
+	if not ok then
+		warn("[BoardGame] Duel crashed, using dice instead:\n" .. tostring(winner))
+		MinigameManager.abort("Duel crashed, rolling dice instead")
+	end
+	MinigameManager.setPhase(Net.Phase.Board, { Round = match.Round, Rounds = match.Rounds })
+	current.Stage = previousStage
+	ensureBodies()
+	placeAll()
+	publish()
+	if not ok then
+		return nil, false
+	end
+	return if winner then match:seatOf(winner) else nil, true
+end
+
 -- Turns -------------------------------------------------------------------------------------------
 
 -- Turn order: everyone rolls once before round 1; ties roll again among themselves.
@@ -554,6 +581,7 @@ function BoardGame.play(participants, settings)
 		Inventory = Inventory,
 		Rng = rng,
 		Ask = ask,
+		Duel = playDuel,
 	})
 	local match = current.Match
 	for _, seat in match.Seats do

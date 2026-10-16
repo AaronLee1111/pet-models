@@ -221,8 +221,19 @@ local function everyoneVoted(vote, participants): boolean
 	return true
 end
 
+-- Minigames for the normal 4-player vote (Duel minigames are only played from Duel spaces).
+local function votePool()
+	local pool = {}
+	for _, entry in registry do
+		if entry.Definition.Info.Layout ~= "Duel" then
+			table.insert(pool, entry)
+		end
+	end
+	return pool
+end
+
 local function runVote(participants)
-	local pool = table.clone(registry)
+	local pool = votePool()
 	for i = #pool, 2, -1 do -- shuffle
 		local j = rng:NextInteger(1, i)
 		pool[i], pool[j] = pool[j], pool[i]
@@ -232,7 +243,7 @@ local function runVote(participants)
 	for i = 1, math.min(Config.VoteChoices, #pool) do
 		table.insert(choices, describeMinigame(pool[i]))
 	end
-	if #choices < Config.VoteChoices and #registry > 1 then
+	if #choices < Config.VoteChoices and #pool > 1 then
 		table.insert(choices, table.clone(Config.RandomChoice))
 	end
 
@@ -274,7 +285,8 @@ local function runVote(participants)
 	local winner = choices[best[rng:NextInteger(1, #best)]]
 
 	if winner.Id == Config.RandomChoice.Id then
-		return registry[rng:NextInteger(1, #registry)]
+		local all = votePool()
+		return all[rng:NextInteger(1, #all)]
 	end
 	return findEntry(winner.Id)
 end
@@ -353,6 +365,10 @@ local function submitAction(participant, action: string)
 	if not active.Actions[action] or active.Round:IsEliminated(participant) or not participant:IsAlive() then
 		return
 	end
+	-- Only people playing this round (a duel has two; everyone else just watches).
+	if not table.find(active.Round.Participants, participant) then
+		return
+	end
 	safeCall(active.Instance, "OnInput", participant, action)
 end
 
@@ -387,7 +403,8 @@ end
 	Returns the normalized ranked results and the coin rows shown on the results screen.
 	BoardGame calls this after every full turn cycle.
 ]]
-function MinigameManager.runRound(participants)
+function MinigameManager.runRound(participants, options)
+	options = options or {}
 	assert(#registry > 0, "No minigames loaded")
 	state.Participants = participants
 	state.ByPlayer = {}
@@ -397,8 +414,8 @@ function MinigameManager.runRound(participants)
 		end
 	end
 
-	-- 1. Vote
-	local entry = runVote(participants)
+	-- 1. Vote (skipped when the caller already picked, e.g. a duel)
+	local entry = options.Entry or runVote(participants)
 	local definition = entry.Definition
 	local info = definition.Info
 	local described = describeMinigame(entry)
@@ -489,7 +506,12 @@ function MinigameManager.runRound(participants)
 		EndsAt = round.EndsAt,
 	})
 	BotService.setBrain(function(bot, dt)
-		if instance.UpdateBot and not round.Ended and not round:IsEliminated(bot.Participant) then
+		if
+			instance.UpdateBot
+			and not round.Ended
+			and table.find(participants, bot.Participant)
+			and not round:IsEliminated(bot.Participant)
+		then
 			instance:UpdateBot(bot, dt)
 		end
 	end)
@@ -516,7 +538,17 @@ function MinigameManager.runRound(participants)
 	finishRound()
 
 	-- 7. Results screen
-	local rows = awardCoins(results)
+	local rows = if options.NoCoins then (function()
+		local list = {}
+		for _, result in results do
+			local row = result.Participant:Describe()
+			row.Placement = result.Placement
+			row.Coins = 0
+			row.Total = CoinService.get(result.Participant)
+			table.insert(list, row)
+		end
+		return list
+	end)() else awardCoins(results)
 	setPhase(Net.Phase.Results, {
 		Minigame = described,
 		Results = rows,
@@ -524,6 +556,36 @@ function MinigameManager.runRound(participants)
 	})
 	task.wait(Config.ResultsDuration)
 	return results, rows
+end
+
+-- Duel minigames (Info.Layout = "Duel") registered, for Duel spaces.
+function MinigameManager.duelMinigames()
+	local list = {}
+	for _, entry in registry do
+		if entry.Definition.Info.Layout == "Duel" then
+			table.insert(list, entry)
+		end
+	end
+	return list
+end
+
+--[[
+	Plays a random Duel minigame between two participants (everyone else watches) without
+	placement coins. Returns the winning participant, or nil for a draw / no duel minigames.
+]]
+function MinigameManager.runDuel(a, b)
+	local duels = MinigameManager.duelMinigames()
+	if #duels == 0 then
+		return nil
+	end
+	local results = MinigameManager.runRound({ a, b }, { Entry = duels[rng:NextInteger(1, #duels)], NoCoins = true })
+	local first = {}
+	for _, result in results do
+		if result.Placement == 1 then
+			table.insert(first, result.Participant)
+		end
+	end
+	return if #first == 1 then first[1] else nil
 end
 
 -- Emergency stop if anything in runRound threw. Leaves the server ready for the next round.
