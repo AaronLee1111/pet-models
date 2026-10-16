@@ -204,6 +204,31 @@ local function placeAll()
 	end
 end
 
+--[[
+	Safe recovery: while the board is up, any piece that has been knocked off its space,
+	fallen off the board or lost its body is put back (bots get a new body first). Runs once
+	a second; Match positions are the truth, the world just follows them.
+]]
+local function recoverPieces()
+	if not current or current.Stage == "Minigame" or current.Stage == "Finished" then
+		return 0
+	end
+	local fixed = 0
+	for _, seat in current.Match.Seats do
+		local participant = seat.Participant
+		if participant.IsBot and not participant:IsAlive() then
+			BotService.reviveAll(Arena.lobbySpot)
+		end
+		local root = participant:GetRoot()
+		if participant:IsAlive() and root and current.World:isMisplaced(root.Position, seat.SpaceId) then
+			placeSeat(seat)
+			fixed += 1
+		end
+	end
+	return fixed
+end
+BoardGame.recoverPieces = recoverPieces
+
 local function ensureBodies()
 	BotService.reviveAll(Arena.lobbySpot)
 	for _, seat in current.Match.Seats do
@@ -538,6 +563,13 @@ function BoardGame.play(participants, settings)
 		end
 	end
 	current.LayoutMessage = layoutMessage(board)
+	local watched = current
+	task.spawn(function()
+		while current == watched do
+			pcall(recoverPieces)
+			task.wait(1)
+		end
+	end)
 	MinigameManager.broadcast(current.LayoutMessage)
 
 	for round = 1, match.Rounds do

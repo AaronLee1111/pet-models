@@ -159,6 +159,17 @@ function BoardWorld:spaceCFrame(id: number, slot: number?, facingId: number?): C
 	return CFrame.new(position)
 end
 
+-- True if a piece at `position` is clearly not standing on space `id` (knocked off, fell
+-- through, flung away). Small wobbles inside the tile don't count.
+function BoardWorld:isMisplaced(position: Vector3, id: number): boolean
+	local top = self.Tops[id]
+	if not top then
+		return false
+	end
+	local flat = Vector3.new(position.X - top.X, 0, position.Z - top.Z)
+	return flat.Magnitude > TILE_SIZE or position.Y < top.Y - 2 or position.Y > top.Y + 20
+end
+
 function BoardWorld:setCollectible(id: number?, label: string)
 	local top = id and self.Tops[id]
 	self.Marker.Transparency = if top then 0 else 1

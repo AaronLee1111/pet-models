@@ -20,6 +20,7 @@ local BoardLayout = require(Server.Board.BoardLayout)
 local Events = require(Server.Board.Events)
 local BotBrain = require(Server.Board.BotBrain)
 local Items = require(Server.Board.Items)
+local BoardWorld = require(Server.Board.BoardWorld)
 local Match = require(Server.Board.Match)
 local SpaceTypes = require(Server.Board.SpaceTypes)
 local Classic = require(Server.Board.Boards.Classic)
@@ -1114,6 +1115,26 @@ test("gate key flips the gate from anywhere; bots use it only when it helps", fu
 	ok(BotBrain.itemScore(match, me, "GateKey") > 0, "worth reopening")
 	match:toggleGates()
 	eq((BotBrain.itemScore(match, me, "GateKey")), 0, "open already: leave it")
+end)
+
+-- Recovery ----------------------------------------------------------------------------------------
+
+test("recovery: a piece off its tile, under it or flung up is misplaced; standing is fine", function()
+	local board = BoardLayout.load(Classic, SpaceTypes)
+	local world = BoardWorld.build(board, SpaceTypes, Vector3.new(0, 500, 0))
+	local ok1, err = pcall(function()
+		local stand = world:spaceCFrame(5, 3).Position
+		eq(world:isMisplaced(stand, 5), false, "standing on its slot")
+		eq(world:isMisplaced(stand + Vector3.new(2, 0, 0), 5), false, "small wobble")
+		eq(world:isMisplaced(world:spaceCFrame(6).Position, 5), true, "on the next tile")
+		eq(world:isMisplaced(stand - Vector3.new(0, 10, 0), 5), true, "fell through")
+		eq(world:isMisplaced(stand + Vector3.new(0, 40, 0), 5), true, "flung up")
+		eq(world:isMisplaced(stand + Vector3.new(0, 0, 30), 5), true, "knocked off the board")
+	end)
+	world:destroy()
+	if not ok1 then
+		error(err, 0)
+	end
 end)
 
 -- Route info --------------------------------------------------------------------------------------
