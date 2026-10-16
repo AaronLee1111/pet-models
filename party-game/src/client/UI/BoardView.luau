@@ -407,7 +407,7 @@ function BoardView:refreshMap()
 		order += 1
 		mapLine(self, order, text, color, swatch)
 	end
-	line("MAP", Theme.Colors.Accent)
+	line("MAP" .. (if layout and layout.Name then " · " .. layout.Name else ""), Theme.Colors.Accent)
 	line(("%s: space %s · %d coins"):format(state.CollectibleName or "Crown", tostring(state.CollectibleSpace), state.CollectiblePrice or 0), Theme.Colors.Accent)
 	for _, gate in state.Gates or {} do
 		line(("Gate %s: %s%s"):format(gate.Id, if gate.Open then "open" else "CLOSED", if gate.Open and gate.Toll > 0 then (" · toll %d"):format(gate.Toll) else ""))

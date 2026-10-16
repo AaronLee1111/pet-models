@@ -22,11 +22,14 @@
 	   1  2  3  4  5  6  7  8  9     5 is a fork: main road (6) or shortcut (27)
 
 	Signature mechanic: the Shortcut toll gate. It saves 8 spaces for 3 coins, but a Switch
-	space (17) can close it for everyone, or open it again.
+	space (17) can close it for everyone, or open it again. Board item: the Gate Key flips
+	the gate from anywhere.
 ]]
 
 return {
-	Name = "Classic",
+	Name = "Classic", -- id: used by Config.Match.Boards and items' Boards lists
+	DisplayName = "Sunny Loop", -- shown to players
+	-- Beginner board: one loop, one toll shortcut, a single Switch, few Chaos spaces.
 	Start = 1,
 	CrownSpaces = { 7, 10, 13, 15, 20, 23, 26 },
 	Gates = {

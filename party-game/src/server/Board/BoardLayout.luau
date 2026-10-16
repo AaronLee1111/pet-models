@@ -146,6 +146,7 @@ function BoardLayout.load(data, spaceTypes)
 	end
 	local board = setmetatable({
 		Name = data.Name,
+		DisplayName = data.DisplayName or data.Name,
 		Start = data.Start,
 		CrownSpaces = table.clone(data.CrownSpaces),
 		Gates = data.Gates or {},

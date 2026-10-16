@@ -43,6 +43,7 @@ BotBrain.ItemValue = {
 	Pickpocket = 2,
 	CrownHeist = 4,
 	Snare = 1,
+	GateKey = 2,
 }
 -- Items an opponent could hurt you with; a bot that sees one in an opponent's (public)
 -- inventory values its own Coin Shield more.
@@ -233,6 +234,13 @@ function BotBrain.itemScore(match, seat, id: string)
 		return 0
 	elseif id == "Snare" then
 		return if match.Traps[seat.SpaceId] then 0 else 1
+	elseif id == "GateKey" then
+		-- Same reasoning as a Switch space: flip only if it brings the Crown closer.
+		local now = distance
+		match:toggleGates()
+		local flipped = crownDistance(match, seat.SpaceId)
+		match:toggleGates()
+		return if flipped + 3 <= now then 3 * urgency else 0
 	elseif id == "SwapTicket" then
 		local target, gain = BotBrain.bestSwap(match, seat)
 		if target and gain >= 6 and coins >= price - 5 then

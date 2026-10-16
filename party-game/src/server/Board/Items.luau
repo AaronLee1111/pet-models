@@ -136,6 +136,21 @@ return {
 		end,
 	},
 	{
+		Id = "GateKey",
+		Name = "Gate Key",
+		Description = "Open or close the Sunny Loop shortcut from anywhere",
+		Price = 4,
+		Weight = 2,
+		Boards = { "Classic" },
+		Use = function(match, seat)
+			if #(match.Board.Gates or {}) == 0 then
+				return nil, "this board has no gates"
+			end
+			local open = match:toggleGates()
+			return ("%s used a Gate Key: the shortcut is %s"):format(seat.Participant.Name, if open > 0 then "open" else "closed")
+		end,
+	},
+	{
 		Id = "Snare",
 		Name = "Snare Trap",
 		Description = "Trap your space: the next opponent to land there pays you 5 coins",

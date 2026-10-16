@@ -1082,6 +1082,40 @@ test("bots: flip a gate that helps, duel the leader, gamble only when behind", f
 	eq(match:botDecision(me, stake), 1, "ahead: small stake")
 end)
 
+-- Beginner board ----------------------------------------------------------------------------------
+
+test("Sunny Loop: has every space kind, a gate, and its own item", function()
+	local match = newMatch()
+	local kinds = {}
+	for _, id in match.Board.Order do
+		kinds[match.Board:get(id).Type] = true
+	end
+	for key in SpaceTypes do
+		ok(kinds[key], "board is missing a " .. key .. " space")
+	end
+	eq(#match.Board.Gates, 1, "one gate")
+	eq(match.Board.DisplayName, "Sunny Loop", "display name")
+	local pool = {}
+	for _, item in match:itemPool() do
+		pool[item.Id] = true
+	end
+	ok(pool.GateKey, "Gate Key appears on this board")
+end)
+
+test("gate key flips the gate from anywhere; bots use it only when it helps", function()
+	local match = newMatch()
+	local me = match.Seats[1]
+	me.SpaceId = 3
+	match:giveItem(me, "GateKey")
+	match:beginTurn(me)
+	eq((match:useItem(me, 1)), true, "used")
+	eq(match.GateOpen.Shortcut, false, "closed it")
+	match.CollectibleSpace = 20 -- closer through the (now closed) shortcut
+	ok(BotBrain.itemScore(match, me, "GateKey") > 0, "worth reopening")
+	match:toggleGates()
+	eq((BotBrain.itemScore(match, me, "GateKey")), 0, "open already: leave it")
+end)
+
 -- Route info --------------------------------------------------------------------------------------
 
 test("route info: fork choices show Crown distance, a preview and the toll", function()

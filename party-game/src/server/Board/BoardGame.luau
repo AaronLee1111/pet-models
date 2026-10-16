@@ -68,7 +68,7 @@ local function layoutMessage(board)
 	for key, spaceType in SpaceTypes do
 		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
 	end
-	return { Type = Net.Message.BoardLayout, Name = board.Name, Spaces = spaces, Legend = legend }
+	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend }
 end
 
 local function describeItems(seat)
