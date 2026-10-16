@@ -32,6 +32,8 @@ local Events = require(script.Parent.Events)
 local Items = require(script.Parent.Items)
 local SpaceTypes = require(script.Parent.SpaceTypes)
 
+local Bridge = require(script.Parent.RotatingBridge)
+
 local Match = {}
 Match.__index = Match
 
@@ -71,6 +73,10 @@ function Match.new(board, participants, settings, deps)
 		Rounds = settings.Rounds or Config.Match.BoardRounds,
 		Difficulty = settings.Difficulty or Config.Match.BotDifficulty,
 		Round = 0,
+		Orientation = 0,
+		BridgeRevision = 0,
+		LastRotationRound = 0,
+		DialReadyRound = 1,
 		Seats = {},
 		Order = {}, -- seat order until decideTurnOrder runs
 		CollectibleSpace = nil,
@@ -258,6 +264,9 @@ function Match:useItem(seat, slot, target, choice): (boolean, string)
 	if not item then
 		return false, "unknown item"
 	end
+	if item.Boards and not table.find(item.Boards, self.Board.Name) then
+		return false, "item belongs to another board"
+	end
 	if item.Target == "Opponent" then
 		if type(target) ~= "table" or target == seat or not table.find(self.Seats, target) then
 			return false, "pick an opponent"
@@ -399,7 +408,7 @@ function Match:relocateCollectible()
 		occupied[seat.SpaceId] = true
 	end
 	for _, id in self.Board.CrownSpaces do
-		if id ~= self.CollectibleSpace then
+		if id ~= self.CollectibleSpace and (not self.Board.Bridge or Bridge.connected(self.Board:get(id).Zone,self.Orientation)) then
 			table.insert(candidates, id)
 			if not occupied[id] then
 				table.insert(free, id)
@@ -548,6 +557,9 @@ end
 
 -- Where a piece can go from `id` right now: closed gates are left out (never all of them).
 function Match:nextOptions(id: number): { number }
+	if self.Board.Bridge then
+		return Bridge.options(self.Board, id, self.Orientation)
+	end
 	local all = self.Board:nextOptions(id)
 	local open = {}
 	for _, nextId in all do
@@ -571,6 +583,129 @@ function Match:toggleGates(): number
 end
 
 -- Fewest moves from -> to with the gates as they are now (math.huge if unreachable).
+function Match:bridgeState()
+ return Bridge.snapshot(self)
+end
+
+function Match:canUseMoonDial()
+ return self.Board.Bridge ~= nil and self.Round >= self.DialReadyRound
+end
+
+-- Configured Crown spaces inside zones that are open under `orientation` (never the bridge),
+-- excluding the Crown's current space. Pure: bots use it to predict a relocation.
+function Match:crownCandidates(orientation: number): { number }
+ local list = {}
+ for _, id in self.Board.CrownSpaces do
+  local zone = self.Board:get(id).Zone
+  if zone ~= 0 and id ~= self.CollectibleSpace and Bridge.connected(zone, orientation) then
+   table.insert(list, id)
+  end
+ end
+ return list
+end
+
+-- The seat leading the standings, or nil when the top is tied.
+local function leaderOf(match)
+ local rows = match:standings()
+ if rows[2] and rows[2].Placement == rows[1].Placement then return nil end
+ return match:seatOf(rows[1].Participant)
+end
+
+--[[
+	Where the Crown goes when a rotation to `orientation` would strand it. Each filter only
+	applies if it leaves at least one option:
+	  1. configured Crown spaces in zones open after the rotation
+	  2. prefer zones that this rotation newly opens
+	  3. skip spaces / zones used by the last few relocations (Bridge.CrownMemory)
+	  4. skip spaces within Bridge.CrownLeaderBuffer moves of the leading player
+	then pick one with the match's Rng. Bridge spaces 34 / 35 only as the fallback when no
+	zone space qualifies. Records the choice for the repeat check.
+]]
+function Match:chooseCrownSpace(orientation: number): number
+ local rule = self.Board.Bridge
+ local memory = rule.CrownMemory or 2
+ local buffer = rule.CrownLeaderBuffer or 4
+ local pool = self:crownCandidates(orientation)
+ if #pool == 0 then
+  return if self.CollectibleSpace == 34 then 35 else 34
+ end
+ local function narrow(keep)
+  local kept = {}
+  for _, id in pool do if keep(id) then table.insert(kept, id) end end
+  if #kept > 0 then pool = kept end
+ end
+ narrow(function(id) return not Bridge.connected(self.Board:get(id).Zone, self.Orientation) end)
+ self.CrownHistory = self.CrownHistory or {}
+ local function avoidRecent()
+  narrow(function(id)
+   for i = math.max(1, #self.CrownHistory - memory + 1), #self.CrownHistory do
+    local past = self.CrownHistory[i]
+    if past == id or self.Board:get(past).Zone == self.Board:get(id).Zone then return false end
+   end
+   return true
+  end)
+ end
+ local leader = leaderOf(self)
+ local function nearLeader(id)
+  return leader ~= nil and Bridge.distance(self.Board, leader.SpaceId, id, orientation) <= buffer
+ end
+ local function avoidLeader()
+  narrow(function(id) return not nearLeader(id) end)
+ end
+ -- If the last relocation already landed near this same leader, keeping it away from them
+ -- now matters more than variety; otherwise variety first.
+ if leader and self.CrownNearLeader == leader then
+  avoidLeader()
+  avoidRecent()
+ else
+  avoidRecent()
+  avoidLeader()
+ end
+ local pick = pool[self.Rng:NextInteger(1, #pool)]
+ table.insert(self.CrownHistory, pick)
+ self.CrownNearLeader = if nearLeader(pick) then leader else nil
+ return pick
+end
+
+-- Commit orientation, route cache and Crown together without yielding. Only the turn
+-- driver invokes automatic rotation, after all four turns have ended (no seam crossing).
+function Match:rotateBridge()
+ if not self.Board.Bridge or (self.Turn and self.Turn.Stage ~= "PreRoll") then return false end
+ local nextOrientation = 1-self.Orientation
+ local crown = self.CollectibleSpace
+ if not crown or not Bridge.connected(self.Board:get(crown).Zone,nextOrientation) then
+  crown = self:chooseCrownSpace(nextOrientation)
+ end
+ self.Orientation = nextOrientation
+ self.CollectibleSpace = crown
+ self.DistanceCache = nil
+ self.BridgeRevision += 1
+ return true
+end
+
+function Match:rotationDue()
+ return self.Board.Bridge ~= nil and self.Turn == nil
+  and self.Round >= self.LastRotationRound+self.Board.Bridge.EveryRounds
+end
+
+function Match:finishBoardRound()
+ if not self:rotationDue() then return false end
+ if not self:rotateBridge() then return false end
+ self.LastRotationRound = self.Round
+ return true
+end
+
+function Match:useMoonDial()
+ if not self:canUseMoonDial() then return nil,"Moon Dial is cooling down until round " .. self.DialReadyRound end
+ if not self:rotateBridge() then return nil,"bridge is busy" end
+ self.DialReadyRound = self.Round+self.Board.Bridge.DialCooldownRounds*self.Board.Bridge.EveryRounds
+ return "Moon Dial: bridge rotated to " .. self:bridgeState().Alignment .. "; automatic rotation still happens this round"
+end
+
+function Match:distanceAt(from, to, orientation)
+ return Bridge.distance(self.Board,from,to,orientation)
+end
+
 function Match:distance(from: number, to: number): number
 	self.DistanceCache = self.DistanceCache or {}
 	local row = self.DistanceCache[from]
@@ -609,7 +744,7 @@ function Match:routeInfo(_seat, firstId: number, toll: number)
 	end
 	return {
 		CrownDistance = 1 + self:distance(firstId, self.CollectibleSpace),
-		Preview = table.concat(shorts, " "),
+		Preview = table.concat(shorts, " ") .. (if self.Board.Bridge and not Bridge.connected(self.Board:get(firstId).Zone, self.Orientation) then " · bridge CLOSED; local loop" else ""),
 		Toll = toll,
 	}
 end
@@ -627,6 +762,15 @@ function Match:step(seat): number
 	end
 	if #options == 0 then
 		options = self:nextOptions(here)
+	end
+	-- No turning around mid-move: on two-way stretches (the festival bridge) the space you
+	-- just came from isn't offered, unless it's the only way on.
+	if seat.MoveFrom and #options > 1 then
+		local back = table.find(options, seat.MoveFrom)
+		if back then
+			options = table.clone(options)
+			table.remove(options, back)
+		end
 	end
 	local nextId = options[1]
 	if #options > 1 then
@@ -657,6 +801,7 @@ function Match:step(seat): number
 	if gate and gate.Toll and gate.Toll > 0 then
 		self.Deps.Wallet.spend(seat.Participant, gate.Toll)
 	end
+	seat.MoveFrom = here
 	seat.SpaceId = nextId
 	seat.Stats.SpacesMoved += 1
 	return nextId
@@ -669,6 +814,7 @@ end
 	Returns the feed line for the landing (may be nil).
 ]]
 function Match:move(seat, steps: number, onHop, onNotice)
+	seat.MoveFrom = nil -- a new move may set off in either direction
 	for remaining = steps - 1, 0, -1 do
 		local id = self:step(seat)
 		if onHop then

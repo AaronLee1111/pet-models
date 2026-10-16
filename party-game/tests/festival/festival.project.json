@@ -1,0 +1,34 @@
+{
+  "name": "FestivalSmoke",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "PartyShared": {
+        "$path": "../../src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "PartyServer": {
+        "$path": "../../src/server"
+      },
+      "FestivalTestServer": {
+        "$path": "FestivalTestServer.server.luau"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "PartyClient": {
+          "$path": "../../src/client"
+        },
+        "FestivalTestClient": {
+          "$path": "FestivalTestClient.client.luau"
+        }
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true
+      }
+    }
+  }
+}

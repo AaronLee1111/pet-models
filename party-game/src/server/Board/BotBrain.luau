@@ -16,6 +16,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
+local Bridge = require(script.Parent.RotatingBridge)
 
 local BotBrain = {}
 
@@ -44,6 +45,7 @@ BotBrain.ItemValue = {
 	CrownHeist = 4,
 	Snare = 1,
 	GateKey = 2,
+	MoonDial = 4,
 }
 -- Items an opponent could hurt you with; a bot that sees one in an opponent's (public)
 -- inventory values its own Coin Shield more.
@@ -82,7 +84,7 @@ function BotBrain.branchScore(match, seat, startId: number, profile): number
 	for step = 0, profile.LookAhead - 1 do
 		local space = match.Board:get(id)
 		score += (BotBrain.SpaceValue[space.Type] or 0) * 0.85 ^ step
-		id = space.Next[1]
+		id = match:nextOptions(id)[1]
 	end
 	-- The Crown matters most when you can (nearly) pay for it.
 	local coins, price = match:coinsOf(seat), match:collectiblePriceFor(seat)
@@ -180,7 +182,7 @@ function BotBrain.bestFace(match, seat): (number, number)
 	local bestFace, bestValue = 1, -math.huge
 	local id = seat.SpaceId
 	for face = 1, Config.Board.DieSides do
-		id = match.Board:get(id).Next[1]
+		id = match:nextOptions(id)[1]
 		local value = BotBrain.SpaceValue[match.Board:get(id).Type] or 0
 		if value > bestValue then
 			bestFace, bestValue = face, value
@@ -200,7 +202,35 @@ function BotBrain.itemScore(match, seat, id: string)
 	local late = isLastRound(match)
 	local urgency = if isBehind(match, seat) then 1.3 else 1
 
-	if id == "DoubleDice" or id == "TripleDice" then
+	if id == "MoonDial" then
+  if not match:canUseMoonDial() then return 0 end
+  local nextOrientation=1-match.Orientation
+  local crown=match.CollectibleSpace
+  local zone=match.Board:get(crown).Zone
+  local after
+  if zone~=0 and not Bridge.connected(zone,nextOrientation) then
+   -- The Crown would move to one of the newly reachable zone spaces; a bot can't know which,
+   -- so it plans on the average distance to them (or the bridge fallback).
+   local candidates=match:crownCandidates(nextOrientation)
+   if #candidates==0 then candidates={34} end
+   local total=0
+   for _,id in candidates do total+=math.min(match:distanceAt(seat.SpaceId,id,nextOrientation),40) end
+   after=total/#candidates
+  else
+   after=match:distanceAt(seat.SpaceId,crown,nextOrientation)
+  end
+  local before=math.min(distance,40)
+  local score=if canBuy and after+3<before then (before-after)*0.3 else 0
+  for _,other in match:opponentsOf(seat) do
+   if match:collectiblesOf(other)>match:collectiblesOf(seat) and match:coinsOf(other)>=price
+    and crownDistance(match,other.SpaceId)<=6 and match:distanceAt(other.SpaceId,crown,nextOrientation)>12 then score+=2 end
+  end
+  -- Saving the item is preferable when the next automatic rotation already opens
+  -- our zone and we cannot reach its dock on this roll.
+  local dock=(math.max(1,match.Board:get(seat.SpaceId).Zone)-1)*8+1
+  if distance==math.huge and match:distance(seat.SpaceId,dock)>Config.Board.DieSides then score=0 end
+  return score
+ elseif id == "DoubleDice" or id == "TripleDice" then
 		local dice = if id == "TripleDice" then 3 else 2
 		if canBuy and distance > Config.Board.DieSides and distance <= Config.Board.DieSides * dice then
 			return (3 + dice) * urgency
