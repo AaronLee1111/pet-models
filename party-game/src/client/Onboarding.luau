@@ -181,7 +181,11 @@ function Onboarding.decide(context)
 				Recommended = best,
 				Title = InputHint.verb(mode) .. " A PATH",
 				Note = if route
-					then ("★ %d is closest to the Crown (%d moves). Any path is fine."):format(best, route.CrownDistance)
+					then ("★ %d is closest to the Crown (%d move%s). Any path is fine."):format(
+						best,
+						route.CrownDistance,
+						if route.CrownDistance == 1 then "" else "s"
+					)
 					else "Any path is fine. The numbers match the board.",
 				Sides = { "Above" },
 			}
@@ -269,10 +273,9 @@ function Onboarding:setFlags(flags)
 			self.ServerFlags[flag] = true
 		end
 	end
-	-- A dev reset wipes the server's flags; forget what this session marked too.
-	if next(self.ServerFlags) == nil then
-		self.LocalDone = {}
-	end
+	-- The server is the authority: what this client marked on a press only bridges the gap
+	-- until the server answers (and a dev reset wipes it too).
+	self.LocalDone = {}
 end
 
 function Onboarding:flags()
@@ -290,7 +293,9 @@ end
 -- Main: a minigame's play phase started / ended for this client.
 function Onboarding:setMinigame(info)
 	self.Minigame = info
-	if info and info.Controls and #(info.Controls.Actions or {}) == 0 and info.Controls.Move and not self.MoveHintUsed then
+	-- Only spend the once-per-session move hint on a round you actually play.
+	local movementOnly = info and info.Controls and #(info.Controls.Actions or {}) == 0 and info.Controls.Move
+	if movementOnly and info.Participant and not self.MoveHintUsed then
 		self.MoveHintUsed = true -- once per session
 		self.MoveHintUntil = os.clock() + Onboarding.MOVE_HINT_SECONDS
 	end
@@ -313,7 +318,11 @@ function Onboarding:noteInput(payload)
 			end
 		end
 	elseif kind == "UseItem" then
-		self.LocalDone.SawItem = true
+		-- Not marked here: the server may refuse the item (wrong target, cancelled). Its flag
+		-- arrives when the item is really used; until then just drop the pointer.
+		if step and step.Key == "SawItem" then
+			self.Guide:clear("SawItem")
+		end
 	elseif kind == "Choice" then
 		local prompt = self.Deps.Board.PromptMessage
 		if prompt and prompt.Kind == "Path" then
@@ -477,11 +486,11 @@ function Onboarding:showBadges(step)
 				CanTouch = false,
 				Transparency = 1,
 				Size = Vector3.new(0.2, 0.2, 0.2),
-				Position = position + Vector3.new(0, 6, 0),
+				Position = position + Vector3.new(0, 2.5, 0), -- on the tile, below the YOU tag's height
 				Parent = Workspace.CurrentCamera, -- local only
 			})
 			local billboard = make("BillboardGui", {
-				Size = UDim2.fromOffset(56, 44),
+				Size = UDim2.fromOffset(42, 32),
 				AlwaysOnTop = false,
 				LightInfluence = 0,
 				Parent = anchor,
@@ -528,6 +537,8 @@ function Onboarding:update()
 				Sides = step.Sides,
 				Extra = extra,
 				Round = step.Round,
+				-- Board prompt choices: keep the hand and label above the prompt card.
+				Outside = if step.Target and step.Target.Kind == "Option" then self.Deps.Board.Prompt else nil,
 			})
 		end
 	end

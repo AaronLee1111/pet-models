@@ -19,6 +19,8 @@
 	  * Clears itself when the target is destroyed; hides while the target is hidden.
 	  * Extra = more buttons that get a thinner ring (e.g. every route at a fork).
 	  * Round = true: a circular ring for round images with no UICorner (the thumbstick).
+	  * Outside = a panel the target sits in (the board prompt): the hand and label go above
+	    that whole panel instead of over its title text.
 	  * Reduced motion (if Roblox reports it): no bounce and no pulse.
 ]]
 
@@ -358,7 +360,16 @@ function GuidePointer:update()
 	local bubbleSize = Vector2.new(bubbleWidth, math.max(self.Bubble.AbsoluteSize.Y, 30 * scale))
 	local hand = math.floor(40 * scale)
 
-	local side = chooseSide(self.Options.Sides or DEFAULT_SIDES, ringPosition, ringSize, bounds, bubbleSize, hand)
+	-- Above a panel: measure "above" from the panel's top edge, not the button's.
+	local aboveTop = ringPosition.Y
+	local outside = self.Options.Outside
+	if outside and GuidePointer.isOnScreen(outside) then
+		local panelTop = (outside.AbsolutePosition - self.Root.AbsolutePosition).Y
+		aboveTop = math.min(aboveTop, panelTop)
+	end
+	local placeRect = Vector2.new(ringPosition.X, aboveTop)
+	local placeSize = Vector2.new(ringSize.X, ringSize.Y + (ringPosition.Y - aboveTop))
+	local side = chooseSide(self.Options.Sides or DEFAULT_SIDES, placeRect, placeSize, bounds, bubbleSize, hand)
 	local bounce = BOUNCE * scale * wave
 	local centre = ringPosition + ringSize / 2
 	local handPosition, bubblePosition
@@ -369,7 +380,7 @@ function GuidePointer:update()
 		handPosition = Vector2.new(ringPosition.X + ringSize.X + GAP + bounce, centre.Y - hand / 2)
 		bubblePosition = Vector2.new(handPosition.X + hand + GAP, centre.Y - bubbleSize.Y / 2)
 	elseif side == "Above" then
-		handPosition = Vector2.new(centre.X - hand / 2, ringPosition.Y - GAP - hand - bounce)
+		handPosition = Vector2.new(centre.X - hand / 2, aboveTop - GAP - hand - bounce)
 		bubblePosition = Vector2.new(centre.X - bubbleSize.X / 2, handPosition.Y - GAP - bubbleSize.Y)
 	else
 		handPosition = Vector2.new(centre.X - hand / 2, ringPosition.Y + ringSize.Y + GAP + bounce)

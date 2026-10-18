@@ -292,6 +292,31 @@ test("onboarding: only one step at a time, and none while a card is up or after 
 	eq(Onboarding.decide(context({})), nil, "phase changed, nothing on screen: nothing")
 end)
 
+test("onboarding: pressing an item only waits for the server; a refused item keeps the step", function()
+	local cleared = {}
+	local controller = Onboarding.new({
+		Guide = { clear = function(_, key) table.insert(cleared, key) end },
+		Board = { State = { Stage = "Roll" }, ItemBar = { Visible = true } },
+	})
+	controller:setFlags({ RolledForOrder = true })
+	controller.Step = { Key = "SawItem", Flag = "SawItem" }
+	controller:noteInput({ Kind = "UseItem", Slot = 1 })
+	eq(cleared[1], "SawItem", "pointer dropped on press")
+	eq(controller:isDone("SawItem"), false, "not done until the server says the item was used")
+	controller:setFlags({ RolledForOrder = true, SawItem = true }) -- the server's word
+	eq(controller:isDone("SawItem"), true, "done once the server accepted it")
+end)
+
+test("onboarding: spectating a movement-only round doesn't use up the move hint", function()
+	local controller = Onboarding.new({ Guide = { clear = function() end } })
+	local walk = { Actions = {}, Move = true, Jump = true }
+	controller:setMinigame({ Playing = true, Participant = false, Controls = walk })
+	eq(controller.MoveHintUsed, false, "spectator: hint kept for later")
+	controller:setMinigame({ Playing = true, Participant = true, Controls = walk })
+	eq(controller.MoveHintUsed, true, "player: hint shown now")
+	ok(controller.MoveHintUntil > os.clock(), "for a few seconds")
+end)
+
 -- Pointer ------------------------------------------------------------------------------------
 
 local GuidePointer = require(Client.UI.GuidePointer)
