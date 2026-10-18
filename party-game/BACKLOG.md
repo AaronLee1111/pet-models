@@ -74,3 +74,9 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - Characters are small from the overhead camera, especially on phones (the platform is fully framed). The dash cue is an outline and the impact flash a short white fill; a clearer dash trail would read better in the visual pass.
 - The round timer reads 0:00 during sudden death (the status line says "Sudden death!"); there's no countdown for those extra seconds.
 - Hit detection uses the server's view of player positions, so on a laggy connection a lunge can connect or miss slightly differently from what the attacker saw. Lag compensation is a later improvement.
+
+## Waiting room (2026-10-18)
+
+- ~~SHOP button off-screen and unreachable on short screens.~~ Fixed: the card is now a header (title, countdown, SHOP), a scrolling settings body and a fixed START / waiting column, sized to the screen. Measured: iPhone 17 Pro landscape card y 67–368, x 119–629 (between thumbstick and jump), SHOP 107×44; iPhone 7 card y 66–361, SHOP 89×44; 1301×616 window card y 257–603, SHOP 115×44, no scroll; HD 1080 card y 660–1064, SHOP 135×52, no scroll. Bounds are checked in `tests/unit/ModeTests` ("waiting-room card fits every landscape screen").
+- The settings scrollbar track shows even when nothing needs scrolling (desktop). Cosmetic only.
+- Phone taps can't be injected under Studio's device emulator, so the phone check was by measured bounds, mouse-wheel scrolling and screenshots; real SHOP / START / BUY / wear clicks were done in the plain desktop window. The non-host view (waiting note instead of START) was checked by logic only.
