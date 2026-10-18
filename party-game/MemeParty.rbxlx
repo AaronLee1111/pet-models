@@ -177,6 +177,23 @@ Config.Profile = {
 	BankCoinsByPlacement = { 30, 20, 12, 8 }, -- permanent coins for real players by final placement
 }
 
+-- Guided first actions (client pointer + YOU marker). Each flag is set once, in the player's
+-- profile, after they really do that thing; until then the pointer shows them where to tap.
+Config.Tutorial = {
+	Flags = {
+		"StartedMatch", -- host pressed START in the waiting room
+		"RolledForOrder", -- rolled for turn order
+		"RolledBoardTurn", -- rolled on a normal board turn
+		"SawItem", -- used an item, or rolled while holding one
+		"ChoseFork", -- picked a route at a fork
+		"UsedMinigameAction", -- pressed a minigame action button
+		"SawCrownPurchase", -- answered a Crown purchase offer
+	},
+	-- Development only: in Studio, wipe a player's flags when they join (fresh tutorial
+	-- every playtest even with a saved profile). Never applies on live servers.
+	ResetInStudio = false,
+}
+
 -- World layout -----------------------------------------------------------------
 
 -- Arenas are built here, far away from the lobby so they never overlap it.
@@ -709,6 +726,7 @@ Net.Message = {
 	Prompt = "Prompt", -- to one player: pick an option (fork, buy, shop); Prompt = nil closes it
 	Inventory = "Inventory", -- to one player: owned cosmetics, what's equipped, bank coins
 	ShopResult = "ShopResult", -- to one player: { Ok, ItemId, Text } after a lobby shop purchase
+	Tutorial = "Tutorial", -- to one player: { Flags = { [flag] = true } } guided first actions done
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -724,6 +742,9 @@ Net.Input = {
 	BuyCosmetic = "BuyCosmetic", -- payload.ItemId: buy a cosmetic with bank coins (price is server-side)
 	Setting = "Setting", -- waiting room, host only: payload.Key ("Rounds" | "Difficulty"), payload.Value
 	StartMatch = "StartMatch", -- waiting room, host only: skip the countdown
+	ActionUsed = "ActionUsed", -- a minigame action that the minigame's client code sent itself
+	-- (tutorial only; the server checks you're playing). Studio-only: "ResetTutorial".
+	ResetTutorial = "ResetTutorial",
 }
 
 local function getFolder(): Instance
@@ -1074,6 +1095,7 @@ local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
 local Profiles = require(script.Parent.Parent.Profiles)
 local SeatClaims = require(script.Parent.Parent.SeatClaims)
+local Tutorial = require(script.Parent.Parent.Tutorial)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -1459,6 +1481,26 @@ BoardGame.requestReclaim = requestReclaim
 
 -- Choices -----------------------------------------------------------------------------------------
 
+-- What a fork's buttons lead to, for the client's first-fork guidance: the first space of
+-- each route and its distance to the Crown (nil when it can't be reached).
+local function describeRoutes(request)
+	local data = request.Kind == "Path" and request.Data
+	if not data or not data.Spaces then
+		return nil
+	end
+	local routes = {}
+	for i, spaceId in data.Spaces do
+		local info = data.Info and data.Info[i]
+		local distance = info and info.CrownDistance
+		table.insert(routes, {
+			SpaceId = spaceId,
+			CrownDistance = if distance and distance ~= math.huge then distance else nil,
+			Toll = info and info.Toll or 0,
+		})
+	end
+	return routes
+end
+
 -- Match's Ask: players get a prompt on screen, bots decide on their own.
 local function ask(seat, request)
 	local participant = seat.Participant
@@ -1478,6 +1520,7 @@ local function ask(seat, request)
 			Id = nextPromptId,
 			Player = participant.Player,
 			Count = #request.Options,
+			Kind = request.Kind,
 			Answer = nil,
 		}
 		current.Prompt = prompt
@@ -1489,6 +1532,9 @@ local function ask(seat, request)
 			Options = request.Options,
 			Default = request.Default,
 			EndsAt = endsAt,
+			Kind = request.Kind, -- "Path" | "Collectible" | "Shop" | ... (guidance only)
+			Routes = describeRoutes(request),
+			Price = request.Price,
 		})
 		while prompt.Answer == nil and now() < endsAt and not isAway(participant) do
 			task.wait(0.1)
@@ -1642,6 +1688,7 @@ local function useItem(seat, slot, target, choice)
  if match.BridgeRevision~=revision then animateRotation() end
  current.Stage=previousStage
 	if used then
+		Tutorial.complete(seat.Participant, "SawItem")
 		feed(text)
 		placeAll() -- swaps and warps move pieces
 	elseif seat.Participant.Player and seat.Participant.Player.Parent then
@@ -1930,8 +1977,15 @@ function BoardGame.handleInput(player: Player, payload): boolean
 	if kind == Net.Input.Roll then
 		if current and current.RollWaiting == player then
 			current.RollRequested = true
+			Tutorial.complete(player, "RolledBoardTurn")
+			-- Rolled while holding an item they could have used: they've seen the item choice.
+			local turn = current.Match.Turn
+			if current.Turn and #current.Turn.Items > 0 and turn and not turn.ItemUsed then
+				Tutorial.complete(player, "SawItem")
+			end
 		elseif current and current.OrderWaiting and current.OrderWaiting[player] == false then
 			current.OrderWaiting[player] = true
+			Tutorial.complete(player, "RolledForOrder")
 		end
 		return true
 	elseif kind == Net.Input.UseItem then
@@ -1953,6 +2007,11 @@ function BoardGame.handleInput(player: Player, payload): boolean
 			and index <= prompt.Count
 		then
 			prompt.Answer = index
+			if prompt.Kind == "Path" then
+				Tutorial.complete(player, "ChoseFork")
+			elseif prompt.Kind == "Collectible" then
+				Tutorial.complete(player, "SawCrownPurchase")
+			end
 		end
 		return true
 	end
@@ -4079,6 +4138,7 @@ function Match:offerCollectible(seat): string
 		),
 		Options = { "Buy", "Not now" },
 		Default = 1,
+		Price = price,
 	})
 	if pick == 1 and self:buyCollectible(seat) then
 		return ("%s bought a %s!"):format(name, self.CollectibleName)
@@ -5909,6 +5969,7 @@ return Inventory
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Arena = require(script.Parent.Arena)
@@ -5921,6 +5982,7 @@ local MinigameManager = require(script.Parent.MinigameManager)
 local MinigameMode = require(script.Parent.MinigameMode)
 local Participant = require(script.Parent.Participant)
 local Profiles = require(script.Parent.Profiles)
+local Tutorial = require(script.Parent.Tutorial)
 local WaitingRoom = require(script.Parent.WaitingRoom)
 
 Arena.ensureLobby()
@@ -5929,8 +5991,23 @@ Profiles.start() -- before cosmetics: a profile's cosmetics attach to Inventory 
 CosmeticService.start(MinigameManager.sendTo, Profiles.bankCoins)
 CosmeticShop.start(Profiles.store, Inventory, MinigameManager.sendTo, CosmeticService.sendInventory)
 MinigameManager.onReady(CosmeticService.sendInventory)
+Tutorial.configure(Profiles.get, MinigameManager.sendTo)
+Profiles.onLoaded(Tutorial.onProfileLoaded)
+MinigameManager.onReady(Tutorial.send)
+-- Studio only (testing the guided first actions again): the client command bar can send
+-- { Kind = "ResetTutorial" }. Live servers ignore it; there is no player-facing button.
+local function handleDevInput(player, payload): boolean
+	if payload.Kind ~= "ResetTutorial" then
+		return false
+	end
+	if RunService:IsStudio() then
+		Tutorial.reset(player)
+	end
+	return true
+end
 MinigameManager.setInputHandler(function(player, payload)
-	return WaitingRoom.handleInput(player, payload)
+	return handleDevInput(player, payload)
+		or WaitingRoom.handleInput(player, payload)
 		or BoardGame.handleInput(player, payload)
 		or CosmeticService.handleInput(player, payload)
 		or CosmeticShop.handleInput(player, payload)
@@ -6163,6 +6240,7 @@ local CoinService = require(script.Parent.CoinService)
 local MinigameInfo = require(script.Parent.MinigameInfo)
 local ResultsUtil = require(script.Parent.ResultsUtil)
 local RoundContext = require(script.Parent.RoundContext)
+local Tutorial = require(script.Parent.Tutorial)
 
 local MinigameManager = {}
 
@@ -6499,20 +6577,26 @@ local function onParticipantLost(participant, reason: string)
 	safeCall(active.Instance, "OnParticipantLost", participant, reason)
 end
 
--- Same entry point for real-player inputs (via the remote) and bot inputs (bot:Input).
-local function submitAction(participant, action: string)
+-- True if `participant` may press `action` right now (playing, alive, in this round).
+local function canAct(participant, action: string): boolean
 	local active = state.Active
 	if not active or state.PhaseMessage.Phase ~= Net.Phase.Playing or active.Round.Ended then
-		return
+		return false
 	end
 	if not active.Actions[action] or active.Round:IsEliminated(participant) or not participant:IsAlive() then
-		return
+		return false
 	end
 	-- Only people playing this round (a duel has two; everyone else just watches).
-	if not table.find(active.Round.Participants, participant) then
+	return table.find(active.Round.Participants, participant) ~= nil
+end
+
+-- Same entry point for real-player inputs (via the remote) and bot inputs (bot:Input).
+local function submitAction(participant, action: string)
+	if not canAct(participant, action) then
 		return
 	end
-	safeCall(active.Instance, "OnInput", participant, action)
+	Tutorial.complete(participant, "UsedMinigameAction") -- bots are ignored
+	safeCall(state.Active.Instance, "OnInput", participant, action)
 end
 
 local function awardCoins(results)
@@ -6852,6 +6936,12 @@ function MinigameManager.init()
 			castVote(participant, payload.Choice)
 		elseif kind == Net.Input.Action and type(payload.Action) == "string" then
 			submitAction(participant, payload.Action)
+		elseif kind == Net.Input.ActionUsed and type(payload.Action) == "string" then
+			-- The minigame's own client code sent this action (e.g. Bumper Bout's dash); it only
+			-- counts for the tutorial, and only when that action could really be pressed now.
+			if canAct(participant, payload.Action) then
+				Tutorial.complete(participant, "UsedMinigameAction")
+			end
 		end
 	end)
 
@@ -12191,6 +12281,7 @@ return Participant
 	  Profiles.get(player) -> profile?    { Coins, Owned, Equipped } (see ProfileStore)
 	  Profiles.addBankCoins(player, n)    permanent coins
 	  Profiles.bankCoins(player) -> number
+	  Profiles.onLoaded(fn)               fn(player, profile) after a profile has loaded
 
 	Backend: Config.Profile.Backend ("Auto" = DataStore live, Memory in Studio). Saves happen
 	on leave (and release the session lock), every Config.Profile.AutosaveInterval, and at
@@ -12246,6 +12337,12 @@ else
 end
 Profiles.store = ProfileStore.new(backend)
 
+local loadedHooks: { (Player, any) -> () } = {}
+
+function Profiles.onLoaded(fn: (Player, any) -> ())
+	table.insert(loadedHooks, fn)
+end
+
 local function keyOf(player: Player): string
 	return "player_" .. player.UserId
 end
@@ -12272,6 +12369,9 @@ local function onJoin(player: Player)
 	end
 	-- Inventory edits these tables directly, so cosmetics bought in a match are saved too.
 	Inventory.attach(key, profile.Owned, profile.Equipped)
+	for _, hook in loadedHooks do
+		task.spawn(hook, player, profile)
+	end
 end
 
 function Profiles.start()
@@ -12476,6 +12576,7 @@ return MemoryBackend
 	  Coins      permanent "bank" coins (NOT match coins: those live in CoinService and reset)
 	  Owned      { [cosmeticId] = true }
 	  Equipped   { [slot] = cosmeticId }
+	  Tutorial   { [flag] = true }  guided first actions already done (Config.Tutorial.Flags)
 
 	Match coins, Crowns, board items and stats are never written here.
 
@@ -12486,13 +12587,18 @@ return MemoryBackend
 	session locking).
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Config"))
+
 local ProfileStore = {}
 ProfileStore.__index = ProfileStore
 
-ProfileStore.Version = 1
+-- 1: Coins, Owned, Equipped.  2: + Tutorial flags.
+ProfileStore.Version = 2
 
 function ProfileStore.template()
-	return { Version = ProfileStore.Version, Coins = 0, Owned = {}, Equipped = {} }
+	return { Version = ProfileStore.Version, Coins = 0, Owned = {}, Equipped = {}, Tutorial = {} }
 end
 
 local function deepCopy(value)
@@ -12530,7 +12636,14 @@ function ProfileStore.reconcile(data)
 			end
 		end
 	end
-	-- Future: if (data.Version or 0) < 2 then migrate ... end
+	-- Version 1 saves have no Tutorial table: they start with every flag unset (the template).
+	if type(data.Tutorial) == "table" then
+		for _, flag in Config.Tutorial.Flags do
+			if data.Tutorial[flag] == true then
+				profile.Tutorial[flag] = true
+			end
+		end
+	end
 	return profile
 end
 
@@ -13006,6 +13119,149 @@ return SeatClaims
       </Item>
       <Item class="ModuleScript" referent="55">
         <Properties>
+          <string name="Name">Tutorial</string>
+          <string name="Source"><![CDATA[--[[
+	Tutorial
+	Which guided first actions a real player has already done (Config.Tutorial.Flags). The
+	client points at the right button while a flag is unset; the server sets a flag only when
+	the matching action really went through (a roll was accepted, a route was picked...).
+
+	  Tutorial.configure(getProfile, send)   Main wires in Profiles.get and MinigameManager.sendTo
+	  Tutorial.complete(who, flag) -> bool   who = Player or Participant; bots are ignored
+	  Tutorial.flags(player) -> { [flag] = true }
+	  Tutorial.send(player)                  push the flags to that player's client
+	  Tutorial.reset(player)                 development only (see README)
+
+	Flags live in the profile (ProfileStore.Tutorial) and are saved with it. A player whose
+	profile isn't available (still loading, or DataStores down) keeps flags for this session
+	only, so the guidance still works and never repeats within the session.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("PartyShared")
+local Config = require(Shared:WaitForChild("Config"))
+local Net = require(Shared:WaitForChild("Net"))
+
+local Tutorial = {}
+
+local known = {}
+for _, flag in Config.Tutorial.Flags do
+	known[flag] = true
+end
+
+local getProfile: (Player) -> any = function()
+	return nil
+end
+local sendTo: ((Player, any) -> ())? = nil
+local session: { [number]: { [string]: boolean } } = {} -- by UserId, when there's no profile
+
+local function realPlayer(value): boolean
+	return typeof(value) == "Instance" and value:IsA("Player")
+end
+local isPlayer = realPlayer
+
+-- playerCheck: unit tests pass one that accepts their stand-in players.
+function Tutorial.configure(profileGetter: (Player) -> any, sender: ((Player, any) -> ())?, playerCheck: ((any) -> boolean)?)
+	getProfile = profileGetter
+	sendTo = sender
+	isPlayer = playerCheck or realPlayer
+end
+
+-- A Player, or a Participant that is a real player (bots and seats taken over by bots: nil).
+local function playerOf(who): Player?
+	if isPlayer(who) then
+		return who
+	end
+	if type(who) == "table" and not who.IsBot and isPlayer(who.Player) then
+		return who.Player
+	end
+	return nil
+end
+
+-- The table the flags are kept in: the profile's, or this session's.
+local function store(player: Player): { [string]: boolean }
+	local profile = getProfile(player)
+	if type(profile) == "table" then
+		if type(profile.Tutorial) ~= "table" then
+			profile.Tutorial = {}
+		end
+		-- Anything done before the profile finished loading counts too.
+		local early = session[player.UserId]
+		if early then
+			for flag in early do
+				profile.Tutorial[flag] = true
+			end
+			session[player.UserId] = nil
+		end
+		return profile.Tutorial
+	end
+	session[player.UserId] = session[player.UserId] or {}
+	return session[player.UserId]
+end
+
+function Tutorial.flags(player: Player): { [string]: boolean }
+	local flags = {}
+	for flag, done in store(player) do
+		if known[flag] and done == true then
+			flags[flag] = true
+		end
+	end
+	return flags
+end
+
+function Tutorial.send(player: Player)
+	if sendTo and player.Parent ~= nil then
+		sendTo(player, { Type = Net.Message.Tutorial, Flags = Tutorial.flags(player) })
+	end
+end
+
+-- Marks `flag` done. Returns true if it was newly set (and tells that player's client).
+function Tutorial.complete(who, flag: string): boolean
+	local player = playerOf(who)
+	if not player or not known[flag] then
+		return false
+	end
+	local flags = store(player)
+	if flags[flag] then
+		return false
+	end
+	flags[flag] = true
+	Tutorial.send(player)
+	return true
+end
+
+-- Development only: forget a player's flags (profile and session) so the guidance starts over.
+function Tutorial.reset(player: Player)
+	local profile = getProfile(player)
+	if type(profile) == "table" then
+		profile.Tutorial = {}
+	end
+	session[player.UserId] = nil
+	Tutorial.send(player)
+end
+
+-- Profile just loaded: optional Studio reset, then send the saved flags.
+function Tutorial.onProfileLoaded(player: Player, _profile)
+	if Config.Tutorial.ResetInStudio and RunService:IsStudio() then
+		Tutorial.reset(player)
+	else
+		Tutorial.send(player)
+	end
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	session[player.UserId] = nil
+end)
+
+return Tutorial
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="56">
+        <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
 	WaitingRoom
@@ -13025,6 +13281,7 @@ local Workspace = game:GetService("Workspace")
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Net = require(ReplicatedStorage.PartyShared.Net)
 local MinigameManager = require(script.Parent.MinigameManager)
+local Tutorial = require(script.Parent.Tutorial)
 
 local WaitingRoom = {}
 
@@ -13116,6 +13373,7 @@ function WaitingRoom.handleInput(player: Player, payload): boolean
 	end
 	if kind == Net.Input.StartMatch then
 		startNow = true
+		Tutorial.complete(player, "StartedMatch")
 	elseif WaitingRoom.applySetting(payload.Key, payload.Value) then
 		changed = true
 	end
@@ -13137,19 +13395,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="56">
+  <Item class="StarterPlayer" referent="57">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="57">
+    <Item class="StarterPlayerScripts" referent="58">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="58">
+      <Item class="Folder" referent="59">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -13373,7 +13631,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -13394,6 +13652,7 @@ local Controls = {}
 
 local DEFAULT_GAMEPAD = { "ButtonX", "ButtonY", "ButtonB" }
 local bound: { string } = {}
+local current = nil -- the bound Info.Controls (nil when nothing is bound)
 local actionBar = nil
 local movementDisabled = false
 
@@ -13425,6 +13684,7 @@ end
 
 function Controls.bind(controls, send: (string) -> ())
 	Controls.unbind()
+	current = controls
 
 	for index, action in controls.Actions do
 		local bindName = "Party_" .. action.Action
@@ -13465,7 +13725,13 @@ function Controls.bind(controls, send: (string) -> ())
 	end
 end
 
+-- The minigame controls bound right now, or nil (spectating, knocked out, between rounds).
+function Controls.current()
+	return current
+end
+
 function Controls.unbind()
+	current = nil
 	for _, bindName in bound do
 		ContextActionService:UnbindAction(bindName)
 	end
@@ -13486,7 +13752,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="61">
+        <Item class="LocalScript" referent="62">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -13504,10 +13770,12 @@ local RunService = game:GetService("RunService")
 local Net = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Net"))
 local CameraController = require(script.Parent:WaitForChild("CameraController"))
 local Controls = require(script.Parent:WaitForChild("Controls"))
+local Onboarding = require(script.Parent:WaitForChild("Onboarding"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
 local ActionBar = require(UI:WaitForChild("ActionBar"))
 local BoardView = require(UI:WaitForChild("BoardView"))
+local GuidePointer = require(UI:WaitForChild("GuidePointer"))
 local Hud = require(UI:WaitForChild("Hud"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
 local LobbyPanel = require(UI:WaitForChild("LobbyPanel"))
@@ -13518,13 +13786,19 @@ local ShopScreen = require(UI:WaitForChild("ShopScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
+local YouMarker = require(UI:WaitForChild("YouMarker"))
 
 local player = Players.LocalPlayer
 local myId = "player_" .. player.UserId
 local stateRemote = Net.stateRemote()
 local inputRemote = Net.inputRemote()
 
+local onboarding -- guided first actions (made once the screens exist, below)
+
 local function sendInput(payload)
+	if onboarding then
+		onboarding:noteInput(payload) -- the step this answers is done: drop the pointer now
+	end
 	inputRemote:FireServer(payload)
 end
 
@@ -13558,6 +13832,10 @@ end
 local function sendAction(action: string)
 	-- The minigame's client code gets first go; if it handles the action, the server needn't hear.
 	if activeMinigameClient and activeMinigameClient.onAction and activeMinigameClient.onAction(action) then
+		-- Sent by the minigame's own code; tell the server only while the tutorial still needs it.
+		if onboarding and not onboarding:isDone("UsedMinigameAction") then
+			sendInput({ Kind = Net.Input.ActionUsed, Action = action })
+		end
 		return
 	end
 	sendInput({ Kind = Net.Input.Action, Action = action })
@@ -13596,6 +13874,23 @@ lobbyPanel.OnShop = function()
 end
 
 local standings = StandingsScreen.new(screen)
+
+-- Guided first actions: one bouncing pointer at a time, only for this player.
+local playerGui = player:WaitForChild("PlayerGui")
+onboarding = Onboarding.new({
+	Guide = GuidePointer.new(playerGui),
+	Lobby = lobbyPanel,
+	Board = boardView,
+	Shop = shopScreen,
+	Screen = screen,
+	PlayerGui = playerGui,
+	Modals = { voteScreen.Root, instructions.Root, results.Root, standings.Root },
+})
+
+-- "YOU" over your own character while you're playing (only this client sees it).
+local youMarker = YouMarker.new(function()
+	return player.Character
+end, playerGui)
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
 -- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
@@ -13678,6 +13973,7 @@ end
 
 -- Round presentation state -----------------------------------------------------------------
 
+local currentPhase = nil
 local inRound = false -- true from Instructions until Results/Lobby
 local amParticipant = false
 local useProgressBar = false -- this minigame shows a race bar instead of the chip strip
@@ -13704,6 +14000,7 @@ end
 
 local function endRound()
 	inRound = false
+	onboarding:setMinigame(nil)
 	stopMinigameClient()
 	Controls.unbind()
 	CameraController.stop()
@@ -13830,9 +14127,19 @@ phaseHandlers[Phase.Playing] = function(message)
 	if amParticipant and not CameraController.isSpectating() then
 		Controls.bind(message.Minigame.Controls, sendAction)
 	end
+	onboarding:setMinigame({
+		Playing = true,
+		Participant = amParticipant,
+		Controls = message.Minigame.Controls,
+		Spectating = CameraController.isSpectating,
+		Bound = function()
+			return Controls.current() ~= nil
+		end,
+	})
 end
 
 phaseHandlers[Phase.Finished] = function(_message)
+	onboarding:setMinigame(nil)
 	stopMinigameClient() -- hand the bodies back to the server before it sends everyone home
 	Controls.unbind()
 	hud:setTimer(nil)
@@ -13857,6 +14164,7 @@ stateRemote.OnClientEvent:Connect(function(message)
 	if message.Type == Net.Message.Phase then
 		local handler = phaseHandlers[message.Phase]
 		if handler then
+			currentPhase = message.Phase
 			handler(message)
 		end
 	elseif message.Type == Net.Message.VoteUpdate then
@@ -13878,8 +14186,37 @@ stateRemote.OnClientEvent:Connect(function(message)
 		shopScreen:setInventory(message)
 	elseif message.Type == Net.Message.ShopResult then
 		shopScreen:showResult(message)
+	elseif message.Type == Net.Message.Tutorial then
+		onboarding:setFlags(message.Flags)
 	end
 end)
+
+local function amSeatedOnBoard(): boolean
+	for _, seat in (boardView.State and boardView.State.Seats) or {} do
+		if seat.Id == myId then
+			return true
+		end
+	end
+	return false
+end
+
+-- YOU marker: on the board while you hold a seat, in a minigame while you're playing it (not
+-- spectating, not knocked out); never while a full-screen card is up.
+local function youMarkerWanted(): boolean
+	local cardOpen = false
+	for _, card in { voteScreen.Root, instructions.Root, results.Root, standings.Root } do
+		cardOpen = cardOpen or card.Visible
+	end
+	return YouMarker.shouldShow({
+		CardOpen = cardOpen,
+		Phase = currentPhase,
+		InRound = inRound,
+		Participant = amParticipant,
+		Spectating = CameraController.isSpectating(),
+		OnBoard = boardView.Visible and boardView.Header.Visible,
+		Seated = amSeatedOnBoard(),
+	})
+end
 
 RunService.RenderStepped:Connect(function()
 	hud:update()
@@ -13887,6 +14224,9 @@ RunService.RenderStepped:Connect(function()
 	instructions:update()
 	boardView:update()
 	lobbyPanel:update()
+	onboarding:update()
+	youMarker:setActive(youMarkerWanted())
+	youMarker:update()
 end)
 
 -- Ask for the current state in case we joined mid-round.
@@ -13894,11 +14234,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="62">
+        <Item class="Folder" referent="63">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">BumperBout</string>
               <string name="Source"><![CDATA[--[[
@@ -14014,7 +14354,7 @@ return BumperBoutClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -14299,7 +14639,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -14554,7 +14894,7 @@ return PoleShimmyClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">TrailTangle</string>
               <string name="Source"><![CDATA[--[[
@@ -14696,11 +15036,565 @@ return TrailTangleClient
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="67">
+        <Item class="ModuleScript" referent="68">
+          <Properties>
+            <string name="Name">Onboarding</string>
+            <string name="Source"><![CDATA[--[[
+	Onboarding (guided first actions)
+	Leads a new player to each control the first time they need it, one at a time, with the
+	GuidePointer (bouncing hand + ring + short label). Only this player is guided; nothing about
+	it is sent to anyone else.
+
+	  1 START (host only)              StartedMatch
+	  2 ROLL for turn order            RolledForOrder      "Roll to decide turn order."
+	  3 ROLL on a board turn           RolledBoardTurn     "Roll to move."
+	  4 an item you could use          SawItem             what it does + "or roll without it"
+	  5 a fork                         ChoseFork           rings every route, suggests the one
+	                                                       closest to the Crown, numbers match the
+	                                                       route on the board
+	  6 the minigame action            UsedMinigameAction  real label: MASH, DASH, LEFT / RIGHT...
+	                                                       (movement-only games: a short "move"
+	                                                       hint, once per session, no flag)
+	  7 a Crown you can afford         SawCrownPurchase    "Crowns win the match..."
+
+	The server keeps the flags (Tutorial.luau, saved in the profile) and sets each one only when
+	the action really went through; the client also marks a step done the moment you press,
+	so the pointer goes away at once. Until the server has sent the flags, nothing is shown
+	(so returning players never see a flash of tutorial).
+
+	Onboarding.decide(context) is the whole rule set as a pure function (unit tested); the
+	object below builds the context from the live UI every frame and drives the pointer.
+]]
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local UI = script.Parent:WaitForChild("UI")
+local InputHint = require(UI:WaitForChild("InputHint"))
+local GuidePointer = require(UI:WaitForChild("GuidePointer"))
+local Theme = require(UI:WaitForChild("Theme"))
+local make = Theme.make
+
+local Onboarding = {}
+Onboarding.__index = Onboarding
+
+Onboarding.MOVE_HINT_SECONDS = 5
+
+-- "TAP HERE" / "CLICK or press SPACE" / "PRESS A" for a button with a key and pad button.
+local function pressText(mode: string, key: string?, pad: string?): string
+	if mode == "Gamepad" and pad then
+		return "PRESS " .. pad
+	elseif mode == "Mouse" and key then
+		return "CLICK or press " .. key
+	end
+	return InputHint.verb(mode) .. " HERE"
+end
+
+local function orRoll(mode: string): string
+	return if mode == "Gamepad"
+		then "Or press A to roll without it."
+		else ("Or %s ROLL to roll without it."):format(string.lower(InputHint.verb(mode)))
+end
+
+local function done(context, flag: string): boolean
+	return context.Flags[flag] == true
+end
+
+-- The recommended route: fewest moves to the Crown (nil if no route says).
+function Onboarding.recommendedRoute(routes): number?
+	local best, bestDistance = nil, math.huge
+	for index, route in routes or {} do
+		if route.CrownDistance and route.CrownDistance < bestDistance then
+			best, bestDistance = index, route.CrownDistance
+		end
+	end
+	return best
+end
+
+local function minigameStep(context)
+	local round = context.Minigame
+	if not round or not round.Playing or not round.Participant or round.Spectating or not round.Bound then
+		return nil -- spectators, knocked-out players and anyone not in this round: nothing
+	end
+	local mode = context.Mode
+	local actions = round.Actions or {}
+	if #actions > 0 then
+		if done(context, "UsedMinigameAction") then
+			return nil
+		end
+		local first = actions[1]
+		local extra = {}
+		for index = 2, #actions do
+			table.insert(extra, { Kind = "Action", Action = actions[index].Action })
+		end
+		local title
+		if #actions == 2 then
+			-- A pair (LEFT / RIGHT): name both.
+			local words = InputHint.actionWord(first.Label) .. " / " .. InputHint.actionWord(actions[2].Label)
+			if mode == "Mouse" and InputHint.keyFor(first) and InputHint.keyFor(actions[2]) then
+				title = ("PRESS %s / %s"):format(InputHint.keyName(InputHint.keyFor(first)), InputHint.keyName(InputHint.keyFor(actions[2])))
+			elseif mode == "Gamepad" and InputHint.gamepadFor(first, 1) and InputHint.gamepadFor(actions[2], 2) then
+				title = ("PRESS %s / %s"):format(InputHint.keyName(InputHint.gamepadFor(first, 1)), InputHint.keyName(InputHint.gamepadFor(actions[2], 2)))
+			else
+				title = InputHint.verb(mode) .. " " .. words
+			end
+			if mode ~= "Touch" then
+				title ..= "  (" .. words .. ")"
+			end
+		else
+			local word = InputHint.actionWord(first.Label)
+			local key = if mode == "Mouse"
+				then InputHint.keyName(InputHint.keyFor(first))
+				elseif mode == "Gamepad" then InputHint.keyName(InputHint.gamepadFor(first, 1))
+				else nil
+			title = if key then ("PRESS %s TO %s"):format(key, word) else ("%s TO %s"):format(InputHint.verb(mode), word)
+		end
+		return {
+			Flag = "UsedMinigameAction",
+			Key = "UsedMinigameAction",
+			Target = { Kind = "Action", Action = first.Action },
+			Extra = extra,
+			Title = title,
+			Note = if #actions > 2 then "Use these buttons to play." else nil,
+			Sides = { "Left", "Above", "Right" },
+		}
+	end
+	-- Movement only: a short pointer at the thumbstick (touch) or the keys (desktop).
+	if round.Move and round.MoveHintDue then
+		if mode == "Touch" then
+			return { Key = "MoveHint", Target = { Kind = "Thumbstick" }, Title = "DRAG HERE TO MOVE", Sides = { "Above", "Right" }, Round = true }
+		end
+		local title = if mode == "Gamepad" then "LEFT STICK TO MOVE" else "WASD / ARROWS TO MOVE"
+		if round.Jump then
+			title ..= if mode == "Gamepad" then "  ·  A TO JUMP" else "  ·  SPACE TO JUMP"
+		end
+		return { Key = "MoveHint", Target = nil, Title = title }
+	end
+	return nil
+end
+
+--[[
+	context = {
+	  Known, Flags = { [flag] = true }, Mode = "Touch" | "Mouse" | "Gamepad",
+	  Modal       a full-screen card (instructions, results, vote, standings) or the shop is up
+	  Lobby       { StartVisible }                        START is on screen (host only)
+	  Board       { OrderRoll, Roll, Items = { { Name, Description } }, Coins,
+	                Prompt = { Kind, Price, Routes, Count }? }
+	  Minigame    { Playing, Participant, Spectating, Bound, Actions, Move, Jump, MoveHintDue }
+	}
+	Returns at most one step: { Flag?, Key, Target, Extra?, Title, Note?, Sides? } or nil.
+]]
+function Onboarding.decide(context)
+	if not context.Known or context.Modal then
+		return nil
+	end
+	local mode = context.Mode
+
+	local lobby = context.Lobby
+	if lobby and lobby.StartVisible and not done(context, "StartedMatch") then
+		return {
+			Flag = "StartedMatch",
+			Key = "StartedMatch",
+			Target = { Kind = "Start" },
+			Title = if mode == "Gamepad" then "SELECT HERE TO START" else InputHint.verb(mode) .. " HERE TO START",
+			Sides = { "Right", "Left", "Above" },
+		}
+	end
+
+	local board = context.Board
+	if board then
+		local prompt = board.Prompt
+		if prompt and prompt.Kind == "Path" and not done(context, "ChoseFork") then
+			local best = Onboarding.recommendedRoute(prompt.Routes)
+			local extra = {}
+			for index = 1, prompt.Count or 0 do
+				if index ~= (best or 1) then
+					table.insert(extra, { Kind = "Option", Index = index })
+				end
+			end
+			local route = best and prompt.Routes[best]
+			return {
+				Flag = "ChoseFork",
+				Key = "ChoseFork",
+				Target = { Kind = "Option", Index = best or 1 },
+				Extra = extra,
+				Routes = prompt.Routes,
+				Recommended = best,
+				Title = InputHint.verb(mode) .. " A PATH",
+				Note = if route
+					then ("★ %d is closest to the Crown (%d move%s). Any path is fine."):format(
+						best,
+						route.CrownDistance,
+						if route.CrownDistance == 1 then "" else "s"
+					)
+					else "Any path is fine. The numbers match the board.",
+				Sides = { "Above" },
+			}
+		end
+		if prompt and prompt.Kind == "Collectible" and not done(context, "SawCrownPurchase") then
+			local affordable = type(prompt.Price) == "number" and type(board.Coins) == "number" and board.Coins >= prompt.Price
+			if affordable then
+				return {
+					Flag = "SawCrownPurchase",
+					Key = "SawCrownPurchase",
+					Target = { Kind = "Option", Index = 1 },
+					Title = InputHint.verb(mode) .. " HERE TO BUY",
+					Note = "Crowns win the match. Coins break ties.",
+					Sides = { "Above" },
+				}
+			end
+			return nil
+		end
+		if board.OrderRoll and not done(context, "RolledForOrder") then
+			return {
+				Flag = "RolledForOrder",
+				Key = "RolledForOrder",
+				Target = { Kind = "Roll" },
+				Title = pressText(mode, "SPACE", "A"),
+				Note = "Roll to decide turn order.",
+				Sides = { "Left", "Above" },
+			}
+		end
+		if board.Roll then
+			local items = board.Items or {}
+			if #items > 0 and not done(context, "SawItem") then
+				local item = items[1]
+				return {
+					Flag = "SawItem",
+					Key = "SawItem",
+					Target = { Kind = "Item", Slot = 1 },
+					Title = InputHint.verb(mode) .. " HERE TO USE IT",
+					Note = ("%s: %s. %s"):format(item.Name or "Item", string.gsub(item.Description or "", "%.$", ""), orRoll(mode)),
+					Sides = { "Left", "Above" },
+				}
+			end
+			if not done(context, "RolledBoardTurn") then
+				return {
+					Flag = "RolledBoardTurn",
+					Key = "RolledBoardTurn",
+					Target = { Kind = "Roll" },
+					Title = pressText(mode, "SPACE", "A"),
+					Note = "Roll to move.",
+					Sides = { "Left", "Above" },
+				}
+			end
+		end
+	end
+
+	return minigameStep(context)
+end
+
+-- Live controller ------------------------------------------------------------------------------
+
+--[[
+	deps = { Guide, Lobby (LobbyPanel), Board (BoardView), Shop (ShopScreen), Screen (PartyUI),
+	         PlayerGui, Modals = { GuiObject } }
+]]
+function Onboarding.new(deps)
+	local self = setmetatable({}, Onboarding)
+	self.Deps = deps
+	self.Guide = deps.Guide
+	self.Known = false
+	self.ServerFlags = {}
+	self.LocalDone = {}
+	self.Minigame = nil
+	self.MoveHintUsed = false
+	self.MoveHintUntil = 0
+	self.Badges = {}
+	self.BadgeKey = nil
+	self.Step = nil
+	return self
+end
+
+function Onboarding:setFlags(flags)
+	self.Known = true
+	self.ServerFlags = {}
+	for flag, value in flags or {} do
+		if value == true then
+			self.ServerFlags[flag] = true
+		end
+	end
+	-- The server is the authority: what this client marked on a press only bridges the gap
+	-- until the server answers (and a dev reset wipes it too).
+	self.LocalDone = {}
+end
+
+function Onboarding:flags()
+	local flags = table.clone(self.ServerFlags)
+	for flag in self.LocalDone do
+		flags[flag] = true
+	end
+	return flags
+end
+
+function Onboarding:isDone(flag: string): boolean
+	return self.ServerFlags[flag] == true or self.LocalDone[flag] == true
+end
+
+-- Main: a minigame's play phase started / ended for this client.
+function Onboarding:setMinigame(info)
+	self.Minigame = info
+	-- Only spend the once-per-session move hint on a round you actually play.
+	local movementOnly = info and info.Controls and #(info.Controls.Actions or {}) == 0 and info.Controls.Move
+	if movementOnly and info.Participant and not self.MoveHintUsed then
+		self.MoveHintUsed = true -- once per session
+		self.MoveHintUntil = os.clock() + Onboarding.MOVE_HINT_SECONDS
+	end
+end
+
+-- Every input this client sends passes through here: the step it answers is done at once.
+function Onboarding:noteInput(payload)
+	local kind = payload.Kind
+	local step = self.Step
+	if kind == "StartMatch" then
+		self.LocalDone.StartedMatch = true
+	elseif kind == "Roll" then
+		local state = self.Deps.Board.State
+		if state and state.Stage == "OrderRoll" then
+			self.LocalDone.RolledForOrder = true
+		else
+			self.LocalDone.RolledBoardTurn = true
+			if self.Deps.Board.ItemBar.Visible then
+				self.LocalDone.SawItem = true -- rolled without using the item
+			end
+		end
+	elseif kind == "UseItem" then
+		-- Not marked here: the server may refuse the item (wrong target, cancelled). Its flag
+		-- arrives when the item is really used; until then just drop the pointer.
+		if step and step.Key == "SawItem" then
+			self.Guide:clear("SawItem")
+		end
+	elseif kind == "Choice" then
+		local prompt = self.Deps.Board.PromptMessage
+		if prompt and prompt.Kind == "Path" then
+			self.LocalDone.ChoseFork = true
+		elseif prompt and prompt.Kind == "Collectible" then
+			self.LocalDone.SawCrownPurchase = true
+		end
+	elseif kind == "Action" or kind == "ActionUsed" then
+		self.LocalDone.UsedMinigameAction = true
+	end
+	if step and step.Flag and self.LocalDone[step.Flag] then
+		self.Guide:clear(step.Key)
+	end
+end
+
+local function mySeat(state)
+	local myId = "player_" .. Players.LocalPlayer.UserId
+	for _, seat in (state and state.Seats) or {} do
+		if seat.Id == myId then
+			return seat
+		end
+	end
+	return nil
+end
+
+function Onboarding:context()
+	local deps = self.Deps
+	local modal = deps.Shop.Open == true
+	for _, card in deps.Modals do
+		if card.Visible then
+			modal = true
+		end
+	end
+	local context = { Known = self.Known, Flags = self:flags(), Mode = InputHint.mode(), Modal = modal }
+
+	local lobby = deps.Lobby
+	if lobby.Showing and GuidePointer.isOnScreen(lobby.StartButton) then
+		context.Lobby = { StartVisible = true }
+	end
+
+	local board = deps.Board
+	if board.Visible and board.Header.Visible and board.State then
+		local state = board.State
+		local seat = mySeat(state)
+		local prompt = board.Prompt.Visible and board.PromptId and board.PromptMessage
+		context.Board = {
+			OrderRoll = board.RollButton.Visible and state.Stage == "OrderRoll",
+			Roll = board.RollButton.Visible and state.Stage == "Roll",
+			Items = if board.ItemBar.Visible and seat then seat.Items else {},
+			Coins = seat and seat.Coins,
+			Prompt = if prompt
+				then { Kind = prompt.Kind, Price = prompt.Price, Routes = prompt.Routes, Count = #(prompt.Options or {}) }
+				else nil,
+		}
+	end
+
+	local round = self.Minigame
+	if round then
+		local controls = round.Controls or {}
+		context.Minigame = {
+			Playing = round.Playing,
+			Participant = round.Participant,
+			Spectating = round.Spectating and round.Spectating() or false,
+			Bound = round.Bound and round.Bound() or false,
+			Actions = controls.Actions,
+			Move = controls.Move,
+			Jump = controls.Jump,
+			MoveHintDue = os.clock() < self.MoveHintUntil,
+		}
+	end
+	return context
+end
+
+-- The actual GuiObject a step points at.
+function Onboarding:resolve(target): GuiObject?
+	if not target then
+		return nil
+	end
+	local deps = self.Deps
+	if target.Kind == "Start" then
+		return deps.Lobby.StartButton
+	elseif target.Kind == "Roll" then
+		return deps.Board.RollButton
+	elseif target.Kind == "Item" then
+		for _, child in deps.Board.ItemBar:GetChildren() do
+			if child:IsA("GuiButton") and child.LayoutOrder == target.Slot then
+				return child
+			end
+		end
+	elseif target.Kind == "Option" then
+		for _, child in deps.Board.PromptButtons:GetChildren() do
+			if child:IsA("GuiButton") and child.LayoutOrder == target.Index then
+				return child
+			end
+		end
+	elseif target.Kind == "Action" then
+		return deps.Screen:FindFirstChild("Action_" .. target.Action, true) :: GuiObject?
+	elseif target.Kind == "Thumbstick" then
+		-- The stick itself, not Roblox's large invisible touch zone around it.
+		local touchGui = deps.PlayerGui:FindFirstChild("TouchGui")
+		for _, path in { { "DynamicThumbstickFrame", "ThumbstickStart" }, { "ThumbstickFrame", "OuterImage" } } do
+			local frame = touchGui and touchGui:FindFirstChild(path[1], true)
+			local stick = frame and frame:FindFirstChild(path[2])
+			if stick and GuidePointer.isOnScreen(stick) then
+				return stick :: GuiObject
+			end
+		end
+	end
+	return nil
+end
+
+-- Fork: a number on each route button and the same number over that route's first space.
+function Onboarding:clearBadges()
+	for _, badge in self.Badges do
+		badge:Destroy()
+	end
+	self.Badges = {}
+	self.BadgeKey = nil
+end
+
+function Onboarding:showBadges(step)
+	local key = tostring(self.Deps.Board.PromptId)
+	if self.BadgeKey == key then
+		return
+	end
+	self:clearBadges()
+	self.BadgeKey = key
+	local layout = self.Deps.Board.Layout
+	for index, route in step.Routes or {} do
+		local text = (if index == step.Recommended then "★" else "") .. tostring(index)
+		local button = self:resolve({ Kind = "Option", Index = index })
+		if button then
+			local chip = make("TextLabel", {
+				Name = "RouteBadge",
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0, 4, 0, 4),
+				Size = UDim2.fromOffset(40, 30),
+				BackgroundColor3 = Theme.Colors.Overlay,
+				Font = Theme.TitleFont,
+				TextScaled = true,
+				TextColor3 = Theme.Colors.Accent,
+				Text = text,
+				Active = false,
+				ZIndex = 5,
+				Parent = button,
+			}, { Theme.corner(10), Theme.stroke(Theme.Colors.Accent, 2) })
+			table.insert(self.Badges, chip)
+		end
+		local position
+		for _, space in (layout and layout.Spaces) or {} do
+			if space.Id == route.SpaceId then
+				position = space.Position
+			end
+		end
+		if position then
+			local anchor = make("Part", {
+				Name = "RouteBadgeAnchor",
+				Anchored = true,
+				CanCollide = false,
+				CanQuery = false,
+				CanTouch = false,
+				Transparency = 1,
+				Size = Vector3.new(0.2, 0.2, 0.2),
+				Position = position + Vector3.new(0, 2.5, 0), -- on the tile, below the YOU tag's height
+				Parent = Workspace.CurrentCamera, -- local only
+			})
+			local billboard = make("BillboardGui", {
+				Size = UDim2.fromOffset(42, 32),
+				AlwaysOnTop = false,
+				LightInfluence = 0,
+				Parent = anchor,
+			})
+			make("TextLabel", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = Theme.Colors.Overlay,
+				Font = Theme.TitleFont,
+				TextScaled = true,
+				TextColor3 = Theme.Colors.Accent,
+				Text = text,
+				Parent = billboard,
+			}, { Theme.corner(12), Theme.stroke(Theme.Colors.Accent, 3), Theme.padding(4) })
+			table.insert(self.Badges, anchor)
+		end
+	end
+end
+
+function Onboarding:update()
+	local step = Onboarding.decide(self:context())
+	self.Step = step
+	if step and step.Key == "ChoseFork" then
+		self:showBadges(step)
+	elseif self.BadgeKey then
+		self:clearBadges()
+	end
+	if not step then
+		self.Guide:clear()
+	else
+		local target = self:resolve(step.Target)
+		if step.Target and not target then
+			self.Guide:clear() -- not on screen yet
+		else
+			local extra = {}
+			for _, other in step.Extra or {} do
+				local object = self:resolve(other)
+				if object then
+					table.insert(extra, object)
+				end
+			end
+			self.Guide:show(step.Key, target, {
+				Title = step.Title,
+				Note = step.Note,
+				Sides = step.Sides,
+				Extra = extra,
+				Round = step.Round,
+				-- Board prompt choices: keep the hand and label above the prompt card.
+				Outside = if step.Target and step.Target.Kind == "Option" then self.Deps.Board.Prompt else nil,
+			})
+		end
+	end
+	self.Guide:update()
+end
+
+return Onboarding
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="69">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -14850,7 +15744,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -15331,6 +16225,7 @@ function BoardView:showPrompt(message)
 	end
 	self.PromptId = message.PromptId
 	self.PromptEndsAt = message.EndsAt
+	self.PromptMessage = message -- Kind / Routes / Price: read by the first-action guidance
 	if not message.PromptId then
 		self.Prompt.Visible = false
 		return
@@ -15483,7 +16378,420 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="72">
+            <Properties>
+              <string name="Name">GuidePointer</string>
+              <string name="Source"><![CDATA[--[[
+	GuidePointer
+	Leads the player to one exact button: a gently bouncing hand, a pulsing ring around the
+	button and a short label ("TAP HERE" + one line of help) next to it.
+
+	  guide:show(key, target, { Title, Note?, Sides?, Extra? }) -> true if something changed
+	  guide:show(key, nil, { Title, Note? })   no button to point at (desktop movement keys):
+	                                           just the label, low on the screen
+	  guide:clear(key?)       remove it (only if it's still `key`, when given)
+	  guide:update()          every frame: follow the target, bounce, hide/clear when it's gone
+
+	  * One pointer at a time: show() replaces whatever was there; showing the same key on the
+	    same target again does nothing, so repeated messages can't stack pointers.
+	  * Lives in its own ScreenGui above the party UI (DisplayOrder 11) but inside Roblox's
+	    safe area (top bar, notch, home indicator), and is clamped to it.
+	  * Never takes input: nothing in it is Active or Interactable, so the button underneath
+	    still gets every tap and click. The ring is an outline, so the button's text shows.
+	  * Follows the target every frame, so it stays on it when the HUD rescales or moves.
+	  * Clears itself when the target is destroyed; hides while the target is hidden.
+	  * Extra = more buttons that get a thinner ring (e.g. every route at a fork).
+	  * Round = true: a circular ring for round images with no UICorner (the thumbstick).
+	  * Outside = a panel the target sits in (the board prompt): the hand and label go above
+	    that whole panel instead of over its title text.
+	  * Reduced motion (if Roblox reports it): no bounce and no pulse.
+]]
+
+local GuiService = game:GetService("GuiService")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local GuidePointer = {}
+GuidePointer.__index = GuidePointer
+
+local GAP = 6 -- between the ring and the hand
+local RING_PAD = 6 -- ring sits this far outside the button
+local BOUNCE = 9 -- pixels at full scale
+local BOUNCE_HZ = 0.9 -- gentle: under once a second
+local HANDS = { Above = "👇", Below = "👆", Left = "👉", Right = "👈" }
+local DEFAULT_SIDES = { "Left", "Above", "Right", "Below" }
+
+local function reducedMotion(): boolean
+	local ok, value = pcall(function()
+		return (GuiService :: any).ReducedMotionEnabled
+	end)
+	return ok and value == true
+end
+
+local function noInput(instance: GuiObject)
+	instance.Active = false
+	pcall(function()
+		(instance :: any).Interactable = false
+	end)
+	return instance
+end
+
+-- Outline-only ring (yellow, with a dark edge so it reads on yellow buttons too).
+local function ring(parent: Instance, name: string, thickness: number)
+	local frame = noInput(make("Frame", {
+		Name = name,
+		BackgroundTransparency = 1,
+		Visible = false,
+		ZIndex = 2,
+		Parent = parent,
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 16) }) }))
+	make("UIStroke", { Name = "Glow", Color = Theme.Colors.Accent, Thickness = thickness, Parent = frame })
+	local edge = noInput(make("Frame", {
+		Name = "Edge",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.new(1, thickness * 2 + 2, 1, thickness * 2 + 2),
+		BackgroundTransparency = 1,
+		Parent = frame,
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 18) }) }))
+	make("UIStroke", { Color = Theme.Colors.Overlay, Thickness = 2, Transparency = 0.2, Parent = edge })
+	return frame
+end
+
+-- parent: PlayerGui (a ScreenGui is made there) or any Instance (tests).
+function GuidePointer.new(parent: Instance)
+	local self = setmetatable({}, GuidePointer)
+	self.Gui = make("ScreenGui", {
+		Name = "PartyGuide",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = false, -- stay below Roblox's top bar
+		DisplayOrder = 11, -- over the party UI (10); modal cards hide the pointer instead
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent = parent,
+	})
+	pcall(function()
+		self.Gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets -- notch + home indicator
+	end)
+	self.Root = noInput(make("Frame", {
+		Name = "Guide",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Parent = self.Gui,
+	}))
+	self.Ring = ring(self.Root, "Ring", 4)
+	self.Hand = noInput(make("TextLabel", {
+		Name = "Hand",
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextScaled = true,
+		Text = HANDS.Left,
+		Visible = false,
+		ZIndex = 3,
+		Parent = self.Root,
+	}))
+	self.Bubble = noInput(make("Frame", {
+		Name = "Bubble",
+		BackgroundColor3 = Theme.Colors.Overlay,
+		BackgroundTransparency = 0.05,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		ZIndex = 3,
+		Parent = self.Root,
+	}, {
+		Theme.corner(12),
+		Theme.stroke(Theme.Colors.Accent, 3),
+		Theme.padding(8),
+		make("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }),
+	}))
+	self.Title = noInput(make("TextLabel", {
+		Name = "Title",
+		LayoutOrder = 1,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Text,
+		TextWrapped = true,
+		ZIndex = 4,
+		Parent = self.Bubble,
+	}))
+	self.Note = noInput(make("TextLabel", {
+		Name = "Note",
+		LayoutOrder = 2,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Font = Theme.BodyFont,
+		TextColor3 = Theme.Colors.Accent,
+		TextWrapped = true,
+		ZIndex = 4,
+		Parent = self.Bubble,
+	}))
+	self.ExtraRings = {}
+	self.Key = nil
+	self.Target = nil
+	self.Options = nil
+	self.Started = os.clock()
+	return self
+end
+
+local function sameList(a, b): boolean
+	a, b = a or {}, b or {}
+	if #a ~= #b then
+		return false
+	end
+	for i, value in a do
+		if b[i] ~= value then
+			return false
+		end
+	end
+	return true
+end
+
+function GuidePointer:show(key: string, target: GuiObject?, options): boolean
+	options = options or {}
+	local current = self.Options
+	if
+		self.Key == key
+		and self.Target == target
+		and current
+		and current.Title == options.Title
+		and current.Note == options.Note
+		and sameList(current.Extra, options.Extra)
+	then
+		return false -- already showing exactly this
+	end
+	if self.Key ~= key or self.Target ~= target then
+		self.Started = os.clock()
+	end
+	self.Key = key
+	self.Target = target
+	self.Options = options
+	self.Title.Text = options.Title or "TAP HERE"
+	self.Note.Text = options.Note or ""
+	self.Note.Visible = options.Note ~= nil and options.Note ~= ""
+	for _, extra in self.ExtraRings do
+		extra:Destroy()
+	end
+	self.ExtraRings = {}
+	for index in options.Extra or {} do
+		self.ExtraRings[index] = ring(self.Root, "ExtraRing" .. index, 3)
+	end
+	return true
+end
+
+function GuidePointer:clear(key: string?)
+	if key and self.Key ~= key then
+		return
+	end
+	self.Key = nil
+	self.Target = nil
+	self.Options = nil
+	for _, extra in self.ExtraRings do
+		extra:Destroy()
+	end
+	self.ExtraRings = {}
+	self:setVisible(false)
+end
+
+function GuidePointer:isShowing(): string?
+	return self.Key
+end
+
+function GuidePointer:setVisible(visible: boolean)
+	self.Ring.Visible = visible
+	self.Hand.Visible = visible
+	self.Bubble.Visible = visible
+	for _, extra in self.ExtraRings do
+		extra.Visible = visible
+	end
+end
+
+-- On screen = in the game tree, every GuiObject up to its ScreenGui visible, ScreenGui on.
+function GuidePointer.isOnScreen(target: Instance?): boolean
+	if not target or not target.Parent or not target:IsA("GuiObject") then
+		return false
+	end
+	local node: Instance? = target
+	while node do
+		if node:IsA("GuiObject") then
+			if not node.Visible then
+				return false
+			end
+		elseif node:IsA("LayerCollector") then
+			return node.Enabled and node.Parent ~= nil
+		end
+		node = node.Parent
+	end
+	return false
+end
+
+-- Target's rectangle in this guide's own coordinates.
+function GuidePointer:rectOf(target: GuiObject): (Vector2, Vector2)
+	return target.AbsolutePosition - self.Root.AbsolutePosition, target.AbsoluteSize
+end
+
+local function placeRing(self, frame: Frame, target: GuiObject, scale: number, pulse: number)
+	local position, size = self:rectOf(target)
+	local pad = (RING_PAD + pulse * 3) * scale
+	frame.Position = UDim2.fromOffset(position.X - pad, position.Y - pad)
+	frame.Size = UDim2.fromOffset(size.X + pad * 2, size.Y + pad * 2)
+	-- Match the button's own rounding (round buttons get round rings). Offsets are in
+	-- design pixels, so scale them like the button was; never past a full circle.
+	local corner = target:FindFirstChildOfClass("UICorner")
+	local half = math.min(size.X, size.Y) / 2
+	local uiScale = target:FindFirstChildOfClass("UIScale")
+	local radius = if corner
+		then corner.CornerRadius.Offset * (if uiScale then uiScale.Scale else 1) + corner.CornerRadius.Scale * half * 2
+		elseif self.Options and self.Options.Round then half
+		else 12
+	radius = math.min(radius, half) + pad
+	frame:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0, radius)
+	frame.Edge:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0, radius + 4)
+	frame.Glow.Transparency = 0.25 * (1 - pulse)
+	return position - Vector2.new(pad, pad), size + Vector2.new(pad * 2, pad * 2)
+end
+
+-- Picks the side of the target with room for the hand + bubble (first that fits, in order).
+local function chooseSide(sides, position: Vector2, size: Vector2, bounds: Vector2, need: Vector2, hand: number): string
+	local best, bestRoom = sides[1], -math.huge
+	for _, side in sides do
+		local room
+		if side == "Left" then
+			room = position.X - (hand + GAP + need.X)
+		elseif side == "Right" then
+			room = bounds.X - (position.X + size.X) - (hand + GAP + need.X)
+		elseif side == "Above" then
+			room = position.Y - (hand + GAP + need.Y)
+		else
+			room = bounds.Y - (position.Y + size.Y) - (hand + GAP + need.Y)
+		end
+		if room >= 0 then
+			return side
+		end
+		if room > bestRoom then
+			best, bestRoom = side, room
+		end
+	end
+	return best
+end
+
+local function clampBox(position: Vector2, size: Vector2, bounds: Vector2): Vector2
+	return Vector2.new(
+		math.clamp(position.X, 0, math.max(0, bounds.X - size.X)),
+		math.clamp(position.Y, 0, math.max(0, bounds.Y - size.Y))
+	)
+end
+
+-- Label only, bottom centre (above the bottom HUD, clear of the screen centre).
+local function placeHint(self)
+	local bounds = self.Root.AbsoluteSize
+	local scale = math.clamp(bounds.Y / 620, 0.72, 1)
+	local width = math.floor(math.min(320 * scale, bounds.X * 0.5))
+	self.Bubble.Size = UDim2.fromOffset(width, 0)
+	self.Title.TextSize = math.floor(22 * scale)
+	self.Note.TextSize = math.floor(16 * scale)
+	local height = math.max(self.Bubble.AbsoluteSize.Y, 30 * scale)
+	self.Bubble.Position = UDim2.fromOffset((bounds.X - width) / 2, bounds.Y * 0.72 - height / 2)
+	self.Ring.Visible = false
+	self.Hand.Visible = false
+	self.Bubble.Visible = true
+end
+
+function GuidePointer:update()
+	local target = self.Target
+	if not target then
+		if self.Key and self.Options then
+			placeHint(self)
+		end
+		return
+	end
+	if not target.Parent then
+		self:clear() -- the button is gone
+		return
+	end
+	if not GuidePointer.isOnScreen(target) or target.AbsoluteSize.X < 1 then
+		self:setVisible(false)
+		return
+	end
+	local bounds = self.Root.AbsoluteSize
+	if bounds.X < 1 then
+		return
+	end
+	local scale = math.clamp(bounds.Y / 620, 0.72, 1)
+	local still = reducedMotion()
+	local t = os.clock() - self.Started
+	local wave = if still then 0 else 0.5 - 0.5 * math.cos(t * math.pi * 2 * BOUNCE_HZ)
+
+	-- Rings
+	local ringPosition, ringSize = placeRing(self, self.Ring, target, scale, wave)
+	for index, extra in self.ExtraRings do
+		local other = self.Options.Extra[index]
+		local shown = other and GuidePointer.isOnScreen(other)
+		extra.Visible = shown == true
+		if shown then
+			placeRing(self, extra, other, scale, wave)
+		end
+	end
+
+	-- Bubble size (width fixed; height from the text)
+	local bubbleWidth = math.floor(math.min(250 * scale, bounds.X * 0.42))
+	self.Bubble.Size = UDim2.fromOffset(bubbleWidth, 0)
+	self.Title.TextSize = math.floor(22 * scale)
+	self.Note.TextSize = math.floor(16 * scale)
+	local bubbleSize = Vector2.new(bubbleWidth, math.max(self.Bubble.AbsoluteSize.Y, 30 * scale))
+	local hand = math.floor(40 * scale)
+
+	-- Above a panel: measure "above" from the panel's top edge, not the button's.
+	local aboveTop = ringPosition.Y
+	local outside = self.Options.Outside
+	if outside and GuidePointer.isOnScreen(outside) then
+		local panelTop = (outside.AbsolutePosition - self.Root.AbsolutePosition).Y
+		aboveTop = math.min(aboveTop, panelTop)
+	end
+	local placeRect = Vector2.new(ringPosition.X, aboveTop)
+	local placeSize = Vector2.new(ringSize.X, ringSize.Y + (ringPosition.Y - aboveTop))
+	local side = chooseSide(self.Options.Sides or DEFAULT_SIDES, placeRect, placeSize, bounds, bubbleSize, hand)
+	local bounce = BOUNCE * scale * wave
+	local centre = ringPosition + ringSize / 2
+	local handPosition, bubblePosition
+	if side == "Left" then
+		handPosition = Vector2.new(ringPosition.X - GAP - hand - bounce, centre.Y - hand / 2)
+		bubblePosition = Vector2.new(handPosition.X - GAP - bubbleSize.X, centre.Y - bubbleSize.Y / 2)
+	elseif side == "Right" then
+		handPosition = Vector2.new(ringPosition.X + ringSize.X + GAP + bounce, centre.Y - hand / 2)
+		bubblePosition = Vector2.new(handPosition.X + hand + GAP, centre.Y - bubbleSize.Y / 2)
+	elseif side == "Above" then
+		handPosition = Vector2.new(centre.X - hand / 2, aboveTop - GAP - hand - bounce)
+		bubblePosition = Vector2.new(centre.X - bubbleSize.X / 2, handPosition.Y - GAP - bubbleSize.Y)
+	else
+		handPosition = Vector2.new(centre.X - hand / 2, ringPosition.Y + ringSize.Y + GAP + bounce)
+		bubblePosition = Vector2.new(centre.X - bubbleSize.X / 2, handPosition.Y + hand + GAP)
+	end
+	handPosition = clampBox(handPosition, Vector2.new(hand, hand), bounds)
+	bubblePosition = clampBox(bubblePosition, bubbleSize, bounds)
+
+	self.Hand.Text = HANDS[side]
+	self.Hand.Size = UDim2.fromOffset(hand, hand)
+	self.Hand.Position = UDim2.fromOffset(handPosition.X, handPosition.Y)
+	self.Bubble.Position = UDim2.fromOffset(bubblePosition.X, bubblePosition.Y)
+	self.Side = side
+	self.Ring.Visible = true
+	self.Hand.Visible = true
+	self.Bubble.Visible = true
+end
+
+function GuidePointer:destroy()
+	self:clear()
+	self.Gui:Destroy()
+end
+
+return GuidePointer
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -15708,7 +17016,95 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="74">
+            <Properties>
+              <string name="Name">InputHint</string>
+              <string name="Source"><![CDATA[--[[
+	InputHint
+	Which kind of input this player is using, and how to name a control for it:
+	  "Touch"    any touch screen (phones and Studio's phone emulator can report a keyboard
+	             too, so touch wins: no keyboard text on a touch screen)
+	  "Gamepad"  the last input came from a controller
+	  "Mouse"    everything else (mouse + keyboard)
+]]
+
+local UserInputService = game:GetService("UserInputService")
+
+local InputHint = {}
+
+function InputHint.mode(): string
+	local last = UserInputService:GetLastInputType()
+	if string.sub(last.Name, 1, 7) == "Gamepad" then
+		return "Gamepad"
+	end
+	if UserInputService.TouchEnabled then
+		return "Touch"
+	end
+	return "Mouse"
+end
+
+-- "TAP" / "CLICK" / "PRESS"
+function InputHint.verb(mode: string): string
+	return if mode == "Touch" then "TAP" elseif mode == "Gamepad" then "PRESS" else "CLICK"
+end
+
+local KEY_NAMES = {
+	One = "1",
+	Two = "2",
+	Three = "3",
+	Four = "4",
+	Left = "←",
+	Right = "→",
+	Up = "↑",
+	Down = "↓",
+	Return = "ENTER",
+	LeftShift = "SHIFT",
+}
+
+-- KeyCode name -> what's printed on it: "Space" -> "SPACE", "ButtonA" -> "A", "One" -> "1".
+function InputHint.keyName(name: string?): string?
+	if type(name) ~= "string" or name == "" then
+		return nil
+	end
+	if KEY_NAMES[name] then
+		return KEY_NAMES[name]
+	end
+	if string.sub(name, 1, 6) == "Button" then
+		return string.upper(string.sub(name, 7))
+	end
+	if string.sub(name, 1, 4) == "DPad" then
+		return "D-PAD " .. string.upper(string.sub(name, 5))
+	end
+	return string.upper(name)
+end
+
+-- The gamepad button a minigame action is bound to (Controls uses the same defaults).
+local DEFAULT_GAMEPAD = { "ButtonX", "ButtonY", "ButtonB" }
+function InputHint.gamepadFor(action, index: number): string?
+	if type(action.Gamepads) == "table" and action.Gamepads[1] then
+		return action.Gamepads[1]
+	end
+	return action.Gamepad or DEFAULT_GAMEPAD[index]
+end
+
+function InputHint.keyFor(action): string?
+	if type(action.Keys) == "table" and action.Keys[1] then
+		return action.Keys[1]
+	end
+	return action.Key
+end
+
+-- An action's button label as one short word: "Mash!" -> "MASH".
+function InputHint.actionWord(label: string?): string
+	local word = string.upper(string.gsub(label or "", "[!%.]", ""))
+	return if word == "" then "GO" else word
+end
+
+return InputHint
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -15717,9 +17113,9 @@ return Hud
 	name, layout, description, controls, and (for 1v3 / 2v2) who is on which team.
 ]]
 
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local InputHint = require(script.Parent.InputHint)
 local Theme = require(script.Parent.Theme)
 local make = Theme.make
 
@@ -15784,7 +17180,9 @@ function InstructionsCard.new(screen: ScreenGui)
 	return self
 end
 
-local function controlsText(controls): string
+-- mode = InputHint.mode(): touch shows only the button labels, a keyboard shows the key,
+-- a gamepad shows the controller button when the action has one.
+function InstructionsCard.controlsText(controls, mode: string): string
 	local parts = {}
 	if controls.Move and controls.Jump then
 		table.insert(parts, "🕹 Move + Jump")
@@ -15793,12 +17191,15 @@ local function controlsText(controls): string
 	else
 		table.insert(parts, "🔒 You can't walk this round")
 	end
-	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	for _, action in controls.Actions do
-		if touch or not action.Key then
-			table.insert(parts, ("👆 %s button"):format(action.Label))
+	for index, action in controls.Actions do
+		local input = if mode == "Mouse"
+			then InputHint.keyName(InputHint.keyFor(action))
+			elseif mode == "Gamepad" then InputHint.keyName(InputHint.gamepadFor(action, index))
+			else nil
+		if input then
+			table.insert(parts, ("[%s] %s"):format(input, action.Label))
 		else
-			table.insert(parts, ("[%s] %s"):format(action.Key, action.Label))
+			table.insert(parts, ("👆 %s button"):format(action.Label))
 		end
 	end
 	return table.concat(parts, "    ")
@@ -15834,7 +17235,7 @@ function InstructionsCard:show(minigame, participants, endsAt: number, myId: str
 	self.Title.Text = minigame.Name
 	self.Layout.Text = ("%s  •  %d seconds"):format(minigame.Layout, minigame.Duration)
 	self.Description.Text = minigame.Description
-	self.Controls.Text = controlsText(minigame.Controls)
+	self.Controls.Text = InstructionsCard.controlsText(minigame.Controls, InputHint.mode())
 	self.Teams.Text = teamsText(participants, myId)
 	self.Root.Visible = true
 	Theme.pop(self.Root)
@@ -15855,7 +17256,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -16253,7 +17654,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -16368,7 +17769,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -16505,7 +17906,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -16623,7 +18024,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -17037,7 +18438,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -17101,7 +18502,7 @@ function SpectatorBar.new(screen: ScreenGui, onCycle: (number) -> ())
 end
 
 function SpectatorBar:show(targetName: string?)
-	self.Label.Text = "👀 " .. (targetName or "Arena")
+	self.Label.Text = if targetName then "👀 Watching " .. targetName else "👀 Arena"
 	if self.Root.Visible then
 		return
 	end
@@ -17126,7 +18527,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -17297,7 +18698,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -17417,7 +18818,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -17590,22 +18991,192 @@ return VoteScreen
 ]]></string>
             </Properties>
           </Item>
+          <Item class="ModuleScript" referent="85">
+            <Properties>
+              <string name="Name">YouMarker</string>
+              <string name="Source"><![CDATA[--[[
+	YouMarker
+	A "YOU" tag with a small arrow, floating above your own character (on the board and in
+	minigames) so you can find yourself among four similar bodies. Only on this client: the
+	BillboardGui lives in your PlayerGui, so nobody else sees it, and it's never put on bots
+	or other players.
+
+	  YouMarker.new(getCharacter, parent)   getCharacter() -> your current character (or nil)
+	  marker:setActive(on)                  Main turns it on only while you're an active
+	                                        participant and no full-screen card is up
+	  marker:update()                       every frame: (re)attach to the current head, keep a
+	                                        readable size at any camera distance
+
+	Its arrow tip sits just above the top of the character, cosmetics included, and it stays
+	upright facing the camera, as billboards do. A new character (respawn, replaced body) is picked up on the next frame.
+]]
+
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local YouMarker = {}
+YouMarker.__index = YouMarker
+
+local HEIGHT_STUDS = 1.6 -- tag height it aims for in the world...
+local MIN_PIXELS, MAX_PIXELS = 26, 40 -- ...kept between these on screen (phone readable)
+local CLEARANCE = 0.8 -- studs between the top of the character (hats, buckets...) and the arrow tip
+local MIN_ABOVE_HEAD = 1.5 -- never lower than this above the head's centre
+
+function YouMarker.new(getCharacter: () -> Model?, parent: Instance)
+	local self = setmetatable({ GetCharacter = getCharacter, Active = false }, YouMarker)
+	self.Gui = make("BillboardGui", {
+		Name = "YouMarker",
+		-- Not AlwaysOnTop: it floats above the head with nothing in front of it from these
+		-- cameras, and always-on-top billboards didn't render in Studio's capture.
+		AlwaysOnTop = false,
+		LightInfluence = 0,
+		ResetOnSpawn = false,
+		Size = UDim2.fromOffset(78, 64),
+		-- The gui's bottom edge (the arrow tip) sits at the anchor point, so it never hangs down
+		-- over the character however big the tag is on screen.
+		SizeOffset = Vector2.new(0, 0.5),
+		StudsOffsetWorldSpace = Vector3.new(0, MIN_ABOVE_HEAD, 0),
+		MaxDistance = 1000,
+		Enabled = false,
+		Parent = parent,
+	})
+	self.Tag = make("Frame", {
+		Name = "Tag",
+		Size = UDim2.fromScale(1, 0.66),
+		BackgroundColor3 = Theme.Colors.Overlay,
+		BackgroundTransparency = 0.05,
+		Parent = self.Gui,
+	}, { Theme.corner(10), Theme.stroke(Theme.Colors.Accent, 3) })
+	Theme.label({
+		Size = UDim2.fromScale(1, 1),
+		Font = Theme.TitleFont,
+		Text = "YOU",
+		TextColor3 = Theme.Colors.Text,
+		Parent = self.Tag,
+	}, 40)
+	self.Arrow = make("TextLabel", {
+		Name = "Arrow",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.64),
+		Size = UDim2.fromScale(0.4, 0.36),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextScaled = true,
+		Text = "▼",
+		TextColor3 = Theme.Colors.Accent,
+		TextStrokeColor3 = Theme.Colors.Overlay,
+		TextStrokeTransparency = 0,
+		Parent = self.Gui,
+	})
+	return self
+end
+
+--[[
+	Should the marker show? state = {
+	  CardOpen     a full-screen card (vote, instructions, results, standings) is up
+	  Phase        current Net.Phase name
+	  InRound      a minigame is on for this client
+	  Participant  you play this minigame (not a spectator)
+	  Spectating   the spectator camera is on (watching, or knocked out)
+	  OnBoard      board HUD showing
+	  Seated       you hold a seat in this board match
+	}
+]]
+function YouMarker.shouldShow(state): boolean
+	if state.CardOpen then
+		return false
+	end
+	if state.InRound then
+		local live = state.Phase == "Countdown" or state.Phase == "Playing" or state.Phase == "Finished"
+		return live and state.Participant == true and not state.Spectating
+	end
+	return state.Phase == "Board" and state.OnBoard == true and state.Seated == true
+end
+
+function YouMarker:setActive(active: boolean)
+	self.Active = active
+	if not active then
+		self.Gui.Enabled = false
+	end
+end
+
+local function headOf(character: Model?): BasePart?
+	if not character or not character.Parent then
+		return nil
+	end
+	local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+	return if head and head:IsA("BasePart") then head else nil
+end
+
+-- On-screen tag height in pixels for a head this far from the camera.
+function YouMarker.pixelHeight(distance: number, viewportHeight: number, fieldOfView: number): number
+	local pixelsPerStud = (viewportHeight / 2) / math.tan(math.rad(fieldOfView) / 2) / math.max(distance, 1)
+	return math.clamp(HEIGHT_STUDS * pixelsPerStud, MIN_PIXELS, MAX_PIXELS)
+end
+
+function YouMarker:update()
+	local head = if self.Active then headOf(self.GetCharacter()) else nil
+	if not head then
+		self.Gui.Enabled = false
+		self.Gui.Adornee = nil
+		return
+	end
+	if self.Gui.Adornee ~= head then
+		self.Gui.Adornee = head -- first time, or a new character
+	end
+	-- Just above whatever is highest on the character: hats, and anything welded to it from
+	-- elsewhere (Kernel Catch's popcorn bucket lives in the arena, not in the character).
+	local top = head.Position.Y + head.Size.Y / 2
+	local ok, parts = pcall(head.GetConnectedParts, head, true)
+	for _, part in if ok then parts else {} do
+		if part.Transparency < 1 then
+			top = math.max(top, part.Position.Y + part.Size.Magnitude / 2)
+		end
+	end
+	local above = math.max(MIN_ABOVE_HEAD, top - head.Position.Y + CLEARANCE)
+	if math.abs(self.Gui.StudsOffsetWorldSpace.Y - above) > 0.05 then
+		self.Gui.StudsOffsetWorldSpace = Vector3.new(0, above, 0)
+	end
+	local camera = Workspace.CurrentCamera
+	if camera then
+		local height = YouMarker.pixelHeight(
+			(camera.CFrame.Position - head.Position).Magnitude,
+			camera.ViewportSize.Y,
+			camera.FieldOfView
+		)
+		-- Tag is 66% of the gui; the arrow hangs under it.
+		local tag = height / 0.66
+		self.Gui.Size = UDim2.fromOffset(math.floor(height * 1.7), math.floor(tag))
+	end
+	self.Gui.Enabled = true
+end
+
+function YouMarker:destroy()
+	self.Gui:Destroy()
+end
+
+return YouMarker
+]]></string>
+            </Properties>
+          </Item>
         </Item>
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="81">
+  <Item class="Workspace" referent="86">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="82">
+    <Item class="Model" referent="87">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="83">
+      <Item class="Part" referent="88">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -17625,7 +19196,7 @@ return VoteScreen
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="84">
+      <Item class="SpawnLocation" referent="89">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
