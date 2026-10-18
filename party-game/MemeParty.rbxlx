@@ -13915,6 +13915,10 @@ local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
 local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75, BoardMap = 0.85, BoardMapPanel = 0.75 }
 local hudBasePositions = {}
+-- Board strips pinned to the top edge: however small the phone scale makes their offset, they
+-- stay below Roblox's top bar (PartyUI ignores the inset, so the bar is part of our space).
+local CLEAR_TOP_BAR = { BoardHeader = true, BoardStandings = true, BoardMapPanel = true }
+local TOP_BAR_GAP = 6
 
 local function fitHudToScreen()
 	local camera = workspace.CurrentCamera
@@ -13931,13 +13935,21 @@ local function fitHudToScreen()
 			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
 			uiScale.Scale = scale
 			strip:SetAttribute("HudScale", scale) -- Theme.pop animates back to this, not to 1
-			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
+			local y = base.Y.Offset * scale
+			if CLEAR_TOP_BAR[name] and base.Y.Scale == 0 then
+				y = math.max(y, GuiService:GetGuiInset().Y + TOP_BAR_GAP)
+			end
+			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, y)
 		end
 	end
 end
 
 fitHudToScreen()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHudToScreen)
+-- The top bar's size can arrive after this script starts.
+pcall(function()
+	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(fitHudToScreen)
+end)
 
 -- While a full-screen card (vote, instructions, results) is up, the mobile thumbstick and
 -- jump button are switched off entirely, so they can never sit on top of the card.
@@ -14072,6 +14084,7 @@ phaseHandlers[Phase.Board] = function(_message)
 	hud:setTimer(nil)
 	hud:setStatus(nil)
 	setCardOpen(true) -- no walking on the board: hide the thumbstick so the roll button is clear
+	fitHudToScreen() -- the top-bar inset is known by now
 	boardView:show()
 end
 
@@ -14165,6 +14178,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 		local handler = phaseHandlers[message.Phase]
 		if handler then
 			currentPhase = message.Phase
+			-- Phones: on the board the toast feed moves to the top right (off the standings).
+			hud:setBoardToasts(message.Phase == Phase.Board or message.Phase == Phase.Standings)
 			handler(message)
 		end
 	elseif message.Type == Net.Message.VoteUpdate then
@@ -15784,6 +15799,16 @@ local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
 
+-- Phones get a compact standings column (shorter, see-through rows with icon stats) so it
+-- covers less of the board; desktop keeps the roomier rows.
+local TOUCH = UserInputService.TouchEnabled
+local ROW_HEIGHT = if TOUCH then 44 else 54
+local ROW_GAP = if TOUCH then 4 else 6
+local STANDINGS_WIDTH = if TOUCH then 200 else 230
+local NAME_LENGTH = 14 -- longer names end in "…" in prompts, toasts and the MAP
+local HEADER_NAME_LENGTH = 10 -- the header line is shorter still
+local MAP_TEXT_SIZE = if TOUCH then 17 else 20
+
 -- A key that changes whenever the item list does (so buttons are only rebuilt then).
 local function itemKeyOf(items): string
 	local ids = {}
@@ -15825,11 +15850,11 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.Standings = make("Frame", {
 		Name = "BoardStandings",
 		Position = UDim2.new(0, 12, 0, 150),
-		Size = UDim2.fromOffset(230, 4 * 54 + 3 * 6),
+		Size = UDim2.fromOffset(STANDINGS_WIDTH, 4 * ROW_HEIGHT + 3 * ROW_GAP),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screen,
-	}, { make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	}, { make("UIListLayout", { Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder }) })
 	self.Rows = {}
 
 	-- Roll button
@@ -15846,8 +15871,10 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 		Parent = screen,
 	}, { Theme.corner(75), Theme.stroke(Color3.new(1, 1, 1), 4) })
 	self.RollLabel = Theme.label({
-		Size = UDim2.fromScale(1, 0.6),
-		Position = UDim2.fromScale(0, 0.12),
+		-- Kept inside the circle: the corners of a full-width box sit outside it.
+		AnchorPoint = Vector2.new(0.5, 0),
+		Size = UDim2.fromScale(0.76, 0.5),
+		Position = UDim2.fromScale(0.5, 0.16),
 		Font = Theme.TitleFont,
 		TextColor3 = Theme.Colors.Overlay,
 		Text = "ROLL!",
@@ -15976,6 +16003,25 @@ local function seatLine(seat, plural: string): string
 	)
 end
 
+-- Phone standings line: the same facts with icons so it fits a narrow row at a readable size
+-- (the MAP still spells everything out).
+local function compactSeatLine(seat): string
+	if seat.OrderRolls and #seat.OrderRolls > 0 then
+		return "Rolled " .. table.concat(seat.OrderRolls, ", ")
+	end
+	-- (🪙 and 🎒 don't render clearly in Roblox's emoji font; 👑 and 💰 do.)
+	local items = #(seat.Items or {})
+	local line = ("%d👑 · %d💰 · %d item%s"):format(seat.Collectibles, seat.Coins, items, if items == 1 then "" else "s")
+	if seat.Shield then
+		line ..= "  🛡"
+	end
+	if seat.Underdog then
+		line ..= "  underdog"
+	end
+	return line
+end
+
+
 function BoardView:setState(message)
 	self.State = message
 	if not self.Visible then
@@ -15987,7 +16033,7 @@ function BoardView:setState(message)
 
 	-- Header
 	local myTurn = message.TurnId == myId
-	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
+	local who = if myTurn then "Your" else (message.TurnName and (Theme.shortWords(message.TurnName, HEADER_NAME_LENGTH) .. "'s") or nil)
 	self.Title.Text = ("%s %d / %d%s"):format(
 		if message.Frenzy then "FINAL FRENZY · Round" else "Round",
 		message.Round or 0,
@@ -16012,7 +16058,7 @@ function BoardView:setState(message)
    if seat.Id==message.TurnId and dock and not dock.Open then sub="Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
   end
  end
- self.Subtitle.Text = sub
+ self.Subtitle.Text = Theme.shortWords(sub, HEADER_NAME_LENGTH + 2)
 
 	-- Standings rows (turn order)
 	for _, row in self.Rows do
@@ -16024,22 +16070,28 @@ function BoardView:setState(message)
 		local isMe = seat.Id == myId
 		local row = make("Frame", {
 			LayoutOrder = seat.Order,
-			Size = UDim2.new(1, 0, 0, 54),
+			Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
 			BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Card,
-			BackgroundTransparency = 0.1,
+			BackgroundTransparency = if TOUCH then 0.25 else 0.1,
 			Parent = self.Standings,
 		}, { Theme.corner(12) })
 		if isTurn then
 			Theme.stroke(Theme.Colors.Accent, 3).Parent = row
 		end
-		Theme.label({
-			Position = UDim2.fromOffset(10, 4),
-			Size = UDim2.new(1, -20, 0, 26),
+		-- Fixed size, cut with "…": a long name never shrinks the text or pushes "(bot)" out.
+		local name = if isMe then "YOU" else seat.Name
+		make("TextLabel", {
+			Position = UDim2.fromOffset(10, if TOUCH then 3 else 4),
+			Size = UDim2.new(1, -20, 0, if TOUCH then 22 else 26),
+			BackgroundTransparency = 1,
 			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
 			Font = Theme.TitleFont,
-			Text = (if isTurn then "▶ " else "") .. (if isMe then "YOU" else seat.Name) .. (if seat.IsBot then " (bot)" else ""),
+			TextSize = 22,
+			TextColor3 = Theme.Colors.Text,
+			Text = (if isTurn then "▶ " else "") .. (if seat.IsBot and TOUCH then "🤖 " else "") .. name .. (if seat.IsBot and not TOUCH then " (bot)" else ""),
 			Parent = row,
-		}, 22)
+		})
 		local line = seatLine(seat, message.CollectiblePlural or "Crowns")
 		if seat.OrderRolls and #seat.OrderRolls > 0 then
 			line = "Rolled " .. table.concat(seat.OrderRolls, ", then ")
@@ -16052,14 +16104,29 @@ function BoardView:setState(message)
 				line ..= "  ·  underdog"
 			end
 		end
-		Theme.label({
-			Position = UDim2.fromOffset(10, 30),
-			Size = UDim2.new(1, -20, 0, 20),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextColor3 = Theme.Colors.Accent,
-			Text = line,
-			Parent = row,
-		}, 18)
+		if TOUCH then
+			make("TextLabel", {
+				Position = UDim2.fromOffset(8, 24),
+				Size = UDim2.new(1, -16, 0, 18),
+				BackgroundTransparency = 1,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				Font = Theme.BodyFont,
+				TextSize = 19,
+				TextColor3 = Theme.Colors.Accent,
+				Text = compactSeatLine(seat),
+				Parent = row,
+			})
+		else
+			Theme.label({
+				Position = UDim2.fromOffset(10, 30),
+				Size = UDim2.new(1, -20, 0, 20),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextColor3 = Theme.Colors.Accent,
+				Text = line,
+				Parent = row,
+			}, 18)
+		end
 		table.insert(self.Rows, row)
 	end
 
@@ -16130,6 +16197,7 @@ local function mapLine(self, order: number, text: string, color: Color3?, swatch
 	local row = make("Frame", {
 		LayoutOrder = order,
 		Size = UDim2.new(1, 0, 0, 24),
+		AutomaticSize = Enum.AutomaticSize.Y, -- long lines wrap instead of shrinking
 		BackgroundTransparency = 1,
 		Parent = self.MapPanel,
 	})
@@ -16141,14 +16209,20 @@ local function mapLine(self, order: number, text: string, color: Color3?, swatch
 			Parent = row,
 		}, { Theme.corner(4) })
 	end
-	Theme.label({
+	make("TextLabel", {
 		Position = UDim2.fromOffset(if swatch then 26 else 0, 0),
-		Size = UDim2.new(1, if swatch then -26 else 0, 1, 0),
+		Size = UDim2.new(1, if swatch then -26 else 0, 0, 24),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextSize = MAP_TEXT_SIZE,
+		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
 		TextColor3 = color or Theme.Colors.Text,
-		Text = text,
+		Text = Theme.shortWords(text, NAME_LENGTH),
 		Parent = row,
-	}, 20)
+	})
 end
 
 -- Rebuilds the MAP panel from the latest state + layout.
@@ -16230,7 +16304,7 @@ function BoardView:showPrompt(message)
 		self.Prompt.Visible = false
 		return
 	end
-	self.PromptText.Text = message.Prompt
+	self.PromptText.Text = Theme.shortWords(message.Prompt, NAME_LENGTH)
 	local count = #message.Options
 	for index, option in message.Options do
 		local button = make("TextButton", {
@@ -16240,7 +16314,7 @@ function BoardView:showPrompt(message)
 			Font = Theme.BodyFont,
 			TextScaled = true,
 			TextColor3 = if index == count and count > 1 then Theme.Colors.Text else Theme.Colors.Overlay,
-			Text = option,
+			Text = Theme.shortWords(option, NAME_LENGTH),
 			Parent = self.PromptButtons,
 		}, {
 			Theme.corner(14),
@@ -16800,6 +16874,7 @@ return GuidePointer
 	banner (3-2-1 / GO! / FINISH!), the toast feed, and the lobby message pill.
 ]]
 
+local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -16817,6 +16892,11 @@ local TOAST_HEIGHT = if TOUCH then 26 else 36
 local TOAST_TEXT_SIZE = if TOUCH then 14 else 20
 local TOAST_WIDTH = if TOUCH then 0.24 else 0.3
 local TOAST_MIN_WIDTH = if TOUCH then 170 else 220
+-- Phones on the board: the left column belongs to the standings and MAP, so the feed moves to
+-- the top right, under Roblox's top bar, as a narrow column of two-line toasts.
+local BOARD_TOAST_WIDTH = 210
+local BOARD_TOAST_HEIGHT = 34
+local BOARD_TOAST_TEXT_SIZE = 12
 
 function Hud.new(screen: ScreenGui)
 	local self = setmetatable({}, Hud)
@@ -16882,6 +16962,7 @@ function Hud.new(screen: ScreenGui)
 		make("UISizeConstraint", { MinSize = Vector2.new(TOAST_MIN_WIDTH, 0) }),
 	})
 	self.ToastCount = 0
+	self.BoardToasts = false
 
 	-- Lobby pill (bottom centre)
 	self.LobbyFrame = make("Frame", {
@@ -16972,21 +17053,69 @@ function Hud:clearToasts()
 	end
 end
 
+-- Phone board layout for the feed (see BOARD_TOAST_*); desktop and minigames keep the
+-- left-side feed.
+function Hud:setBoardToasts(on: boolean)
+	on = on and TOUCH
+	if on == self.BoardToasts then
+		return
+	end
+	self.BoardToasts = on
+	self:clearToasts()
+	local list = self.ToastList
+	local constraint = list:FindFirstChildOfClass("UISizeConstraint")
+	local layout = list:FindFirstChildOfClass("UIListLayout")
+	if on then
+		local inset = GuiService:GetGuiInset().Y
+		list.AnchorPoint = Vector2.new(1, 0)
+		list.Position = UDim2.new(1, -10, 0, inset + 6)
+		list.Size = UDim2.fromOffset(BOARD_TOAST_WIDTH, MAX_TOASTS * (BOARD_TOAST_HEIGHT + 4))
+		constraint.MinSize = Vector2.zero
+		layout.Padding = UDim.new(0, 4)
+		layout.VerticalAlignment = Enum.VerticalAlignment.Top
+	else
+		list.AnchorPoint = Vector2.new(0, 0.5)
+		list.Position = UDim2.new(0, 12, 0.5, 0)
+		list.Size = UDim2.fromScale(TOAST_WIDTH, 0.4)
+		constraint.MinSize = Vector2.new(TOAST_MIN_WIDTH, 0)
+		layout.Padding = UDim.new(0, 6)
+		layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	end
+end
+
 function Hud:toast(text: string)
 	self.ToastCount += 1
+	local board = self.BoardToasts
 	local toast = make("Frame", {
 		LayoutOrder = self.ToastCount,
-		Size = UDim2.new(1, 0, 0, TOAST_HEIGHT),
+		Size = UDim2.new(1, 0, 0, if board then BOARD_TOAST_HEIGHT else TOAST_HEIGHT),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.2,
 		Parent = self.ToastList,
-	}, { Theme.corner(10), Theme.padding(6) })
-	local label = Theme.label({
-		Size = UDim2.fromScale(1, 1),
-		Text = text,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = toast,
-	}, TOAST_TEXT_SIZE)
+	}, { Theme.corner(10), Theme.padding(if board then 4 else 6) })
+	local label
+	if board then
+		-- Two lines at a fixed, readable size; anything longer ends in "…".
+		label = make("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Font = Theme.BodyFont,
+			TextColor3 = Theme.Colors.Text,
+			TextSize = BOARD_TOAST_TEXT_SIZE,
+			TextWrapped = true,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Text = Theme.shortWords(text),
+			Parent = toast,
+		})
+	else
+		label = Theme.label({
+			Size = UDim2.fromScale(1, 1),
+			Text = text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = toast,
+		}, TOAST_TEXT_SIZE)
+	end
 
 	-- Keep the feed short.
 	local toasts = {}
@@ -17976,7 +18105,8 @@ local function buildRow(parent: Instance, index: number, row, isMe: boolean)
 		Text = Theme.ordinal(row.Placement),
 		Parent = frame,
 	}, 34)
-	local name = (if row.IsBot then "🤖 " else "") .. row.Name .. (if isMe then " (you)" else "")
+	-- Long display names end in "…" instead of wrapping into an unreadable second line.
+	local name = (if row.IsBot then "🤖 " else "") .. Theme.shortWords(row.Name, 14) .. (if isMe then " (you)" else "")
 	Theme.label({
 		Position = UDim2.fromScale(0.18, 0),
 		Size = UDim2.fromScale(0.46, 1),
@@ -18581,7 +18711,7 @@ local function showBonuses(self, message, myId: string)
 	for index, bonus in message.Bonuses or {} do
 		local names, mine = {}, false
 		for _, winner in bonus.Winners do
-			table.insert(names, if winner.Id == myId then "You" else winner.Name)
+			table.insert(names, if winner.Id == myId then "You" else Theme.shortWords(winner.Name, 14))
 			mine = mine or winner.Id == myId
 		end
 		local frame = make("Frame", {
@@ -18642,7 +18772,7 @@ function StandingsScreen:show(message, myId: string)
 	elseif winner.Id == myId then
 		self.Title.Text = "You win the match!"
 	else
-		self.Title.Text = ("%s wins the match!"):format(winner.Name)
+		self.Title.Text = ("%s wins the match!"):format(Theme.shortWords(winner.Name, 14))
 	end
 	local plural = message.CollectiblePlural or "Crowns"
 	for index, row in rows do
@@ -18667,7 +18797,7 @@ function StandingsScreen:show(message, myId: string)
 			Position = UDim2.fromScale(0.18, 0),
 			Size = UDim2.fromScale(0.4, 1),
 			TextXAlignment = Enum.TextXAlignment.Left,
-			Text = row.Name .. (if row.IsBot then " (bot)" else "") .. (if isMe then " (you)" else ""),
+			Text = Theme.shortWords(row.Name, 14) .. (if row.IsBot then " (bot)" else "") .. (if isMe then " (you)" else ""),
 			Parent = frame,
 		}, 26)
 		Theme.label({
@@ -18798,6 +18928,24 @@ function Theme.pop(guiObject: GuiObject)
 	local target = guiObject:GetAttribute("HudScale") or 1
 	scale.Scale = target * 0.6
 	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = target }):Play()
+end
+
+-- Cuts every word longer than `max` characters to `max - 1` plus "…", so a 20-character
+-- display name can't push a line out of its box ("WWWWWWWWWWWWWWWWWWWW left" ->
+-- "WWWWWWWWWWWWW… left"). Line breaks and spacing are kept.
+function Theme.shortWords(text: string, max: number?): string
+	local limit = max or 14
+	return (string.gsub(text, "[^%s]+", function(word)
+		-- Keep a possessive or trailing punctuation: "Supercalifragilistic's" -> "Supercalifrag…'s".
+		local core, tail = string.match(word, "^(.-)('s[%p]*)$")
+		if not core then
+			core, tail = string.match(word, "^(.-)([%p]*)$")
+		end
+		if core and utf8.len(core) and utf8.len(core) > limit then
+			return string.sub(core, 1, utf8.offset(core, limit) - 1) .. "…" .. tail
+		end
+		return word
+	end))
 end
 
 -- "1:05" style clock.
