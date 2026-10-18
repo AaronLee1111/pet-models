@@ -92,3 +92,15 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - On a phone the START label sits over part of the settings rows (it never blocks taps).
 - Testing note: Studio's plain play window stops rendering while it's off-screen or the Mac is locked (0 frames), so the desktop checks used the HD 720 / HD 1080 device profiles; emulated clicks only sometimes reach buttons, so some steps were driven with the same inputs the buttons send.
 - Four-client regression (2026-10-18): twice only 3 of the 4 Studio test clients joined (the fourth window stalled in Studio itself), so the foundation run used 3 real clients + 1 bot and skipped the disconnect scenario. Everything it ran matched; re-run with four clients when fewer Studio windows are open.
+
+## Phone board HUD readability (2026-10-18)
+
+- ~~Standings cover too much of the board on phones; long names shrink to unreadable text.~~ Fixed: compact see-through rows (iPhone 17 Pro: 110×103 px, was 126×128) with icon stats; names stay 12 px and end in "…".
+- ~~Toasts overlap the standings on phones.~~ Fixed: on the board they sit top right under Roblox's top bar, two at most, 210 px wide, two wrapped lines.
+- ~~ROLL! clips at the circle's edge.~~ Fixed: the label stays inside the button.
+- ~~Board header sat inside Roblox's top bar on phones (y 35 on a 58 px bar).~~ Fixed: top board panels stay below the bar at any HUD scale.
+- ~~20-character names wrap or shrink on the header, prompts, MAP, results and final standings.~~ Fixed: shortened with "…" (Theme.shortWords).
+- Board coins show as "💰" on the phone standings because 🪙 doesn't render in Roblox's emoji font; the minigame results card still uses 🪙 (shows as a blank).
+- The final standings card says "1 Crowns" (no singular).
+- The first-time guidance label can sit over the left-middle of the board during a fork or Crown offer on phones (it never blocks taps).
+- With a "FINAL FRENZY" prefix and a long name the header title scales down to about 10 px on phones.
