@@ -16,6 +16,7 @@ local Controls = {}
 
 local DEFAULT_GAMEPAD = { "ButtonX", "ButtonY", "ButtonB" }
 local bound: { string } = {}
+local current = nil -- the bound Info.Controls (nil when nothing is bound)
 local actionBar = nil
 local movementDisabled = false
 
@@ -47,6 +48,7 @@ end
 
 function Controls.bind(controls, send: (string) -> ())
 	Controls.unbind()
+	current = controls
 
 	for index, action in controls.Actions do
 		local bindName = "Party_" .. action.Action
@@ -87,7 +89,13 @@ function Controls.bind(controls, send: (string) -> ())
 	end
 end
 
+-- The minigame controls bound right now, or nil (spectating, knocked out, between rounds).
+function Controls.current()
+	return current
+end
+
 function Controls.unbind()
+	current = nil
 	for _, bindName in bound do
 		ContextActionService:UnbindAction(bindName)
 	end

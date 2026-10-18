@@ -32,6 +32,7 @@ local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
 local Profiles = require(script.Parent.Parent.Profiles)
 local SeatClaims = require(script.Parent.Parent.SeatClaims)
+local Tutorial = require(script.Parent.Parent.Tutorial)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -417,6 +418,26 @@ BoardGame.requestReclaim = requestReclaim
 
 -- Choices -----------------------------------------------------------------------------------------
 
+-- What a fork's buttons lead to, for the client's first-fork guidance: the first space of
+-- each route and its distance to the Crown (nil when it can't be reached).
+local function describeRoutes(request)
+	local data = request.Kind == "Path" and request.Data
+	if not data or not data.Spaces then
+		return nil
+	end
+	local routes = {}
+	for i, spaceId in data.Spaces do
+		local info = data.Info and data.Info[i]
+		local distance = info and info.CrownDistance
+		table.insert(routes, {
+			SpaceId = spaceId,
+			CrownDistance = if distance and distance ~= math.huge then distance else nil,
+			Toll = info and info.Toll or 0,
+		})
+	end
+	return routes
+end
+
 -- Match's Ask: players get a prompt on screen, bots decide on their own.
 local function ask(seat, request)
 	local participant = seat.Participant
@@ -436,6 +457,7 @@ local function ask(seat, request)
 			Id = nextPromptId,
 			Player = participant.Player,
 			Count = #request.Options,
+			Kind = request.Kind,
 			Answer = nil,
 		}
 		current.Prompt = prompt
@@ -447,6 +469,9 @@ local function ask(seat, request)
 			Options = request.Options,
 			Default = request.Default,
 			EndsAt = endsAt,
+			Kind = request.Kind, -- "Path" | "Collectible" | "Shop" | ... (guidance only)
+			Routes = describeRoutes(request),
+			Price = request.Price,
 		})
 		while prompt.Answer == nil and now() < endsAt and not isAway(participant) do
 			task.wait(0.1)
@@ -600,6 +625,7 @@ local function useItem(seat, slot, target, choice)
  if match.BridgeRevision~=revision then animateRotation() end
  current.Stage=previousStage
 	if used then
+		Tutorial.complete(seat.Participant, "SawItem")
 		feed(text)
 		placeAll() -- swaps and warps move pieces
 	elseif seat.Participant.Player and seat.Participant.Player.Parent then
@@ -888,8 +914,15 @@ function BoardGame.handleInput(player: Player, payload): boolean
 	if kind == Net.Input.Roll then
 		if current and current.RollWaiting == player then
 			current.RollRequested = true
+			Tutorial.complete(player, "RolledBoardTurn")
+			-- Rolled while holding an item they could have used: they've seen the item choice.
+			local turn = current.Match.Turn
+			if current.Turn and #current.Turn.Items > 0 and turn and not turn.ItemUsed then
+				Tutorial.complete(player, "SawItem")
+			end
 		elseif current and current.OrderWaiting and current.OrderWaiting[player] == false then
 			current.OrderWaiting[player] = true
+			Tutorial.complete(player, "RolledForOrder")
 		end
 		return true
 	elseif kind == Net.Input.UseItem then
@@ -911,6 +944,11 @@ function BoardGame.handleInput(player: Player, payload): boolean
 			and index <= prompt.Count
 		then
 			prompt.Answer = index
+			if prompt.Kind == "Path" then
+				Tutorial.complete(player, "ChoseFork")
+			elseif prompt.Kind == "Collectible" then
+				Tutorial.complete(player, "SawCrownPurchase")
+			end
 		end
 		return true
 	end

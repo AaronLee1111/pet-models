@@ -526,6 +526,7 @@ function Match:offerCollectible(seat): string
 		),
 		Options = { "Buy", "Not now" },
 		Default = 1,
+		Price = price,
 	})
 	if pick == 1 and self:buyCollectible(seat) then
 		return ("%s bought a %s!"):format(name, self.CollectibleName)

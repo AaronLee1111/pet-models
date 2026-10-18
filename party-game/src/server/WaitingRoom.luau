@@ -16,6 +16,7 @@ local Workspace = game:GetService("Workspace")
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Net = require(ReplicatedStorage.PartyShared.Net)
 local MinigameManager = require(script.Parent.MinigameManager)
+local Tutorial = require(script.Parent.Tutorial)
 
 local WaitingRoom = {}
 
@@ -107,6 +108,7 @@ function WaitingRoom.handleInput(player: Player, payload): boolean
 	end
 	if kind == Net.Input.StartMatch then
 		startNow = true
+		Tutorial.complete(player, "StartedMatch")
 	elseif WaitingRoom.applySetting(payload.Key, payload.Value) then
 		changed = true
 	end

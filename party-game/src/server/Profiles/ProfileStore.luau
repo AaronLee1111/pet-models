@@ -7,6 +7,7 @@
 	  Coins      permanent "bank" coins (NOT match coins: those live in CoinService and reset)
 	  Owned      { [cosmeticId] = true }
 	  Equipped   { [slot] = cosmeticId }
+	  Tutorial   { [flag] = true }  guided first actions already done (Config.Tutorial.Flags)
 
 	Match coins, Crowns, board items and stats are never written here.
 
@@ -17,13 +18,18 @@
 	session locking).
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Config"))
+
 local ProfileStore = {}
 ProfileStore.__index = ProfileStore
 
-ProfileStore.Version = 1
+-- 1: Coins, Owned, Equipped.  2: + Tutorial flags.
+ProfileStore.Version = 2
 
 function ProfileStore.template()
-	return { Version = ProfileStore.Version, Coins = 0, Owned = {}, Equipped = {} }
+	return { Version = ProfileStore.Version, Coins = 0, Owned = {}, Equipped = {}, Tutorial = {} }
 end
 
 local function deepCopy(value)
@@ -61,7 +67,14 @@ function ProfileStore.reconcile(data)
 			end
 		end
 	end
-	-- Future: if (data.Version or 0) < 2 then migrate ... end
+	-- Version 1 saves have no Tutorial table: they start with every flag unset (the template).
+	if type(data.Tutorial) == "table" then
+		for _, flag in Config.Tutorial.Flags do
+			if data.Tutorial[flag] == true then
+				profile.Tutorial[flag] = true
+			end
+		end
+	end
 	return profile
 end
 

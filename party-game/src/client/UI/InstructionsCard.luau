@@ -4,9 +4,9 @@
 	name, layout, description, controls, and (for 1v3 / 2v2) who is on which team.
 ]]
 
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local InputHint = require(script.Parent.InputHint)
 local Theme = require(script.Parent.Theme)
 local make = Theme.make
 
@@ -71,7 +71,9 @@ function InstructionsCard.new(screen: ScreenGui)
 	return self
 end
 
-local function controlsText(controls): string
+-- mode = InputHint.mode(): touch shows only the button labels, a keyboard shows the key,
+-- a gamepad shows the controller button when the action has one.
+function InstructionsCard.controlsText(controls, mode: string): string
 	local parts = {}
 	if controls.Move and controls.Jump then
 		table.insert(parts, "🕹 Move + Jump")
@@ -80,12 +82,15 @@ local function controlsText(controls): string
 	else
 		table.insert(parts, "🔒 You can't walk this round")
 	end
-	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	for _, action in controls.Actions do
-		if touch or not action.Key then
-			table.insert(parts, ("👆 %s button"):format(action.Label))
+	for index, action in controls.Actions do
+		local input = if mode == "Mouse"
+			then InputHint.keyName(InputHint.keyFor(action))
+			elseif mode == "Gamepad" then InputHint.keyName(InputHint.gamepadFor(action, index))
+			else nil
+		if input then
+			table.insert(parts, ("[%s] %s"):format(input, action.Label))
 		else
-			table.insert(parts, ("[%s] %s"):format(action.Key, action.Label))
+			table.insert(parts, ("👆 %s button"):format(action.Label))
 		end
 	end
 	return table.concat(parts, "    ")
@@ -121,7 +126,7 @@ function InstructionsCard:show(minigame, participants, endsAt: number, myId: str
 	self.Title.Text = minigame.Name
 	self.Layout.Text = ("%s  •  %d seconds"):format(minigame.Layout, minigame.Duration)
 	self.Description.Text = minigame.Description
-	self.Controls.Text = controlsText(minigame.Controls)
+	self.Controls.Text = InstructionsCard.controlsText(minigame.Controls, InputHint.mode())
 	self.Teams.Text = teamsText(participants, myId)
 	self.Root.Visible = true
 	Theme.pop(self.Root)

@@ -8,6 +8,7 @@
 	  Profiles.get(player) -> profile?    { Coins, Owned, Equipped } (see ProfileStore)
 	  Profiles.addBankCoins(player, n)    permanent coins
 	  Profiles.bankCoins(player) -> number
+	  Profiles.onLoaded(fn)               fn(player, profile) after a profile has loaded
 
 	Backend: Config.Profile.Backend ("Auto" = DataStore live, Memory in Studio). Saves happen
 	on leave (and release the session lock), every Config.Profile.AutosaveInterval, and at
@@ -63,6 +64,12 @@ else
 end
 Profiles.store = ProfileStore.new(backend)
 
+local loadedHooks: { (Player, any) -> () } = {}
+
+function Profiles.onLoaded(fn: (Player, any) -> ())
+	table.insert(loadedHooks, fn)
+end
+
 local function keyOf(player: Player): string
 	return "player_" .. player.UserId
 end
@@ -89,6 +96,9 @@ local function onJoin(player: Player)
 	end
 	-- Inventory edits these tables directly, so cosmetics bought in a match are saved too.
 	Inventory.attach(key, profile.Owned, profile.Equipped)
+	for _, hook in loadedHooks do
+		task.spawn(hook, player, profile)
+	end
 end
 
 function Profiles.start()

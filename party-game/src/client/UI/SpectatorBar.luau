@@ -59,7 +59,7 @@ function SpectatorBar.new(screen: ScreenGui, onCycle: (number) -> ())
 end
 
 function SpectatorBar:show(targetName: string?)
-	self.Label.Text = "👀 " .. (targetName or "Arena")
+	self.Label.Text = if targetName then "👀 Watching " .. targetName else "👀 Arena"
 	if self.Root.Visible then
 		return
 	end

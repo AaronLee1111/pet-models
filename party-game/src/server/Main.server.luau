@@ -8,6 +8,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
 local Arena = require(script.Parent.Arena)
@@ -20,6 +21,7 @@ local MinigameManager = require(script.Parent.MinigameManager)
 local MinigameMode = require(script.Parent.MinigameMode)
 local Participant = require(script.Parent.Participant)
 local Profiles = require(script.Parent.Profiles)
+local Tutorial = require(script.Parent.Tutorial)
 local WaitingRoom = require(script.Parent.WaitingRoom)
 
 Arena.ensureLobby()
@@ -28,8 +30,23 @@ Profiles.start() -- before cosmetics: a profile's cosmetics attach to Inventory 
 CosmeticService.start(MinigameManager.sendTo, Profiles.bankCoins)
 CosmeticShop.start(Profiles.store, Inventory, MinigameManager.sendTo, CosmeticService.sendInventory)
 MinigameManager.onReady(CosmeticService.sendInventory)
+Tutorial.configure(Profiles.get, MinigameManager.sendTo)
+Profiles.onLoaded(Tutorial.onProfileLoaded)
+MinigameManager.onReady(Tutorial.send)
+-- Studio only (testing the guided first actions again): the client command bar can send
+-- { Kind = "ResetTutorial" }. Live servers ignore it; there is no player-facing button.
+local function handleDevInput(player, payload): boolean
+	if payload.Kind ~= "ResetTutorial" then
+		return false
+	end
+	if RunService:IsStudio() then
+		Tutorial.reset(player)
+	end
+	return true
+end
 MinigameManager.setInputHandler(function(player, payload)
-	return WaitingRoom.handleInput(player, payload)
+	return handleDevInput(player, payload)
+		or WaitingRoom.handleInput(player, payload)
 		or BoardGame.handleInput(player, payload)
 		or CosmeticService.handleInput(player, payload)
 		or CosmeticShop.handleInput(player, payload)

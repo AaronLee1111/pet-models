@@ -23,6 +23,7 @@ local CoinService = require(script.Parent.CoinService)
 local MinigameInfo = require(script.Parent.MinigameInfo)
 local ResultsUtil = require(script.Parent.ResultsUtil)
 local RoundContext = require(script.Parent.RoundContext)
+local Tutorial = require(script.Parent.Tutorial)
 
 local MinigameManager = {}
 
@@ -359,20 +360,26 @@ local function onParticipantLost(participant, reason: string)
 	safeCall(active.Instance, "OnParticipantLost", participant, reason)
 end
 
--- Same entry point for real-player inputs (via the remote) and bot inputs (bot:Input).
-local function submitAction(participant, action: string)
+-- True if `participant` may press `action` right now (playing, alive, in this round).
+local function canAct(participant, action: string): boolean
 	local active = state.Active
 	if not active or state.PhaseMessage.Phase ~= Net.Phase.Playing or active.Round.Ended then
-		return
+		return false
 	end
 	if not active.Actions[action] or active.Round:IsEliminated(participant) or not participant:IsAlive() then
-		return
+		return false
 	end
 	-- Only people playing this round (a duel has two; everyone else just watches).
-	if not table.find(active.Round.Participants, participant) then
+	return table.find(active.Round.Participants, participant) ~= nil
+end
+
+-- Same entry point for real-player inputs (via the remote) and bot inputs (bot:Input).
+local function submitAction(participant, action: string)
+	if not canAct(participant, action) then
 		return
 	end
-	safeCall(active.Instance, "OnInput", participant, action)
+	Tutorial.complete(participant, "UsedMinigameAction") -- bots are ignored
+	safeCall(state.Active.Instance, "OnInput", participant, action)
 end
 
 local function awardCoins(results)
@@ -712,6 +719,12 @@ function MinigameManager.init()
 			castVote(participant, payload.Choice)
 		elseif kind == Net.Input.Action and type(payload.Action) == "string" then
 			submitAction(participant, payload.Action)
+		elseif kind == Net.Input.ActionUsed and type(payload.Action) == "string" then
+			-- The minigame's own client code sent this action (e.g. Bumper Bout's dash); it only
+			-- counts for the tutorial, and only when that action could really be pressed now.
+			if canAct(participant, payload.Action) then
+				Tutorial.complete(participant, "UsedMinigameAction")
+			end
 		end
 	end)
 

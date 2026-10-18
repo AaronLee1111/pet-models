@@ -13,10 +13,12 @@ local RunService = game:GetService("RunService")
 local Net = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("Net"))
 local CameraController = require(script.Parent:WaitForChild("CameraController"))
 local Controls = require(script.Parent:WaitForChild("Controls"))
+local Onboarding = require(script.Parent:WaitForChild("Onboarding"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
 local ActionBar = require(UI:WaitForChild("ActionBar"))
 local BoardView = require(UI:WaitForChild("BoardView"))
+local GuidePointer = require(UI:WaitForChild("GuidePointer"))
 local Hud = require(UI:WaitForChild("Hud"))
 local InstructionsCard = require(UI:WaitForChild("InstructionsCard"))
 local LobbyPanel = require(UI:WaitForChild("LobbyPanel"))
@@ -27,13 +29,19 @@ local ShopScreen = require(UI:WaitForChild("ShopScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
 local VoteScreen = require(UI:WaitForChild("VoteScreen"))
+local YouMarker = require(UI:WaitForChild("YouMarker"))
 
 local player = Players.LocalPlayer
 local myId = "player_" .. player.UserId
 local stateRemote = Net.stateRemote()
 local inputRemote = Net.inputRemote()
 
+local onboarding -- guided first actions (made once the screens exist, below)
+
 local function sendInput(payload)
+	if onboarding then
+		onboarding:noteInput(payload) -- the step this answers is done: drop the pointer now
+	end
 	inputRemote:FireServer(payload)
 end
 
@@ -67,6 +75,10 @@ end
 local function sendAction(action: string)
 	-- The minigame's client code gets first go; if it handles the action, the server needn't hear.
 	if activeMinigameClient and activeMinigameClient.onAction and activeMinigameClient.onAction(action) then
+		-- Sent by the minigame's own code; tell the server only while the tutorial still needs it.
+		if onboarding and not onboarding:isDone("UsedMinigameAction") then
+			sendInput({ Kind = Net.Input.ActionUsed, Action = action })
+		end
 		return
 	end
 	sendInput({ Kind = Net.Input.Action, Action = action })
@@ -105,6 +117,23 @@ lobbyPanel.OnShop = function()
 end
 
 local standings = StandingsScreen.new(screen)
+
+-- Guided first actions: one bouncing pointer at a time, only for this player.
+local playerGui = player:WaitForChild("PlayerGui")
+onboarding = Onboarding.new({
+	Guide = GuidePointer.new(playerGui),
+	Lobby = lobbyPanel,
+	Board = boardView,
+	Shop = shopScreen,
+	Screen = screen,
+	PlayerGui = playerGui,
+	Modals = { voteScreen.Root, instructions.Root, results.Root, standings.Root },
+})
+
+-- "YOU" over your own character while you're playing (only this client sees it).
+local youMarker = YouMarker.new(function()
+	return player.Character
+end, playerGui)
 
 -- The top/bottom HUD strips are sized in pixels for a desktop window. On a phone they would
 -- cover almost half the screen, so shrink them (and their pixel offsets) with the viewport.
@@ -187,6 +216,7 @@ end
 
 -- Round presentation state -----------------------------------------------------------------
 
+local currentPhase = nil
 local inRound = false -- true from Instructions until Results/Lobby
 local amParticipant = false
 local useProgressBar = false -- this minigame shows a race bar instead of the chip strip
@@ -213,6 +243,7 @@ end
 
 local function endRound()
 	inRound = false
+	onboarding:setMinigame(nil)
 	stopMinigameClient()
 	Controls.unbind()
 	CameraController.stop()
@@ -339,9 +370,19 @@ phaseHandlers[Phase.Playing] = function(message)
 	if amParticipant and not CameraController.isSpectating() then
 		Controls.bind(message.Minigame.Controls, sendAction)
 	end
+	onboarding:setMinigame({
+		Playing = true,
+		Participant = amParticipant,
+		Controls = message.Minigame.Controls,
+		Spectating = CameraController.isSpectating,
+		Bound = function()
+			return Controls.current() ~= nil
+		end,
+	})
 end
 
 phaseHandlers[Phase.Finished] = function(_message)
+	onboarding:setMinigame(nil)
 	stopMinigameClient() -- hand the bodies back to the server before it sends everyone home
 	Controls.unbind()
 	hud:setTimer(nil)
@@ -366,6 +407,7 @@ stateRemote.OnClientEvent:Connect(function(message)
 	if message.Type == Net.Message.Phase then
 		local handler = phaseHandlers[message.Phase]
 		if handler then
+			currentPhase = message.Phase
 			handler(message)
 		end
 	elseif message.Type == Net.Message.VoteUpdate then
@@ -387,8 +429,37 @@ stateRemote.OnClientEvent:Connect(function(message)
 		shopScreen:setInventory(message)
 	elseif message.Type == Net.Message.ShopResult then
 		shopScreen:showResult(message)
+	elseif message.Type == Net.Message.Tutorial then
+		onboarding:setFlags(message.Flags)
 	end
 end)
+
+local function amSeatedOnBoard(): boolean
+	for _, seat in (boardView.State and boardView.State.Seats) or {} do
+		if seat.Id == myId then
+			return true
+		end
+	end
+	return false
+end
+
+-- YOU marker: on the board while you hold a seat, in a minigame while you're playing it (not
+-- spectating, not knocked out); never while a full-screen card is up.
+local function youMarkerWanted(): boolean
+	local cardOpen = false
+	for _, card in { voteScreen.Root, instructions.Root, results.Root, standings.Root } do
+		cardOpen = cardOpen or card.Visible
+	end
+	return YouMarker.shouldShow({
+		CardOpen = cardOpen,
+		Phase = currentPhase,
+		InRound = inRound,
+		Participant = amParticipant,
+		Spectating = CameraController.isSpectating(),
+		OnBoard = boardView.Visible and boardView.Header.Visible,
+		Seated = amSeatedOnBoard(),
+	})
+end
 
 RunService.RenderStepped:Connect(function()
 	hud:update()
@@ -396,6 +467,9 @@ RunService.RenderStepped:Connect(function()
 	instructions:update()
 	boardView:update()
 	lobbyPanel:update()
+	onboarding:update()
+	youMarker:setActive(youMarkerWanted())
+	youMarker:update()
 end)
 
 -- Ask for the current state in case we joined mid-round.

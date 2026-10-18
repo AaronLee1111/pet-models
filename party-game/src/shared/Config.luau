@@ -165,6 +165,23 @@ Config.Profile = {
 	BankCoinsByPlacement = { 30, 20, 12, 8 }, -- permanent coins for real players by final placement
 }
 
+-- Guided first actions (client pointer + YOU marker). Each flag is set once, in the player's
+-- profile, after they really do that thing; until then the pointer shows them where to tap.
+Config.Tutorial = {
+	Flags = {
+		"StartedMatch", -- host pressed START in the waiting room
+		"RolledForOrder", -- rolled for turn order
+		"RolledBoardTurn", -- rolled on a normal board turn
+		"SawItem", -- used an item, or rolled while holding one
+		"ChoseFork", -- picked a route at a fork
+		"UsedMinigameAction", -- pressed a minigame action button
+		"SawCrownPurchase", -- answered a Crown purchase offer
+	},
+	-- Development only: in Studio, wipe a player's flags when they join (fresh tutorial
+	-- every playtest even with a saved profile). Never applies on live servers.
+	ResetInStudio = false,
+}
+
 -- World layout -----------------------------------------------------------------
 
 -- Arenas are built here, far away from the lobby so they never overlap it.

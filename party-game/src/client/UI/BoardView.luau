@@ -476,6 +476,7 @@ function BoardView:showPrompt(message)
 	end
 	self.PromptId = message.PromptId
 	self.PromptEndsAt = message.EndsAt
+	self.PromptMessage = message -- Kind / Routes / Price: read by the first-action guidance
 	if not message.PromptId then
 		self.Prompt.Visible = false
 		return
