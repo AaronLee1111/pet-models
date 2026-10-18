@@ -35,6 +35,16 @@ local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
 
+-- Phones get a compact standings column (shorter, see-through rows with icon stats) so it
+-- covers less of the board; desktop keeps the roomier rows.
+local TOUCH = UserInputService.TouchEnabled
+local ROW_HEIGHT = if TOUCH then 44 else 54
+local ROW_GAP = if TOUCH then 4 else 6
+local STANDINGS_WIDTH = if TOUCH then 200 else 230
+local NAME_LENGTH = 14 -- longer names end in "…" in prompts, toasts and the MAP
+local HEADER_NAME_LENGTH = 10 -- the header line is shorter still
+local MAP_TEXT_SIZE = if TOUCH then 17 else 20
+
 -- A key that changes whenever the item list does (so buttons are only rebuilt then).
 local function itemKeyOf(items): string
 	local ids = {}
@@ -76,11 +86,11 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.Standings = make("Frame", {
 		Name = "BoardStandings",
 		Position = UDim2.new(0, 12, 0, 150),
-		Size = UDim2.fromOffset(230, 4 * 54 + 3 * 6),
+		Size = UDim2.fromOffset(STANDINGS_WIDTH, 4 * ROW_HEIGHT + 3 * ROW_GAP),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screen,
-	}, { make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	}, { make("UIListLayout", { Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder }) })
 	self.Rows = {}
 
 	-- Roll button
@@ -97,8 +107,10 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 		Parent = screen,
 	}, { Theme.corner(75), Theme.stroke(Color3.new(1, 1, 1), 4) })
 	self.RollLabel = Theme.label({
-		Size = UDim2.fromScale(1, 0.6),
-		Position = UDim2.fromScale(0, 0.12),
+		-- Kept inside the circle: the corners of a full-width box sit outside it.
+		AnchorPoint = Vector2.new(0.5, 0),
+		Size = UDim2.fromScale(0.76, 0.5),
+		Position = UDim2.fromScale(0.5, 0.16),
 		Font = Theme.TitleFont,
 		TextColor3 = Theme.Colors.Overlay,
 		Text = "ROLL!",
@@ -227,6 +239,25 @@ local function seatLine(seat, plural: string): string
 	)
 end
 
+-- Phone standings line: the same facts with icons so it fits a narrow row at a readable size
+-- (the MAP still spells everything out).
+local function compactSeatLine(seat): string
+	if seat.OrderRolls and #seat.OrderRolls > 0 then
+		return "Rolled " .. table.concat(seat.OrderRolls, ", ")
+	end
+	-- (🪙 and 🎒 don't render clearly in Roblox's emoji font; 👑 and 💰 do.)
+	local items = #(seat.Items or {})
+	local line = ("%d👑 · %d💰 · %d item%s"):format(seat.Collectibles, seat.Coins, items, if items == 1 then "" else "s")
+	if seat.Shield then
+		line ..= "  🛡"
+	end
+	if seat.Underdog then
+		line ..= "  underdog"
+	end
+	return line
+end
+
+
 function BoardView:setState(message)
 	self.State = message
 	if not self.Visible then
@@ -238,7 +269,7 @@ function BoardView:setState(message)
 
 	-- Header
 	local myTurn = message.TurnId == myId
-	local who = if myTurn then "Your" else (message.TurnName and (message.TurnName .. "'s") or nil)
+	local who = if myTurn then "Your" else (message.TurnName and (Theme.shortWords(message.TurnName, HEADER_NAME_LENGTH) .. "'s") or nil)
 	self.Title.Text = ("%s %d / %d%s"):format(
 		if message.Frenzy then "FINAL FRENZY · Round" else "Round",
 		message.Round or 0,
@@ -263,7 +294,7 @@ function BoardView:setState(message)
    if seat.Id==message.TurnId and dock and not dock.Open then sub="Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
   end
  end
- self.Subtitle.Text = sub
+ self.Subtitle.Text = Theme.shortWords(sub, HEADER_NAME_LENGTH + 2)
 
 	-- Standings rows (turn order)
 	for _, row in self.Rows do
@@ -275,22 +306,28 @@ function BoardView:setState(message)
 		local isMe = seat.Id == myId
 		local row = make("Frame", {
 			LayoutOrder = seat.Order,
-			Size = UDim2.new(1, 0, 0, 54),
+			Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
 			BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Card,
-			BackgroundTransparency = 0.1,
+			BackgroundTransparency = if TOUCH then 0.25 else 0.1,
 			Parent = self.Standings,
 		}, { Theme.corner(12) })
 		if isTurn then
 			Theme.stroke(Theme.Colors.Accent, 3).Parent = row
 		end
-		Theme.label({
-			Position = UDim2.fromOffset(10, 4),
-			Size = UDim2.new(1, -20, 0, 26),
+		-- Fixed size, cut with "…": a long name never shrinks the text or pushes "(bot)" out.
+		local name = if isMe then "YOU" else seat.Name
+		make("TextLabel", {
+			Position = UDim2.fromOffset(10, if TOUCH then 3 else 4),
+			Size = UDim2.new(1, -20, 0, if TOUCH then 22 else 26),
+			BackgroundTransparency = 1,
 			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
 			Font = Theme.TitleFont,
-			Text = (if isTurn then "▶ " else "") .. (if isMe then "YOU" else seat.Name) .. (if seat.IsBot then " (bot)" else ""),
+			TextSize = 22,
+			TextColor3 = Theme.Colors.Text,
+			Text = (if isTurn then "▶ " else "") .. (if seat.IsBot and TOUCH then "🤖 " else "") .. name .. (if seat.IsBot and not TOUCH then " (bot)" else ""),
 			Parent = row,
-		}, 22)
+		})
 		local line = seatLine(seat, message.CollectiblePlural or "Crowns")
 		if seat.OrderRolls and #seat.OrderRolls > 0 then
 			line = "Rolled " .. table.concat(seat.OrderRolls, ", then ")
@@ -303,14 +340,29 @@ function BoardView:setState(message)
 				line ..= "  ·  underdog"
 			end
 		end
-		Theme.label({
-			Position = UDim2.fromOffset(10, 30),
-			Size = UDim2.new(1, -20, 0, 20),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextColor3 = Theme.Colors.Accent,
-			Text = line,
-			Parent = row,
-		}, 18)
+		if TOUCH then
+			make("TextLabel", {
+				Position = UDim2.fromOffset(8, 24),
+				Size = UDim2.new(1, -16, 0, 18),
+				BackgroundTransparency = 1,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				Font = Theme.BodyFont,
+				TextSize = 19,
+				TextColor3 = Theme.Colors.Accent,
+				Text = compactSeatLine(seat),
+				Parent = row,
+			})
+		else
+			Theme.label({
+				Position = UDim2.fromOffset(10, 30),
+				Size = UDim2.new(1, -20, 0, 20),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextColor3 = Theme.Colors.Accent,
+				Text = line,
+				Parent = row,
+			}, 18)
+		end
 		table.insert(self.Rows, row)
 	end
 
@@ -381,6 +433,7 @@ local function mapLine(self, order: number, text: string, color: Color3?, swatch
 	local row = make("Frame", {
 		LayoutOrder = order,
 		Size = UDim2.new(1, 0, 0, 24),
+		AutomaticSize = Enum.AutomaticSize.Y, -- long lines wrap instead of shrinking
 		BackgroundTransparency = 1,
 		Parent = self.MapPanel,
 	})
@@ -392,14 +445,20 @@ local function mapLine(self, order: number, text: string, color: Color3?, swatch
 			Parent = row,
 		}, { Theme.corner(4) })
 	end
-	Theme.label({
+	make("TextLabel", {
 		Position = UDim2.fromOffset(if swatch then 26 else 0, 0),
-		Size = UDim2.new(1, if swatch then -26 else 0, 1, 0),
+		Size = UDim2.new(1, if swatch then -26 else 0, 0, 24),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextSize = MAP_TEXT_SIZE,
+		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
 		TextColor3 = color or Theme.Colors.Text,
-		Text = text,
+		Text = Theme.shortWords(text, NAME_LENGTH),
 		Parent = row,
-	}, 20)
+	})
 end
 
 -- Rebuilds the MAP panel from the latest state + layout.
@@ -481,7 +540,7 @@ function BoardView:showPrompt(message)
 		self.Prompt.Visible = false
 		return
 	end
-	self.PromptText.Text = message.Prompt
+	self.PromptText.Text = Theme.shortWords(message.Prompt, NAME_LENGTH)
 	local count = #message.Options
 	for index, option in message.Options do
 		local button = make("TextButton", {
@@ -491,7 +550,7 @@ function BoardView:showPrompt(message)
 			Font = Theme.BodyFont,
 			TextScaled = true,
 			TextColor3 = if index == count and count > 1 then Theme.Colors.Text else Theme.Colors.Overlay,
-			Text = option,
+			Text = Theme.shortWords(option, NAME_LENGTH),
 			Parent = self.PromptButtons,
 		}, {
 			Theme.corner(14),

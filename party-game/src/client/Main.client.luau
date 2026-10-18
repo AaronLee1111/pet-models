@@ -158,6 +158,10 @@ local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
 local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75, BoardMap = 0.85, BoardMapPanel = 0.75 }
 local hudBasePositions = {}
+-- Board strips pinned to the top edge: however small the phone scale makes their offset, they
+-- stay below Roblox's top bar (PartyUI ignores the inset, so the bar is part of our space).
+local CLEAR_TOP_BAR = { BoardHeader = true, BoardStandings = true, BoardMapPanel = true }
+local TOP_BAR_GAP = 6
 
 local function fitHudToScreen()
 	local camera = workspace.CurrentCamera
@@ -174,13 +178,21 @@ local function fitHudToScreen()
 			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
 			uiScale.Scale = scale
 			strip:SetAttribute("HudScale", scale) -- Theme.pop animates back to this, not to 1
-			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
+			local y = base.Y.Offset * scale
+			if CLEAR_TOP_BAR[name] and base.Y.Scale == 0 then
+				y = math.max(y, GuiService:GetGuiInset().Y + TOP_BAR_GAP)
+			end
+			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, y)
 		end
 	end
 end
 
 fitHudToScreen()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHudToScreen)
+-- The top bar's size can arrive after this script starts.
+pcall(function()
+	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(fitHudToScreen)
+end)
 
 -- While a full-screen card (vote, instructions, results) is up, the mobile thumbstick and
 -- jump button are switched off entirely, so they can never sit on top of the card.
@@ -315,6 +327,7 @@ phaseHandlers[Phase.Board] = function(_message)
 	hud:setTimer(nil)
 	hud:setStatus(nil)
 	setCardOpen(true) -- no walking on the board: hide the thumbstick so the roll button is clear
+	fitHudToScreen() -- the top-bar inset is known by now
 	boardView:show()
 end
 
@@ -408,6 +421,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 		local handler = phaseHandlers[message.Phase]
 		if handler then
 			currentPhase = message.Phase
+			-- Phones: on the board the toast feed moves to the top right (off the standings).
+			hud:setBoardToasts(message.Phase == Phase.Board or message.Phase == Phase.Standings)
 			handler(message)
 		end
 	elseif message.Type == Net.Message.VoteUpdate then

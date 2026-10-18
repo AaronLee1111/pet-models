@@ -4,6 +4,7 @@
 	banner (3-2-1 / GO! / FINISH!), the toast feed, and the lobby message pill.
 ]]
 
+local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -21,6 +22,11 @@ local TOAST_HEIGHT = if TOUCH then 26 else 36
 local TOAST_TEXT_SIZE = if TOUCH then 14 else 20
 local TOAST_WIDTH = if TOUCH then 0.24 else 0.3
 local TOAST_MIN_WIDTH = if TOUCH then 170 else 220
+-- Phones on the board: the left column belongs to the standings and MAP, so the feed moves to
+-- the top right, under Roblox's top bar, as a narrow column of two-line toasts.
+local BOARD_TOAST_WIDTH = 210
+local BOARD_TOAST_HEIGHT = 34
+local BOARD_TOAST_TEXT_SIZE = 12
 
 function Hud.new(screen: ScreenGui)
 	local self = setmetatable({}, Hud)
@@ -86,6 +92,7 @@ function Hud.new(screen: ScreenGui)
 		make("UISizeConstraint", { MinSize = Vector2.new(TOAST_MIN_WIDTH, 0) }),
 	})
 	self.ToastCount = 0
+	self.BoardToasts = false
 
 	-- Lobby pill (bottom centre)
 	self.LobbyFrame = make("Frame", {
@@ -176,21 +183,69 @@ function Hud:clearToasts()
 	end
 end
 
+-- Phone board layout for the feed (see BOARD_TOAST_*); desktop and minigames keep the
+-- left-side feed.
+function Hud:setBoardToasts(on: boolean)
+	on = on and TOUCH
+	if on == self.BoardToasts then
+		return
+	end
+	self.BoardToasts = on
+	self:clearToasts()
+	local list = self.ToastList
+	local constraint = list:FindFirstChildOfClass("UISizeConstraint")
+	local layout = list:FindFirstChildOfClass("UIListLayout")
+	if on then
+		local inset = GuiService:GetGuiInset().Y
+		list.AnchorPoint = Vector2.new(1, 0)
+		list.Position = UDim2.new(1, -10, 0, inset + 6)
+		list.Size = UDim2.fromOffset(BOARD_TOAST_WIDTH, MAX_TOASTS * (BOARD_TOAST_HEIGHT + 4))
+		constraint.MinSize = Vector2.zero
+		layout.Padding = UDim.new(0, 4)
+		layout.VerticalAlignment = Enum.VerticalAlignment.Top
+	else
+		list.AnchorPoint = Vector2.new(0, 0.5)
+		list.Position = UDim2.new(0, 12, 0.5, 0)
+		list.Size = UDim2.fromScale(TOAST_WIDTH, 0.4)
+		constraint.MinSize = Vector2.new(TOAST_MIN_WIDTH, 0)
+		layout.Padding = UDim.new(0, 6)
+		layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	end
+end
+
 function Hud:toast(text: string)
 	self.ToastCount += 1
+	local board = self.BoardToasts
 	local toast = make("Frame", {
 		LayoutOrder = self.ToastCount,
-		Size = UDim2.new(1, 0, 0, TOAST_HEIGHT),
+		Size = UDim2.new(1, 0, 0, if board then BOARD_TOAST_HEIGHT else TOAST_HEIGHT),
 		BackgroundColor3 = Theme.Colors.Card,
 		BackgroundTransparency = 0.2,
 		Parent = self.ToastList,
-	}, { Theme.corner(10), Theme.padding(6) })
-	local label = Theme.label({
-		Size = UDim2.fromScale(1, 1),
-		Text = text,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = toast,
-	}, TOAST_TEXT_SIZE)
+	}, { Theme.corner(10), Theme.padding(if board then 4 else 6) })
+	local label
+	if board then
+		-- Two lines at a fixed, readable size; anything longer ends in "…".
+		label = make("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Font = Theme.BodyFont,
+			TextColor3 = Theme.Colors.Text,
+			TextSize = BOARD_TOAST_TEXT_SIZE,
+			TextWrapped = true,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Text = Theme.shortWords(text),
+			Parent = toast,
+		})
+	else
+		label = Theme.label({
+			Size = UDim2.fromScale(1, 1),
+			Text = text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = toast,
+		}, TOAST_TEXT_SIZE)
+	end
 
 	-- Keep the feed short.
 	local toasts = {}
