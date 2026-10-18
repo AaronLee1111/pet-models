@@ -97,6 +97,24 @@ function Theme.pop(guiObject: GuiObject)
 	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = target }):Play()
 end
 
+-- Cuts every word longer than `max` characters to `max - 1` plus "…", so a 20-character
+-- display name can't push a line out of its box ("WWWWWWWWWWWWWWWWWWWW left" ->
+-- "WWWWWWWWWWWWW… left"). Line breaks and spacing are kept.
+function Theme.shortWords(text: string, max: number?): string
+	local limit = max or 14
+	return (string.gsub(text, "[^%s]+", function(word)
+		-- Keep a possessive or trailing punctuation: "Supercalifragilistic's" -> "Supercalifrag…'s".
+		local core, tail = string.match(word, "^(.-)('s[%p]*)$")
+		if not core then
+			core, tail = string.match(word, "^(.-)([%p]*)$")
+		end
+		if core and utf8.len(core) and utf8.len(core) > limit then
+			return string.sub(core, 1, utf8.offset(core, limit) - 1) .. "…" .. tail
+		end
+		return word
+	end))
+end
+
 -- "1:05" style clock.
 function Theme.formatTime(seconds: number): string
 	seconds = math.max(0, math.ceil(seconds))

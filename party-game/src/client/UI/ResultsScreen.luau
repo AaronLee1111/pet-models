@@ -65,7 +65,8 @@ local function buildRow(parent: Instance, index: number, row, isMe: boolean)
 		Text = Theme.ordinal(row.Placement),
 		Parent = frame,
 	}, 34)
-	local name = (if row.IsBot then "🤖 " else "") .. row.Name .. (if isMe then " (you)" else "")
+	-- Long display names end in "…" instead of wrapping into an unreadable second line.
+	local name = (if row.IsBot then "🤖 " else "") .. Theme.shortWords(row.Name, 14) .. (if isMe then " (you)" else "")
 	Theme.label({
 		Position = UDim2.fromScale(0.18, 0),
 		Size = UDim2.fromScale(0.46, 1),

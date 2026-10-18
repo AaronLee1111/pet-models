@@ -120,6 +120,15 @@ test("every board in the picker exists", function()
 	eq(table.find(Config.Match.Modes, Config.Match.Mode) ~= nil, true, "default mode is pickable")
 end)
 
+test("long display names are shortened with an ellipsis, punctuation kept", function()
+	local Theme = require(game:GetService("StarterPlayer").StarterPlayerScripts.PartyClient.UI.Theme)
+	eq(Theme.shortWords("WWWWWWWWWWWWWWWWWWWW left", 14), "WWWWWWWWWWWWW… left", "long name cut")
+	eq(Theme.shortWords("Supercalifragilistic's Coin Shield", 14), "Supercalifrag…'s Coin Shield", "possessive kept")
+	eq(Theme.shortWords("Catch-up: MMMMMMMMMMMMMMMMMMMM, Pip +5", 14), "Catch-up: MMMMMMMMMMMMM…, Pip +5", "comma kept")
+	eq(Theme.shortWords("Main road\nCrown in 8", 14), "Main road\nCrown in 8", "short text and line breaks untouched")
+	eq(Theme.shortWords("ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ", 5), "ÄÄÄÄ…", "counts characters, not bytes")
+end)
+
 return function()
 	local passed, failed = 0, 0
 	for _, case in tests do

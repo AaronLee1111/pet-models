@@ -49,7 +49,7 @@ local function showBonuses(self, message, myId: string)
 	for index, bonus in message.Bonuses or {} do
 		local names, mine = {}, false
 		for _, winner in bonus.Winners do
-			table.insert(names, if winner.Id == myId then "You" else winner.Name)
+			table.insert(names, if winner.Id == myId then "You" else Theme.shortWords(winner.Name, 14))
 			mine = mine or winner.Id == myId
 		end
 		local frame = make("Frame", {
@@ -110,7 +110,7 @@ function StandingsScreen:show(message, myId: string)
 	elseif winner.Id == myId then
 		self.Title.Text = "You win the match!"
 	else
-		self.Title.Text = ("%s wins the match!"):format(winner.Name)
+		self.Title.Text = ("%s wins the match!"):format(Theme.shortWords(winner.Name, 14))
 	end
 	local plural = message.CollectiblePlural or "Crowns"
 	for index, row in rows do
@@ -135,7 +135,7 @@ function StandingsScreen:show(message, myId: string)
 			Position = UDim2.fromScale(0.18, 0),
 			Size = UDim2.fromScale(0.4, 1),
 			TextXAlignment = Enum.TextXAlignment.Left,
-			Text = row.Name .. (if row.IsBot then " (bot)" else "") .. (if isMe then " (you)" else ""),
+			Text = Theme.shortWords(row.Name, 14) .. (if row.IsBot then " (bot)" else "") .. (if isMe then " (you)" else ""),
 			Parent = frame,
 		}, 26)
 		Theme.label({
