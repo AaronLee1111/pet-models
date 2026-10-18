@@ -19,6 +19,20 @@ local MinigameManager = require(script.Parent.MinigameManager)
 
 local WaitingRoom = {}
 
+-- What each board in the picker is called on screen (its DisplayName, e.g. "Sunny Loop").
+function WaitingRoom.boardNames()
+	local names = {}
+	local folder = script.Parent:FindFirstChild("Board") and script.Parent.Board:FindFirstChild("Boards")
+	for _, id in Config.Match.Boards do
+		local module = folder and folder:FindFirstChild(id)
+		local ok, data = pcall(function()
+			return module and require(module)
+		end)
+		names[id] = if ok and type(data) == "table" and type(data.DisplayName) == "string" then data.DisplayName else id
+	end
+	return names
+end
+
 -- Kept between matches, so the host doesn't have to pick again.
 local settings = {
 	Mode = Config.Match.Mode,
@@ -50,6 +64,7 @@ local function publish(endsAt: number)
 		WaitingRoom = true,
 		Settings = table.clone(settings),
 		Choices = choices(),
+		BoardNames = WaitingRoom.boardNames(),
 		HostId = host and host.UserId,
 		HostName = host and host.DisplayName,
 		PlayerCount = math.min(#Players:GetPlayers(), Config.PlayersPerMatch),
