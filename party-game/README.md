@@ -258,6 +258,46 @@ before sending, and WEAR / REMOVE equip and unequip what you own.
 - A purchase is written into the profile (Owned / Equipped) and saved straight away.
 - Bots never use the shop.
 
+### Guided first actions and the YOU marker
+New players are led to each control the first time they need it, one step at a time: a gently
+bouncing hand, a ring around the exact button and a short label next to it ("TAP HERE" on touch,
+"CLICK HERE" / "CLICK or press SPACE" with a mouse, "PRESS A" on a gamepad; never keyboard text on
+a touch screen). Only the local player is guided, and nothing about it is sent to anyone else.
+
+| Step | When | Flag |
+|---|---|---|
+| START | host, in the waiting room | `StartedMatch` |
+| ROLL for turn order | "Roll to decide turn order." | `RolledForOrder` |
+| ROLL on a board turn | "Roll to move." | `RolledBoardTurn` |
+| Item | holding an item before rolling: what it does, or ROLL without it | `SawItem` |
+| Fork | rings every route, numbers them on the buttons and over the board, suggests (never forces) the route closest to the Crown | `ChoseFork` |
+| Minigame action | the action's real label (MASH, STOP, LEFT / RIGHT...); movement-only games get a short "move" hint once per session | `UsedMinigameAction` |
+| Crown | only when you can afford it: "Crowns win the match. Coins break ties." | `SawCrownPurchase` |
+
+- Pieces: `src/client/UI/GuidePointer.luau` (the pointer; never takes input, stays inside the
+  safe area, follows its target), `src/client/Onboarding.luau` (which step, if any; the rules are
+  `Onboarding.decide`, unit tested), `src/client/UI/InputHint.luau` (device wording),
+  `src/server/Tutorial.luau` (the flags).
+- The server sets a flag only when the action really went through (roll accepted, item used or
+  a roll made while holding one, route or Crown answer accepted, START accepted, a minigame
+  action accepted). Bots never get flags. Flags live in the profile (`Tutorial`, profile version
+  2; older saves load with no flags and keep everything else) and are kept for the session if no
+  profile is available.
+- Nothing shows while a full-screen card (vote, instructions, results, standings) or the shop is
+  up, to spectators, or to a knocked-out player.
+- **YOU marker** (`src/client/UI/YouMarker.luau`): a "YOU" tag over your own character while you
+  hold a board seat or play a minigame. It lives in your PlayerGui (nobody else sees it), hides
+  during cards and while spectating, and follows a respawned character. The spectator bar names
+  who you're watching ("👀 Watching Pip").
+
+**Resetting the guidance (development only).** Studio uses the memory backend, so every Play
+starts fresh. To see the guidance again within a session, run this in the client command bar
+(Studio only; live servers ignore it):
+`game.ReplicatedStorage.PartyRemotes.PartyInput:FireServer({ Kind = "ResetTutorial" })`
+or on the server: `require(game.ServerScriptService.PartyServer.Tutorial).reset(player)`.
+`Config.Tutorial.ResetInStudio = true` wipes the flags on every join in Studio (for testing with
+`Config.Profile.Backend = "DataStore"`). There is no player-facing reset button.
+
 ### Rewards and prices
 Gift-space rewards (`Config.Economy.Rewards`, weighted), coin space amounts, starting coins,
 the Crown price, item prices (`Items.luau`), shop offer counts and bank coins are all in
@@ -382,7 +422,7 @@ background test windows, so keep the server window in front.
 
 ## Tests and lint
 
-- Unit tests (board rules, turn order, items, bonuses, bot decisions, cosmetics, profiles, seat reclaim):
+- Unit tests (board rules, turn order, items, bonuses, bot decisions, cosmetics, profiles, seat reclaim, onboarding):
   `rojo build tests/unit.project.json -o UnitTests.rbxlx`, open it in Studio and run
   `require(game.ServerStorage.PartyTests.RunAll)()` in the command bar (edit mode is fine).
 

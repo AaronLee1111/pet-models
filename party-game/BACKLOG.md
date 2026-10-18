@@ -18,7 +18,7 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - Board standings rows use text ("0 Crowns · 10 coins"). Swap in Crown and coin icons and player headshots in the visual pass.
 - Prompt buttons are plain; the shop prompt doesn't show item pictures or rarity.
 - Final standings card has no podium, confetti or reward moment.
-- Waiting room: no explanation of the rules, no "how to play" for new players, and no pointer on START or ROLL for first-timers (style guide onboarding rule).
+- Waiting room: no explanation of the rules and no "how to play" for new players. (~~No pointer on START or ROLL for first-timers~~: fixed by the guided first actions, see below.)
 - Cosmetics are placeholder shapes (a coloured part on the head, a trail, sparkles for emotes). Emotes don't play an animation. The wardrobe is a plain row of buttons in the waiting room with no previews.
 
 ## Mechanics to revisit
@@ -80,3 +80,15 @@ Things deliberately left for later. Newest notes go at the bottom of each sectio
 - ~~SHOP button off-screen and unreachable on short screens.~~ Fixed: the card is now a header (title, countdown, SHOP), a scrolling settings body and a fixed START / waiting column, sized to the screen. Measured: iPhone 17 Pro landscape card y 67–368, x 119–629 (between thumbstick and jump), SHOP 107×44; iPhone 7 card y 66–361, SHOP 89×44; 1301×616 window card y 257–603, SHOP 115×44, no scroll; HD 1080 card y 660–1064, SHOP 135×52, no scroll. Bounds are checked in `tests/unit/ModeTests` ("waiting-room card fits every landscape screen").
 - The settings scrollbar track shows even when nothing needs scrolling (desktop). Cosmetic only.
 - Phone taps can't be injected under Studio's device emulator, so the phone check was by measured bounds, mouse-wheel scrolling and screenshots; real SHOP / START / BUY / wear clicks were done in the plain desktop window. The non-host view (waiting note instead of START) was checked by logic only.
+
+## Guided first actions (2026-10-18)
+
+- ~~New players get no pointer to the control they need (style guide onboarding rule).~~ Fixed: one bouncing pointer + ring + label at a time for START, turn-order ROLL, ROLL, items, forks, the minigame action / movement and an affordable Crown; saved per player (profile `Tutorial` flags).
+- ~~Hard to tell which character is yours among four similar bodies.~~ Fixed: a local-only "YOU" tag over your character on both boards and in minigames.
+- ~~Mash Dash instructions showed "[Space] MASH!" on touch.~~ Fixed: touch shows the button label only; desktop shows the key, gamepad the button.
+- Trail Tangle draws its own riders, so the YOU tag (which follows your character) isn't over your rider; riders are told apart by their colour highlight.
+- The YOU tag isn't drawn always-on-top (Studio's screen capture doesn't show always-on-top billboards, so that couldn't be verified). It floats just above everything attached to your character, so only scenery above your head could hide it; none does on the current boards and arenas.
+- On the whole-board festival camera the fork's route numbers over the board are small and can sit close to the YOU tag when the route starts next to you.
+- On a phone the START label sits over part of the settings rows (it never blocks taps).
+- Testing note: Studio's plain play window stops rendering while it's off-screen or the Mac is locked (0 frames), so the desktop checks used the HD 720 / HD 1080 device profiles; emulated clicks only sometimes reach buttons, so some steps were driven with the same inputs the buttons send.
+- Four-client regression (2026-10-18): twice only 3 of the 4 Studio test clients joined (the fourth window stalled in Studio itself), so the foundation run used 3 real clients + 1 bot and skipped the disconnect scenario. Everything it ran matched; re-run with four clients when fewer Studio windows are open.
