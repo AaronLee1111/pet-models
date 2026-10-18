@@ -445,7 +445,20 @@ test("YOU marker: local only, follows a replaced character", function()
 	eq(marker.Gui.Adornee, current.Head, "on my head")
 	eq(marker.Gui.Enabled, true, "showing")
 	eq(marker.Gui.Parent, holder, "lives in my own gui, not in the world")
+	eq(marker.Gui.SizeOffset, Vector2.new(0, 0.5), "arrow tip at the anchor, tag above it")
+	local hat = Instance.new("Part")
+	hat.Anchored = true
+	hat.Size = Vector3.new(1, 2, 1)
+	hat.Position = Vector3.new(0, 11.5, 0) -- top at 12.5, head centre at 10
+	hat.Parent = workspace -- welded on from outside the character, like Kernel Catch's bucket
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = current.Head
+	weld.Part1 = hat
+	weld.Parent = hat
+	marker:update()
+	ok(marker.Gui.StudsOffsetWorldSpace.Y >= 2.5 + 0.5, "clears the hat: " .. marker.Gui.StudsOffsetWorldSpace.Y)
 	eq(current:FindFirstChildWhichIsA("BillboardGui", true), nil, "nothing added to the character")
+	hat:Destroy()
 	local old = current
 	current = character("Second") -- respawn / replaced body
 	old:Destroy()

@@ -11,8 +11,8 @@
 	  marker:update()                       every frame: (re)attach to the current head, keep a
 	                                        readable size at any camera distance
 
-	It sits well above the head (clear of hats) and stays upright facing the camera, as
-	billboards do. A new character (respawn, replaced body) is picked up on the next frame.
+	Its arrow tip sits just above the top of the character, cosmetics included, and it stays
+	upright facing the camera, as billboards do. A new character (respawn, replaced body) is picked up on the next frame.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -25,7 +25,8 @@ YouMarker.__index = YouMarker
 
 local HEIGHT_STUDS = 1.6 -- tag height it aims for in the world...
 local MIN_PIXELS, MAX_PIXELS = 26, 40 -- ...kept between these on screen (phone readable)
-local ABOVE_HEAD = 4 -- studs from the head's centre to the tag (clears hats)
+local CLEARANCE = 0.8 -- studs between the top of the character (hats, buckets...) and the arrow tip
+local MIN_ABOVE_HEAD = 1.5 -- never lower than this above the head's centre
 
 function YouMarker.new(getCharacter: () -> Model?, parent: Instance)
 	local self = setmetatable({ GetCharacter = getCharacter, Active = false }, YouMarker)
@@ -37,7 +38,10 @@ function YouMarker.new(getCharacter: () -> Model?, parent: Instance)
 		LightInfluence = 0,
 		ResetOnSpawn = false,
 		Size = UDim2.fromOffset(78, 64),
-		StudsOffsetWorldSpace = Vector3.new(0, ABOVE_HEAD, 0),
+		-- The gui's bottom edge (the arrow tip) sits at the anchor point, so it never hangs down
+		-- over the character however big the tag is on screen.
+		SizeOffset = Vector2.new(0, 0.5),
+		StudsOffsetWorldSpace = Vector3.new(0, MIN_ABOVE_HEAD, 0),
 		MaxDistance = 1000,
 		Enabled = false,
 		Parent = parent,
@@ -125,6 +129,19 @@ function YouMarker:update()
 	end
 	if self.Gui.Adornee ~= head then
 		self.Gui.Adornee = head -- first time, or a new character
+	end
+	-- Just above whatever is highest on the character: hats, and anything welded to it from
+	-- elsewhere (Kernel Catch's popcorn bucket lives in the arena, not in the character).
+	local top = head.Position.Y + head.Size.Y / 2
+	local ok, parts = pcall(head.GetConnectedParts, head, true)
+	for _, part in if ok then parts else {} do
+		if part.Transparency < 1 then
+			top = math.max(top, part.Position.Y + part.Size.Magnitude / 2)
+		end
+	end
+	local above = math.max(MIN_ABOVE_HEAD, top - head.Position.Y + CLEARANCE)
+	if math.abs(self.Gui.StudsOffsetWorldSpace.Y - above) > 0.05 then
+		self.Gui.StudsOffsetWorldSpace = Vector3.new(0, above, 0)
 	end
 	local camera = Workspace.CurrentCamera
 	if camera then
