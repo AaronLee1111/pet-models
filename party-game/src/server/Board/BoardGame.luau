@@ -908,6 +908,7 @@ function BoardGame.cleanup()
 		end
 	end
 	current = nil
+	BoardWorld.clearStale()
 	CoinService.resetAll()
 	Inventory.resetBots()
 	BotService.setBrain(nil)

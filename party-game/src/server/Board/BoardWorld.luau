@@ -7,6 +7,7 @@
 	  world:spaceCFrame(id, slot, facingId?)  where a piece stands (slot 1..4 share a tile)
 	  world:setCollectible(id, label)        move the collectible marker
 	  world:destroy()
+	  BoardWorld.clearStale()                remove boards left in the Workspace (see below)
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -328,6 +329,17 @@ function BoardWorld:setFestivalLighting(active)
   for _,child in self.LightingChildren or {} do child.Parent=nil end
   self.SavedLighting=nil
  end
+end
+
+-- A board saved into the place file (e.g. a preview built in Edit mode and then saved) would sit
+-- under the live one: doubled colliders, overlapping faces, and clients picking the wrong folder.
+-- Only one match runs per server, so before a new board is built every old one goes.
+function BoardWorld.clearStale()
+	for _, child in Workspace:GetChildren() do
+		if child.Name == "PartyBoard" then
+			child:Destroy()
+		end
+	end
 end
 
 function BoardWorld:destroy()

@@ -243,6 +243,15 @@ test("v2 world: medallion board builds; four pieces fit on one space; recovery p
 	end
 end)
 
+test("stale boards: a PartyBoard left in the Workspace is removed before a new board", function()
+	local stale = Instance.new("Folder")
+	stale.Name = "PartyBoard"
+	stale.Parent = workspace
+	BoardWorld.clearStale()
+	ok(stale.Parent == nil, "stale PartyBoard still in the Workspace")
+	ok(workspace:FindFirstChild("PartyBoard") == nil, "a PartyBoard is still in the Workspace")
+end)
+
 test("v2 bots: 4 bots x 3 matches x 12 rounds; every fork route used, Crowns bought, no one stuck", function()
 	local used = {}
 	local purchases = 0
