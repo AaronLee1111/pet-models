@@ -5,7 +5,7 @@
 
 return function()
 	local passed, failed = 0, 0
-	for _, name in { "BoardTests", "FestivalTests", "EconomyTests", "ModeTests", "MinigameTests", "ShopTests", "ReclaimTests", "TrailTangleTests", "BumperBoutTests", "OnboardingTests", "SunnyLoopV2Tests" } do
+	for _, name in { "BoardTests", "FestivalTests", "EconomyTests", "ModeTests", "MinigameTests", "ShopTests", "ReclaimTests", "TrailTangleTests", "BumperBoutTests", "OnboardingTests", "SunnyLoopV2Tests", "MedallionMeshTests" } do
 		local p, f = require(script.Parent[name])()
 		passed += p
 		failed += f

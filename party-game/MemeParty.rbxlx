@@ -2382,7 +2382,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 			-- Round medallion spaces + sloped sandy paths (MedallionKit); same Tops/Tiles API.
 			self.Tops[id] = position + Vector3.new(0, MedallionKit.TOP, 0)
 			local refined = board.Scene == "SkyGarden" and SkyGardenKit.isRefined(space.Area)
-			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id, refined)
+			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id, refined, board.Name == "SunnyLoopV2")
 			continue
 		end
 		self.Tops[id] = position + Vector3.new(0, TILE_HEIGHT, 0)
@@ -5026,27 +5026,651 @@ return Match
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="Folder" referent="25">
+          <Properties>
+            <string name="Name">MedallionAssets</string>
+          </Properties>
+          <Item class="MeshPart" referent="26">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Base_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>0.56</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>3.2704</X>
+                <Y>0.31360048</Y>
+                <Z>3.2704</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://129747393505767</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>11.68</X>
+                <Y>1.12</Y>
+                <Z>11.68</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <uri>rbxassetid://131676821016044</uri>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="27">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Inlay_Circle_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.0550001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>2.072</X>
+                <Y>0.08120033</Y>
+                <Z>2.072</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://133674026950004</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>7.4</X>
+                <Y>0.28999996</Y>
+                <Z>7.4</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="28">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Inlay_Diamond_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.0550001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>2.184</X>
+                <Y>0.08120036</Y>
+                <Z>2.184</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://114324496393630</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>7.8</X>
+                <Y>0.28999996</Y>
+                <Z>7.8</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="29">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Inlay_Dot_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.0550001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.896</X>
+                <Y>0.08120012</Y>
+                <Z>0.896</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://102401521750897</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>3.2</X>
+                <Y>0.28999996</Y>
+                <Z>3.2</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="30">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Inlay_Ring_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.0550001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>2.128</X>
+                <Y>0.08120033</Y>
+                <Z>2.0238483</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://103163163957593</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>7.6</X>
+                <Y>0.28999996</Y>
+                <Z>7.2280297</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="31">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Inlay_Square_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.0550001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>1.6800001</X>
+                <Y>0.08120027</Y>
+                <Z>1.6800001</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://132487893214175</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>6</X>
+                <Y>0.28999996</Y>
+                <Z>6</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="32">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Chaos_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0.050000012</X>
+                <Y>1.3100001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.64400005</X>
+                <Y>0.039200157</Y>
+                <Z>0.952</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://76491628818693</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>2.3</X>
+                <Y>0.13999999</Y>
+                <Z>3.4</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="33">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Duel_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>0.025000036</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.92399997</X>
+                <Y>0.039200157</Y>
+                <Z>0.93799996</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://114043688804137</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>3.3</X>
+                <Y>0.13999999</Y>
+                <Z>3.3500001</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="34">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Event_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0.024999976</X>
+                <Y>1.3100001</Y>
+                <Z>-0.060000002</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.686</X>
+                <Y>0.039200127</Y>
+                <Z>0.9016</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://109461956758068</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>2.45</X>
+                <Y>0.13999999</Y>
+                <Z>3.22</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="35">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Gain_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>0.07499999</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.7</X>
+                <Y>0.039200157</Y>
+                <Z>0.88199997</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://86984235556069</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>2.5</X>
+                <Y>0.13999999</Y>
+                <Z>3.1499999</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="36">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Item_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>0.100000024</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.92399997</X>
+                <Y>0.039200127</Y>
+                <Z>0.78400004</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://102514383368273</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>3.3</X>
+                <Y>0.13999999</Y>
+                <Z>2.8</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="37">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Lose_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>-0.07499999</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.7</X>
+                <Y>0.039200127</Y>
+                <Z>0.88199997</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://89082157148919</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>2.5</X>
+                <Y>0.13999999</Y>
+                <Z>3.1499999</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="38">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Reward_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>0.125</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>0.84000003</X>
+                <Y>0.039200157</Y>
+                <Z>0.854</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://107781581582648</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>3</X>
+                <Y>0.13999999</Y>
+                <Z>3.05</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="39">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Shop_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>0.07499999</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>1.036</X>
+                <Y>0.039200127</Y>
+                <Z>0.79800004</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://112342305732041</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>3.7</X>
+                <Y>0.13999999</Y>
+                <Z>2.8500001</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+          <Item class="MeshPart" referent="40">
+            <Properties>
+              <string name="Name">SunnyLoop_Space_Symbol_Switch_v1</string>
+              <bool name="Anchored">true</bool>
+              <CoordinateFrame name="CFrame">
+                <X>-0</X>
+                <Y>1.3100001</Y>
+                <Z>0</Z>
+                <R00>1</R00>
+                <R01>0</R01>
+                <R02>0</R02>
+                <R10>0</R10>
+                <R11>1</R11>
+                <R12>0</R12>
+                <R20>0</R20>
+                <R21>0</R21>
+                <R22>1</R22>
+              </CoordinateFrame>
+              <bool name="CanCollide">false</bool>
+              <bool name="CanQuery">false</bool>
+              <bool name="CanTouch">false</bool>
+              <bool name="CastShadow">false</bool>
+              <Color3uint8 name="Color3uint8">16777215</Color3uint8>
+              <Vector3 name="InitialSize">
+                <X>1.008</X>
+                <Y>0.039200127</Y>
+                <Z>0.896</Z>
+              </Vector3>
+              <Content name="MeshContent">
+                <uri>rbxassetid://102220150843807</uri>
+              </Content>
+              <Vector3 name="size">
+                <X>3.6</X>
+                <Y>0.13999999</Y>
+                <Z>3.2</Z>
+              </Vector3>
+              <Content name="TextureContent">
+                <null>
+                </null>
+              </Content>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">MedallionKit</string>
             <string name="Source"><![CDATA[--[[
-	MedallionKit
-	Studio build of the board-space kit used by boards with Style = "Medallion" (Sunny Loop v2).
-	Same dimensions as the Blender kit (docs/SunnyLoopV2.md, "Board-space kit"), so the Blender
-	meshes can replace these parts one for one later:
-
-	  base     round ceramic medallion, 10.5 studs across, 1.2 tall, gold rim (one mesh, all types)
-	  inlay    the type's colour as a SHAPE: circle, diamond, rounded square or ring (colour-blind
-	           safe: shape + icon + colour all differ by type)
-	  icon     the type's symbol on top (text glyph until the rendered icon set exists)
-	  path     sandy path segment between two medallion edges, following the height change
-
-	  MedallionKit.TOP              height of the walkable top above the space's position
-	  MedallionKit.space(parent, position, typeKey, spaceType, id) -> base Part
-	  MedallionKit.path(parent, fromTop, toTop, name) -> Part?
+ Sunny Loop medallions: Blender mesh slice with the previous visuals as a load fallback.
+ The collider, presentation top, paths, attributes and dynamic text retain their contract.
+ See docs/medallions-v1/README.md for source/import scale and outstanding rollout gates.
 ]]
 
 local MedallionKit = {}
+local Meshes = require(script.Parent.MedallionMeshes)
 
 --[[
 	Vertical layers of a space, in studs above its position. Every visible face of a space sits
@@ -5055,7 +5679,7 @@ local MedallionKit = {}
 	  1.16 recess top · 1.20 field top · 1.235 symbol top · 1.265 symbol hole top ·
 	  1.275 icon plate (SurfaceGui) · ~1.45 active-space ring (BoardWorld:setActiveSpace)
 ]]
-MedallionKit.LayerPlanes = { 0.295, 0.75, 1.0, 1.12, 1.16, 1.2, 1.235, 1.265 }
+MedallionKit.LayerPlanes = { 0.295, 0.75, 0.86, 0.91, 1.0, 1.12, 1.16, 1.2, 1.235, 1.24, 1.265, 1.38, 1.445 }
 
 MedallionKit.DIAMETER = 10.5
 MedallionKit.TOP = 1.2
@@ -5082,6 +5706,7 @@ local LOOK = {
 	Switch = { Shape = "Ring", Glyph = "⇄", Color = Color3.fromRGB(255, 186, 30) },
 	Reward = { Shape = "Ring", Glyph = "GIFT", Color = Color3.fromRGB(255, 196, 20) },
 }
+LOOK.Gift = LOOK.Reward
 MedallionKit.Look = LOOK
 
 local function part(props)
@@ -5159,7 +5784,7 @@ local function refinedSpace(model, position: Vector3, look, colour: Color3)
 	end
 end
 
-function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number, refined: boolean?)
+function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number, refined: boolean?, meshEligible: boolean?)
 	local look = LOOK[typeKey] or LOOK.Neutral
 	local model = Instance.new("Model")
 	model.Name = "Space" .. id
@@ -5170,7 +5795,10 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 	base:SetAttribute("SpaceType", typeKey)
 	local colour = look.Color or spaceType.Color
 	local inlayY = position + Vector3.new(0, 1.05, 0)
-	if refined then
+	local meshed = meshEligible and Meshes.enabled(id) and Meshes.build(model, position, typeKey, look.Shape, colour)
+	if meshed then
+		base.Transparency = 1
+	elseif refined then
 		refinedSpace(model, position, look, colour)
 	else
 	decor(disc(model, "Rim", d + 0.8, 0.7, position + Vector3.new(0, 0.35, 0), RIM, Enum.Material.SmoothPlastic))
@@ -5203,12 +5831,12 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 	end
 
 	-- Icon / glyph, readable from the turn camera and the MAP
-	if look.Glyph ~= "" then
+	if look.Glyph ~= "" and (not meshed or typeKey == "Gain" or typeKey == "Lose") then
 		local plate = decor(part({
 			Name = "Icon",
-			Size = Vector3.new(6, 0.05, 6),
+			Size = if meshed then Vector3.new(2, 0.05, 4) else Vector3.new(6, 0.05, 6),
 			-- Turned so the glyph reads upright from the board camera (which looks north).
-			CFrame = CFrame.new(position + Vector3.new(0, if refined then 1.25 else 1.2, 0)) * CFrame.Angles(0, math.rad(-90), 0),
+			CFrame = CFrame.new(position + (if meshed then Vector3.new(0, 1.42, 2.65) else Vector3.new(0, if refined then 1.25 else 1.2, 0))) * CFrame.Angles(0, math.rad(-90), 0),
 			Transparency = 1,
 			Parent = model,
 		}))
@@ -5330,7 +5958,63 @@ return MedallionKit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="42">
+          <Properties>
+            <string name="Name">MedallionMeshes</string>
+            <string name="Source"><![CDATA[-- Blender-authored geometry; imported templates share the same mesh content IDs.
+local Kit = {}
+local templates = script.Parent:WaitForChild("MedallionAssets")
+local content = game:GetService("ContentProvider")
+local ready = {}
+local slice = { [5] = true, [6] = true, [7] = true, [8] = true, [30] = true }
+Kit.Mode = "Slice"
+function Kit.enabled(id)
+	return Kit.Mode == "All" or (Kit.Mode == "Slice" and slice[id] == true)
+end
+local function template(kind)
+	local name = "SunnyLoop_Space_" .. kind .. "_v1"
+	local mesh = templates:FindFirstChild(name)
+	if not mesh or not mesh:IsA("MeshPart") then return nil end
+	if ready[name] == nil then
+		local loaded = true
+		local ok = pcall(function()
+			content:PreloadAsync({ mesh }, function(_, status)
+				if status ~= Enum.AssetFetchStatus.Success then loaded = false end
+			end)
+		end)
+		ready[name] = ok and loaded
+	end
+	return if ready[name] then mesh else nil
+end
+function Kit.build(parent, position, typeKey, shape, colour)
+	local symbolKey = if typeKey == "Gift" then "Reward" else typeKey
+	local base = template("Base")
+	local insert = template("Inlay_" .. shape)
+	local symbol = if symbolKey ~= "Neutral" then template("Symbol_" .. symbolKey) else nil
+	if not base or not insert or (symbolKey ~= "Neutral" and not symbol) then return false end
+	local folder = Instance.new("Folder")
+	folder.Name = "MeshVisuals"
+	for _, source in { base, insert, symbol } do
+		local mesh = source:Clone()
+		local offset = source.CFrame
+		-- Ring symbols are recessed into the exposed bed instead of floating above its hole.
+		if source == symbol and shape == "Ring" then offset -= Vector3.new(0, 0.34, 0) end
+		mesh.CFrame = CFrame.new(position) * CFrame.Angles(0, math.pi, 0) * offset
+		mesh.Color = if source == insert then colour else if source == symbol then Color3.fromRGB(247, 224, 173) else Color3.new(1, 1, 1)
+		mesh.Anchored = true
+		mesh.CanCollide, mesh.CanTouch, mesh.CanQuery = false, false, false
+		mesh.CastShadow = false
+		mesh.Parent = folder
+	end
+	folder.Parent = parent
+	parent:SetAttribute("MedallionMeshVersion", 1)
+	return true
+end
+return Kit
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">RotatingBridge</string>
             <string name="Source"><![CDATA[-- Pure topology; no yields, rendering, randomness or mutation during queries.
@@ -5406,7 +6090,7 @@ return Bridge
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">SceneAudit</string>
             <string name="Source"><![CDATA[--[[
@@ -5509,7 +6193,7 @@ function SceneAudit.run(folder: Instance)
 	local signatures = {}
 	for _, d in folder:GetDescendants() do
 		if d:IsA("BasePart") and visible(d) then
-			local sig = table.concat({ d.ClassName, tostring((d :: any).Shape), tostring(d.Size), tostring(d.CFrame) }, "|")
+			local sig = table.concat({ d.ClassName, (if d:IsA("Part") then tostring(d.Shape) elseif d:IsA("MeshPart") then d.MeshId else ""), tostring(d.Size), tostring(d.CFrame) }, "|")
 			if signatures[sig] then
 				table.insert(report.Duplicates, { signatures[sig], d })
 			else
@@ -5643,7 +6327,7 @@ return SceneAudit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="28">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">SkyGardenKit</string>
             <string name="Source"><![CDATA[--[[
@@ -6023,7 +6707,7 @@ return Kit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="29">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">SkyGardenScene</string>
             <string name="Source"><![CDATA[--[[
@@ -7420,7 +8104,7 @@ return Scene
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="30">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">SpaceTypes</string>
             <string name="Source"><![CDATA[--[[
@@ -7539,7 +8223,7 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="31">
+      <Item class="ModuleScript" referent="48">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -7833,7 +8517,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="32">
+      <Item class="ModuleScript" referent="49">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -7980,7 +8664,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="33">
+      <Item class="ModuleScript" referent="50">
         <Properties>
           <string name="Name">CosmeticService</string>
           <string name="Source"><![CDATA[--[[
@@ -8222,7 +8906,7 @@ return CosmeticService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="34">
+      <Item class="ModuleScript" referent="51">
         <Properties>
           <string name="Name">CosmeticShop</string>
           <string name="Source"><![CDATA[--[[
@@ -8350,7 +9034,7 @@ return CosmeticShop
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="35">
+      <Item class="ModuleScript" referent="52">
         <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
@@ -8480,7 +9164,7 @@ return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="36">
+      <Item class="Script" referent="53">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -8601,7 +9285,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="37">
+      <Item class="ModuleScript" referent="54">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -8737,7 +9421,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="38">
+      <Item class="ModuleScript" referent="55">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -9490,7 +10174,7 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="39">
+      <Item class="ModuleScript" referent="56">
         <Properties>
           <string name="Name">MinigameMode</string>
           <string name="Source"><![CDATA[--[[
@@ -9709,11 +10393,11 @@ return MinigameMode
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="40">
+      <Item class="Folder" referent="57">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">Bullseye</string>
             <string name="Source"><![CDATA[--[[
@@ -9961,7 +10645,7 @@ return Bullseye
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">BumperBout</string>
             <string name="Source"><![CDATA[--[[
@@ -10804,7 +11488,7 @@ return BumperBout
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -11117,7 +11801,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -11613,7 +12297,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -12286,7 +12970,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -12796,7 +13480,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -12953,7 +13637,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">PatternRecall</string>
             <string name="Source"><![CDATA[--[[
@@ -13208,7 +13892,7 @@ return PatternRecall
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -13625,7 +14309,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">QuickDraw</string>
             <string name="Source"><![CDATA[--[[
@@ -13817,7 +14501,7 @@ return QuickDraw
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="68">
           <Properties>
             <string name="Name">TrailTangle</string>
             <string name="Source"><![CDATA[--[[
@@ -14521,7 +15205,7 @@ return TrailTangle
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="69">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -14647,7 +15331,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="53">
+      <Item class="ModuleScript" referent="70">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -14793,7 +15477,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="54">
+      <Item class="ModuleScript" referent="71">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -14935,7 +15619,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="72">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -15058,7 +15742,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="56">
+        <Item class="ModuleScript" referent="73">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -15089,7 +15773,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="57">
+        <Item class="ModuleScript" referent="74">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -15237,7 +15921,7 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="58">
+      <Item class="ModuleScript" referent="75">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -15353,7 +16037,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="59">
+      <Item class="ModuleScript" referent="76">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -15478,7 +16162,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="60">
+      <Item class="ModuleScript" referent="77">
         <Properties>
           <string name="Name">SeatClaims</string>
           <string name="Source"><![CDATA[--[[
@@ -15642,7 +16326,7 @@ return SeatClaims
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="61">
+      <Item class="ModuleScript" referent="78">
         <Properties>
           <string name="Name">Tutorial</string>
           <string name="Source"><![CDATA[--[[
@@ -15785,7 +16469,7 @@ return Tutorial
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="62">
+      <Item class="ModuleScript" referent="79">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -15932,19 +16616,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="63">
+  <Item class="StarterPlayer" referent="80">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="64">
+    <Item class="StarterPlayerScripts" referent="81">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="65">
+      <Item class="Folder" referent="82">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="66">
+        <Item class="ModuleScript" referent="83">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -16168,7 +16852,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="67">
+        <Item class="ModuleScript" referent="84">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -16289,7 +16973,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="68">
+        <Item class="LocalScript" referent="85">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -16790,11 +17474,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="69">
+        <Item class="Folder" referent="86">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">BumperBout</string>
               <string name="Source"><![CDATA[--[[
@@ -16910,7 +17594,7 @@ return BumperBoutClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -17195,7 +17879,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -17450,7 +18134,7 @@ return PoleShimmyClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">TrailTangle</string>
               <string name="Source"><![CDATA[--[[
@@ -17592,7 +18276,7 @@ return TrailTangleClient
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="74">
+        <Item class="ModuleScript" referent="91">
           <Properties>
             <string name="Name">Onboarding</string>
             <string name="Source"><![CDATA[--[[
@@ -18146,7 +18830,7 @@ return Onboarding
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="75">
+        <Item class="ModuleScript" referent="92">
           <Properties>
             <string name="Name">SceneAmbience</string>
             <string name="Source"><![CDATA[--[[
@@ -18236,11 +18920,11 @@ return SceneAmbience
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="76">
+        <Item class="Folder" referent="93">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="94">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -18390,7 +19074,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">BoardDice</string>
               <string name="Source"><![CDATA[--[[
@@ -18712,7 +19396,7 @@ return BoardDice
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -19520,7 +20204,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">GuidePointer</string>
               <string name="Source"><![CDATA[--[[
@@ -19933,7 +20617,7 @@ return GuidePointer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -20213,7 +20897,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">InputHint</string>
               <string name="Source"><![CDATA[--[[
@@ -20301,7 +20985,7 @@ return InputHint
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -20453,7 +21137,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -20851,7 +21535,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -20966,7 +21650,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="103">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -21103,7 +21787,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="104">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -21222,7 +21906,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="105">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -21636,7 +22320,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="106">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -21725,7 +22409,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="107">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -21896,7 +22580,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="108">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -22034,7 +22718,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="92">
+          <Item class="ModuleScript" referent="109">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -22207,7 +22891,7 @@ return VoteScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="93">
+          <Item class="ModuleScript" referent="110">
             <Properties>
               <string name="Name">YouMarker</string>
               <string name="Source"><![CDATA[--[[
@@ -22381,18 +23065,18 @@ return YouMarker
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="94">
+  <Item class="Workspace" referent="111">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="95">
+    <Item class="Model" referent="112">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="96">
+      <Item class="Part" referent="113">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -22412,7 +23096,7 @@ return YouMarker
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="97">
+      <Item class="SpawnLocation" referent="114">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
