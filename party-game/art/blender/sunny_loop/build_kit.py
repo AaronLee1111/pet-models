@@ -7,6 +7,8 @@ Builds each asset in its own collection from scratch (nothing hand-edited), then
     party-game/art/export/sunny_loop/<Asset>.fbx      one FBX per asset (Roblox: File > Import)
     party-game/art/export/sunny_loop/SunnyLoopKit.blend  editable source scene
     party-game/art/export/sunny_loop/kit_sheet.png      contact sheet render
+    party-game/art/export/sunny_loop/kit_stats.txt      per-asset tris + mesh-hygiene audit
+Re-export only some FBX files:  ... build_kit.py -- --only PG_Space_Medallion
 
 Conventions (match docs/SunnyLoopV2.md and the Studio kit in src/server/Board/SkyGardenKit):
     * 1 stud = 0.28 m. Exports use FBX_SCALE_UNITS, axis_forward=-Z, axis_up=Y.
@@ -20,6 +22,7 @@ Conventions (match docs/SunnyLoopV2.md and the Studio kit in src/server/Board/Sk
 import math
 import os
 import random
+import sys
 
 import bmesh
 import bpy
@@ -127,8 +130,19 @@ def box(bm, centre, size, mat_index, rot_z=0.0):
         f.material_index = mat_index
 
 
-def disc(bm, centre_z, radius, height, sides, mat_index, top_bevel=0.0):
-    prism(bm, (0, 0, centre_z - height / 2), (0, 0, centre_z + height / 2), radius, radius - top_bevel, sides, mat_index)
+def disc(bm, centre_z, radius, height, sides, mat_index, top_bevel=0.0, cap_top=True, cap_bottom=True):
+    """Upright n-sided disc. Drop a cap that is buried inside the layer below/above it (stacked
+    layers otherwise leave hidden coplanar faces that z-fight)."""
+    before = set(bm.faces)
+    bottom, top = centre_z - height / 2, centre_z + height / 2
+    prism(bm, (0, 0, bottom), (0, 0, top), radius, radius - top_bevel, sides, mat_index)
+    drop = []
+    for f in set(bm.faces) - before:
+        zs = [v.co.z for v in f.verts]
+        if len(f.verts) > 4 and max(zs) - min(zs) < 1e-6:
+            if (not cap_top and abs(zs[0] - top) < 1e-6) or (not cap_bottom and abs(zs[0] - bottom) < 1e-6):
+                drop.append(f)
+    bmesh.ops.delete(bm, geom=drop, context="FACES_ONLY")
 
 
 # Assets (dimensions in studs, converted at the end) ---------------------------------------------
@@ -234,11 +248,14 @@ def medallion(name):
     """Refined board space: foot, gold band, sandstone base, bevel, recess, field (tintable)."""
     bm = bmesh.new()
     mats = ["M_StoneDark", "M_Gold", "M_Stone", "M_Bevel", "M_Field"]
-    disc(bm, -1.05, 6.0, 0.35, 32, 0)                 # foot (wider than the rim)
-    disc(bm, -0.82, 5.7, 0.75, 32, 1)                 # gold band
-    disc(bm, -0.7, 5.25, 1.0, 32, 2, top_bevel=0.12)  # sandstone base, bevelled top
-    disc(bm, -0.12, 5.15, 0.16, 32, 3)                # bevel ring
-    disc(bm, -0.02, 3.75, 0.1, 32, 4)                 # field (Studio tints this slot)
+    # Only the foot keeps a bottom cap; every other layer starts inside the one below it, and the
+    # base's top cap is hidden under the bevel ring, so those caps are left out (no buried
+    # coplanar faces). Visible tops: foot -0.875, band -0.445, bevel -0.04, field 0.03.
+    disc(bm, -1.05, 6.0, 0.35, 32, 0)                                    # foot (wider than the rim)
+    disc(bm, -0.82, 5.7, 0.75, 32, 1, cap_bottom=False)                  # gold band
+    disc(bm, -0.7, 5.25, 1.0, 32, 2, top_bevel=0.12, cap_top=False, cap_bottom=False)  # sandstone base
+    disc(bm, -0.12, 5.15, 0.16, 32, 3, cap_bottom=False)                 # bevel ring
+    disc(bm, -0.02, 3.75, 0.1, 32, 4, cap_bottom=False)                  # field (Studio tints this slot)
     return bm, mats
 
 
@@ -257,7 +274,48 @@ ASSETS = [
 ]
 
 
+def clean(bm):
+    """Mesh hygiene before export: merge duplicate vertices by distance, drop zero-area faces,
+    recalculate normals outward. Returns counts for kit_stats.txt."""
+    before = len(bm.verts)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+    merged = before - len(bm.verts)
+    degenerate = [f for f in bm.faces if f.calc_area() < 1e-10]
+    bmesh.ops.delete(bm, geom=degenerate, context="FACES_ONLY")
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return merged, len(degenerate)
+
+
+def coplanar_overlaps(bm):
+    """Pairs of faces in the same plane that overlap (z-fight or are buried). Should be 0."""
+    from mathutils.geometry import intersect_point_tri
+    planes = {}
+    for f in bm.faces:
+        n = f.normal
+        if n.length < 0.5:
+            continue
+        d = n.dot(f.verts[0].co)
+        for sign in (1, -1):
+            key = (round(sign * n.x, 2), round(sign * n.y, 2), round(sign * n.z, 2), round(sign * d / 0.0005))
+            planes.setdefault(key, []).append(f)
+    found = set()
+    for faces in planes.values():
+        for i, a in enumerate(faces):
+            for b in faces[i + 1:]:
+                if a is b or len(set(a.verts) & set(b.verts)) >= 2:
+                    continue
+                for x, y in ((a, b), (b, a)):
+                    p = x.calc_center_median()
+                    q = intersect_point_tri(p, *[v.co for v in y.verts[:3]])
+                    if q is not None and (q - p).length < 0.0005:
+                        found.add((min(a.index, b.index), max(a.index, b.index)))
+    return len(found)
+
+
 def main():
+    # optional: `-- --only PG_Space_Medallion,PG_Rock_A` re-exports just those FBX files
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    only = set(argv[argv.index("--only") + 1].split(",")) if "--only" in argv else None
     reset()
     coll = new_collection("SunnyLoopKit")
     stats = []
@@ -265,11 +323,16 @@ def main():
         bm, mats = build()
         bmesh.ops.scale(bm, vec=(STUD, STUD, STUD), verts=bm.verts)  # studs -> metres
         bmesh.ops.triangulate(bm, faces=bm.faces)
-        obj = add_object(coll, name, bm, mats)
+        merged, degenerate = clean(bm)
+        bm.faces.index_update()
+        overlaps = coplanar_overlaps(bm)
+        obj = add_object(coll, name, bm, mats)  # built in place: no object transform to apply
         obj.location = ((i % 6) * 3.4 - 8.5, (i // 6) * -4.2, 0)  # spread out for the sheet only
-        stats.append((name, len(obj.data.polygons), len(mats)))
+        stats.append((name, len(obj.data.polygons), len(mats), merged, degenerate, overlaps))
     # export each asset on its own at the origin
     for obj in list(coll.objects):
+        if only and obj.name not in only:
+            continue
         saved = obj.location.copy()
         obj.location = (0, 0, 0)
         bpy.ops.object.select_all(action="DESELECT")
@@ -305,10 +368,13 @@ def main():
     bpy.ops.render.render(write_still=True)
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, "SunnyLoopKit.blend"))
     with open(os.path.join(OUT, "kit_stats.txt"), "w") as f:
-        for name, tris, slots in stats:
-            f.write(f"{name}\ttris={tris}\tmaterials={slots}\n")
-    for name, tris, slots in stats:
-        print(f"[kit] {name}: {tris} tris, {slots} material slots")
+        for name, tris, slots, merged, degenerate, overlaps in stats:
+            f.write(f"{name}\ttris={tris}\tmaterials={slots}\tmerged_verts={merged}\tdegenerate={degenerate}\tcoplanar_overlaps={overlaps}\n")
+    for name, tris, slots, merged, degenerate, overlaps in stats:
+        print(f"[kit] {name}: {tris} tris, {slots} material slots, merged {merged}, degenerate {degenerate}, coplanar {overlaps}")
+    bad = [s[0] for s in stats if s[5] > 0]
+    if bad:
+        raise SystemExit("[kit] coplanar overlapping faces in: " + ", ".join(bad))
 
 
 main()

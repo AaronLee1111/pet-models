@@ -308,6 +308,44 @@ test("v2 bots: take the toll bridge toward a Crown beyond it, the road toward on
 	eq(match:botDecision(seat, request, 0.9), 1, "Crown at 39: fairground road")
 end)
 
+test("v2 world: no z-fighting faces, duplicate parts or medallion layer clashes (all boards)", function()
+	local SceneAudit = require(Server.Board.SceneAudit)
+	local boards = { Data, require(Server.Board.Boards.Classic), require(Server.Board.Boards.MagicalFestival) }
+	for _, data in boards do
+		local b = BoardLayout.load(data, SpaceTypes)
+		local world = BoardWorld.build(b, SpaceTypes, Vector3.new(0, 0, -1500))
+		local success, err = pcall(function()
+			if b.Style == "Medallion" then
+				world:setActiveSpace(b.Start)
+			end
+			local report = SceneAudit.run(world.Folder)
+			ok(#report.Coplanar == 0, data.Name .. ": " .. SceneAudit.summary(report, 5))
+			ok(#report.Duplicates == 0, data.Name .. ": duplicate parts " .. #report.Duplicates)
+			ok(report.Checked > 0, "audit saw faces")
+			local intruders = SceneAudit.intrusions(world.Folder)
+			local names = {}
+			for i = 1, math.min(5, #intruders) do
+				table.insert(names, intruders[i].Part.Name .. "@" .. intruders[i].SpaceId)
+			end
+			ok(#intruders == 0, data.Name .. ": scenery inside spaces: " .. table.concat(names, ", "))
+		end)
+		world:destroy()
+		if not success then
+			error(err, 0)
+		end
+	end
+	-- generated names under each space are unique (no doubled layers)
+	local world = BoardWorld.build(board, SpaceTypes, Vector3.new(0, 0, -1500))
+	for _, id in board.Order do
+		local names = {}
+		for _, child in world.Tiles[id].Parent:GetChildren() do
+			ok(not names[child.Name], ("space %d has two %s parts"):format(id, child.Name))
+			names[child.Name] = true
+		end
+	end
+	world:destroy()
+end)
+
 test("v2 preview board: hidden from live servers, original Sunny Loop unchanged", function()
 	ok(Data.Preview == true, "flagged as preview")
 	ok(not table.find(Config.Match.Boards, "SunnyLoopV2"), "not in the released picker")

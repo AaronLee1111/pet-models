@@ -17,6 +17,15 @@
 
 local MedallionKit = {}
 
+--[[
+	Vertical layers of a space, in studs above its position. Every visible face of a space sits
+	on its own plane, and nothing else (stairs, paths) may share one of these planes nearby:
+	  0.295 rim foot top · 0.75 rim band top · 1.00 base top · 1.12 bevel top ·
+	  1.16 recess top · 1.20 field top · 1.235 symbol top · 1.265 symbol hole top ·
+	  1.275 icon plate (SurfaceGui) · ~1.45 active-space ring (BoardWorld:setActiveSpace)
+]]
+MedallionKit.LayerPlanes = { 0.295, 0.75, 1.0, 1.12, 1.16, 1.2, 1.235, 1.265 }
+
 MedallionKit.DIAMETER = 10.5
 MedallionKit.TOP = 1.2
 MedallionKit.PATH_WIDTH = 4.5
@@ -111,7 +120,7 @@ local function refinedSpace(model, position: Vector3, look, colour: Color3)
 		decor(part({ Name = "Symbol", Size = Vector3.new(4.8, 0.05, 4.8), CFrame = CFrame.new(y), Color = symbol, Parent = model }))
 	elseif look.Shape == "Ring" then
 		decor(disc(model, "Symbol", 6.2, 0.05, y, symbol))
-		decor(disc(model, "SymbolHole", 4.6, 0.06, y + Vector3.new(0, 0.01, 0), colour))
+		decor(disc(model, "SymbolHole", 4.6, 0.06, y + Vector3.new(0, 0.03, 0), colour)) -- 0.035 above the ring
 	elseif look.Shape == "Circle" then
 		decor(disc(model, "Symbol", 5, 0.05, y, symbol))
 	else -- Dot (neutral)
@@ -245,7 +254,16 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		local low = math.min(a.Y, b.Y) - 0.5
 		for i = 1, count do
 			local t = (i - 0.5) / count
-			local topY = a.Y + rise * (if rise > 0 then i / count else (i - 1) / count) + 0.25
+			local topY = a.Y + rise * (if rise > 0 then i / count else (i - 1) / count) + 0.2 -- end step tucks under the medallion bevel (layer 1.05 < 1.12)
+			-- never on a medallion layer plane of either end space (would z-fight)
+			for _, endTop in { fromTop, toTop } do
+				for _, plane in MedallionKit.LayerPlanes do
+					local y = endTop.Y - MedallionKit.TOP + plane
+					if math.abs(topY - y) < 0.03 then
+						topY = y - 0.05
+					end
+				end
+			end
 			local height = math.max(0.4, topY - low)
 			local centre = a + run * t
 			local step = part({

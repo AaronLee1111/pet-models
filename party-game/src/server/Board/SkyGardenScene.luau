@@ -27,6 +27,14 @@
 
 local Kit = require(script.Parent.SkyGardenKit)
 
+-- Ground layer heights (studs above a patch's nominal height). Overlapping ground pieces of
+-- different colours never share a plane: SceneAudit (tests) fails the build if they do.
+local LAYER = {
+	CellEven = 0, -- island ground cells, first grass shade
+	CellOdd = 0.04, -- neighbouring cells use the other shade one step up (they overlap)
+	Seat = -0.06, -- grass pad under a space: below both cell layers, shows only where needed
+}
+
 local Scene = {}
 
 local GRASS = Color3.fromRGB(104, 176, 60) -- lime
@@ -180,7 +188,7 @@ end
 
 -- Ground column under a point: grass top at `top`, rock skirt below, ending under the island.
 local function ground(parent, at: Vector3, diameter: number, top: number)
-	column(parent, "Grass", diameter, top - 1, top, at, GRASS, Enum.Material.Grass)
+	column(parent, "Grass", diameter, top - 1 + LAYER.Seat, top + LAYER.Seat, at, GRASS, Enum.Material.Grass)
 	column(parent, "Rock", diameter - 1, top - 9, top - 1, at, CLIFFS[(math.floor(at.X + at.Z) % 3) + 1], Enum.Material.Rock)
 end
 
@@ -252,8 +260,9 @@ local function market(parent, at: Vector3, facing: Vector3)
 	place("AppleStem", Vector3.new(0.4, 1.2, 0.4), Vector3.new(0, 18.9, 0.4), timber, Enum.Material.Wood)
 	sparkles(apple, Color3.fromRGB(255, 230, 150), 1.5, 0.7)
 	-- Barrels and baskets at the door (medium forms that frame the entrance)
-	place("Barrel", Vector3.new(2.4, 2.6, 2.4), Vector3.new(-8.6, 2.7, -5.4), timberLight, Enum.Material.Wood, Enum.PartType.Cylinder).CFrame = cf * CFrame.new(-8.6, 2.7, -5.4) * CFrame.Angles(0, 0, math.pi / 2)
-	place("BarrelApples", Vector3.new(1.9, 0.6, 1.9), Vector3.new(-8.6, 4.1, -5.4), RED, nil, Enum.PartType.Ball)
+	-- barrel beside the side wall (clear of the shop space in front)
+	place("Barrel", Vector3.new(2.4, 2.6, 2.4), Vector3.new(-8.6, 2.7, 1.5), timberLight, Enum.Material.Wood, Enum.PartType.Cylinder).CFrame = cf * CFrame.new(-8.6, 2.7, 1.5) * CFrame.Angles(0, 0, math.pi / 2)
+	place("BarrelApples", Vector3.new(1.9, 0.6, 1.9), Vector3.new(-8.6, 4.1, 1.5), RED, nil, Enum.PartType.Ball)
 	lamp(model, (cf * CFrame.new(8.6, 1.4, -5.6)).Position)
 	return model
 end
@@ -261,7 +270,7 @@ end
 -- Fork signpost: one arrow board per route, each pointing at the route's first space.
 local function signpost(parent, at: Vector3, routes)
 	local model = group(parent, "Signpost")
-	column(model, "Pole", 0.7, at.Y, at.Y + 8, at, WOOD_DARK, Enum.Material.Wood)
+	column(model, "Pole", 0.7, at.Y, at.Y + 8.5, at, WOOD_DARK, Enum.Material.Wood) -- rises above the top board
 	for i, route in routes do
 		local y = at.Y + 7.2 - (i - 1) * 2
 		local target = Vector3.new(route.Toward.X, y, route.Toward.Z)
@@ -544,7 +553,8 @@ local function crownPavilion(parent, at: Vector3, facing: Vector3)
 	glow.Brightness = 1.4
 	glow.Color = Color3.fromRGB(255, 210, 120)
 	glow.Parent = gem
-	part(model, "Carpet", Vector3.new(4, 0.2, 9), cf * CFrame.new(0, 1.3 - 0.2, -6), RED)
+	-- carpet lies ON the plinth (bottom at plinth top) and ends at its edge, off the space
+	part(model, "Carpet", Vector3.new(4, 0.2, 6.6), cf * CFrame.new(0, 1.48, -4.1), RED) -- over the trim
 	for x = -1, 1, 2 do
 		part(model, "Banner", Vector3.new(2.4, 5, 0.2), cf * CFrame.new(x * 7.5, 6, -1), if x < 0 then MAGENTA else PURPLE)
 		column(model, "BannerPole", 0.4, at.Y, at.Y + 9, (cf * CFrame.new(x * 7.5, 0, -1)).Position, GOLD, Enum.Material.Metal)
@@ -599,7 +609,7 @@ local function waterwheelMill(parent, at: Vector3, wheelSide: Vector3)
 	wheel:SetAttribute("AmbientSpin", 30)
 	wheel:SetAttribute("AmbientAxis", "Z")
 	wheel.WorldPivot = hub
-	local splash = part(model, "Splash", Vector3.new(4, 0.4, 4), hub * CFrame.new(0, -5.2, 0), Color3.fromRGB(230, 252, 255))
+	local splash = part(model, "Splash", Vector3.new(4, 0.4, 4), hub * CFrame.new(0, -5.0, 0), Color3.fromRGB(230, 252, 255)) -- foam sits above both ground layers
 	splash.Transparency = 0.3
 	splash.CastShadow = false
 	part(model, "Dock", Vector3.new(8, 0.6, 6), cf * CFrame.new(7, 0.3, -5), WOOD, Enum.Material.WoodPlanks)
@@ -726,7 +736,8 @@ local function floatingIsland(parent, at: Vector3, size: number, rng)
 		cottage(model, at + Vector3.new(size * 0.15, 0, -size * 0.1), at + Vector3.new(0, 0, 50), rng, ROOF_COLOURS[rng:NextInteger(1, #ROOF_COLOURS)])
 	end
 	if rng:NextNumber() < 0.5 then
-		local fall = part(model, "Fall", Vector3.new(size * 0.18, size * 1.2, 0.8), CFrame.new(at + Vector3.new(0, -size * 0.6, size * 0.47)), WATER)
+		-- starts just under the grass so its top never shares the grass plane
+		local fall = part(model, "Fall", Vector3.new(size * 0.18, size * 1.2, 0.8), CFrame.new(at + Vector3.new(0, -size * 0.6 - 0.2, size * 0.47)), WATER)
 		fall.Transparency = 0.15
 		fall.CastShadow = false
 	end
@@ -1017,6 +1028,12 @@ function Scene.build(world)
 			end
 			local p = Vector2.new(ix * STEP, iz * STEP)
 			local top = heightAt(p)
+			-- a cell never rises above a space whose disc it overlaps (no terrace wall over a rim)
+			for _, sp in spaces do
+				if not sp.Bridge and (flat(sp.Pos) - p).Magnitude < (STEP + 3.5) / 2 + 6.2 then
+					top = math.min(top, sp.H)
+				end
+			end
 			local edge = not (inside[key(ix + 1, iz)] and inside[key(ix - 1, iz)] and inside[key(ix, iz + 1)] and inside[key(ix, iz - 1)])
 			local centre = Vector3.new(p.X, 0, p.Y)
 			local wet = inWater(p)
@@ -1024,7 +1041,10 @@ function Scene.build(world)
 			local shades = ZONE_GRASS[zone and zone.Area or "Stream"] or ZONE_GRASS.Stream
 			-- Water bed is pale sand, so the transparent water reads luminous turquoise
 			local refined = Kit.isRefined(zone and zone.Area)
-			local g = column(island, "Ground", STEP + 3.5, top - 1, top, centre, if wet then Color3.fromRGB(150, 196, 190) else shades[(ix + iz) % 2 + 1], if wet then Enum.Material.Sand else Enum.Material.Grass)
+			-- 4-neighbours always differ in parity, so overlapping cells of the two shades sit on
+			-- two separate layers; diagonal neighbours share a layer and a colour.
+			local lift = if (ix + iz) % 2 == 0 then LAYER.CellEven else LAYER.CellOdd
+			local g = column(island, "Ground", STEP + 3.5, top - 1 + lift, top + lift, centre, if wet then Color3.fromRGB(150, 196, 190) else shades[(ix + iz) % 2 + 1], if wet then Enum.Material.Sand else Enum.Material.Grass)
 			g.CastShadow = false
 			local bottom = if edge then islandY - rng:NextNumber(14, 26) else islandY - 7
 			if edge and refined then
@@ -1050,7 +1070,7 @@ function Scene.build(world)
 		if s.Bridge then
 			column(island, "Pier", 3.6, islandY - 4, s.H, s.Pos, STONE, Enum.Material.Cobblestone)
 		else
-			ground(island, s.Pos, 15, s.H)
+			ground(island, s.Pos, 12.6, s.H) -- just past the rim foot (r 6), never under a neighbour
 		end
 	end
 	-- Big rocks hanging under the island
@@ -1151,8 +1171,14 @@ function Scene.build(world)
 	-- Sundial Bridge: stone railings with gold caps along every bridge segment
 	for _, g in segments do
 		if g.Bridge then
-			local a = Vector3.new(g.A.X, g.HA + 1.2, g.A.Y)
-			local b = Vector3.new(g.B.X, g.HB + 1.2, g.B.Y)
+			-- run between the two medallion EDGES (not centres), so rails never cross a space
+			local flatDir = (g.B - g.A).Unit
+			local inset = 10.5 / 2 + 0.6 -- MedallionKit.DIAMETER / 2 + rim
+			local ea, eb = g.A + flatDir * inset, g.B - flatDir * inset
+			local ha = g.HA + (g.HB - g.HA) * (inset / (g.B - g.A).Magnitude)
+			local hb = g.HB - (g.HB - g.HA) * (inset / (g.B - g.A).Magnitude)
+			local a = Vector3.new(ea.X, ha + 1.2, ea.Y)
+			local b = Vector3.new(eb.X, hb + 1.2, eb.Y)
 			local dir = (b - a)
 			local side = Vector3.new(-dir.Z, 0, dir.X).Unit
 			for s = -1, 1, 2 do
@@ -1343,7 +1369,8 @@ function Scene.build(world)
 	-- Kites flying off the island rim and balloon bunches drifting in the sky
 	for i = 1, 6 do
 		local a = i / 6 * math.pi * 2 + 0.3
-		local rim = centre + Vector3.new(math.cos(a) * 70, 0, math.sin(a) * 66)
+		-- tied under the island rim (outside every space), flying outward
+		local rim = centre + Vector3.new(math.cos(a) * 84, -6, math.sin(a) * 80)
 		kite(back, rim + Vector3.new(math.cos(a) * 30, rng:NextNumber(30, 45), math.sin(a) * 30), rim, rng)
 	end
 	for i = 1, 8 do
