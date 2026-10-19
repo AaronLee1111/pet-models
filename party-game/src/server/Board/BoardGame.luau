@@ -69,13 +69,22 @@ local function layoutMessage(board)
 			Name = spaceType.Name,
 			Color = spaceType.Color,
 			Position = current.World.Tops[id],
+			Next = space.Next, -- camera framing at forks
+			Landmark = space.Landmark,
 		})
 	end
 	local legend = {}
 	for key, spaceType in SpaceTypes do
 		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
 	end
-	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend, Festival = board.Bridge ~= nil }
+	return {
+		Type = Net.Message.BoardLayout,
+		Name = board.DisplayName,
+		Spaces = spaces,
+		Legend = legend,
+		Festival = board.Bridge ~= nil,
+		Presentation = board.Presentation, -- "Diorama": close turn camera + thrown dice
+	}
 end
 
 local function describeItems(seat)
@@ -134,6 +143,8 @@ local function stateMessage()
 		TurnName = turn and turn.Participant.Name,
 		Stage = current.Stage,
 		Roll = current.Roll,
+		RollId = current.RollId, -- changes every roll (thrown-dice presentation)
+		DiceFaces = current.DiceFaces,
 		Remaining = current.Remaining,
 		RollEndsAt = current.RollEndsAt,
 		Text = current.Text,
@@ -676,13 +687,19 @@ local function takeTurn(seat)
 	local roll, dice = match:rollTurn(seat)
 	current.Stage = "Moving"
 	current.Roll = roll
+	current.RollId = (current.RollId or 0) + 1
+	current.DiceFaces = dice
 	current.Remaining = roll
 	current.RollEndsAt = nil
 	current.Text = if #dice > 1
 		then ("%s rolled %s = %d"):format(seat.Participant.Name, table.concat(dice, " + "), roll)
 		else ("%s rolled a %d"):format(seat.Participant.Name, roll)
 	publish()
-	task.wait(0.8)
+	-- Thrown-dice boards give the die time to fly and land before the first hop; bots get the
+	-- short version. Other boards keep the old beat.
+	task.wait(if match.Board.Presentation == "Diorama"
+		then (if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
+		else 0.8)
 
 	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
 		current.Remaining = remaining

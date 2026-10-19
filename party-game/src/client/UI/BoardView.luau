@@ -18,6 +18,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local BoardDice = require(script.Parent.BoardDice)
 local Theme = require(script.Parent.Theme)
 local make = Theme.make
 
@@ -31,6 +32,17 @@ local CAMERA_OFFSET = Vector3.new(0, 42, 34)
 -- world labels stay clear of the HUD and rounded screen edges. Desktop is unchanged.
 local TOUCH_CAMERA_OFFSET = Vector3.new(0, 60, 50)
 local MAP_OFFSET = Vector3.new(0, 115, 60) -- MAP view: high enough to see the whole board
+-- Diorama boards (Presentation = "Diorama", Sunny Loop v2): a closer turn camera on the active
+-- piece and the route just ahead; MAP stays the whole-board view. Phones sit a little farther
+-- back so the HUD columns never cover the neighbouring spaces.
+local DIORAMA_OFFSET = Vector3.new(0, 20, 23)
+local DIORAMA_TOUCH_OFFSET = Vector3.new(0, 23, 27)
+local DIORAMA_LOOKAHEAD = 0.35 -- how far the focus leans toward the next space
+local DIORAMA_FORK_ZOOM = 1.45 -- pull back at a fork so both routes are in view
+-- While a prompt card covers the bottom of the screen, aim a little south of the subject so it
+-- sits in the visible upper part instead of behind the card.
+local DIORAMA_PROMPT_SHIFT = Vector3.new(0, 0, 9)
+local DIORAMA_DECIDE_ZOOM = 1.2 -- shops, Crown offers and other choices: a little more context
 local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
@@ -216,6 +228,8 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.State = nil
 	self.Layout = nil
 	self.Focus = nil
+	self.Zoom = 1
+	self.Dice = BoardDice.new()
 	return self
 end
 
@@ -223,6 +237,10 @@ end
 
 function BoardView:setLayout(message)
 	self.Layout = message
+	self.SpaceById = {}
+	for _, space in message.Spaces do
+		self.SpaceById[space.Id] = space
+	end
 	local sum, count = Vector3.zero, 0
 	for _, space in message.Spaces do
 		sum += space.Position
@@ -258,10 +276,28 @@ local function compactSeatLine(seat): string
 end
 
 
+local function seatById(state, id)
+	for _, seat in (state and state.Seats) or {} do
+		if seat.Id == id then
+			return seat
+		end
+	end
+	return nil
+end
+
+function BoardView:isDiorama(): boolean
+	return self.Layout ~= nil and self.Layout.Presentation == "Diorama"
+end
+
 function BoardView:setState(message)
 	self.State = message
 	if not self.Visible then
 		return
+	end
+	-- Thrown dice: everyone sees the active piece throw; the roller's own throw already started.
+	if self:isDiorama() and message.Stage == "Moving" and message.RollId and message.DiceFaces then
+		local seat = seatById(message, message.TurnId)
+		self.Dice:reveal(seat and seat.Character, message.DiceFaces, message.RollId, seat ~= nil and seat.IsBot)
 	end
 	if self.MapOpen then
 		self:refreshMap()
@@ -423,6 +459,12 @@ function BoardView:roll()
 	if self.RollButton.Visible then
 		self.RollButton.Visible = false
 		ContextActionService:UnbindAction(ROLL_ACTION)
+		local state = self.State
+		-- Your own turn on a diorama board: the throw starts on the press, the number lands
+		-- when the server's roll arrives. (Turn-order rolls stay instant.)
+		if self:isDiorama() and state and state.Stage == "Roll" and state.TurnId == myId then
+			self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
+		end
 		self.Send({ Kind = "Roll" })
 	end
 end
@@ -571,6 +613,56 @@ end
 
 -- Visibility + camera -----------------------------------------------------------------------------
 
+-- Diorama turn camera: where to look and how far back. Follows the active piece, leaning
+-- toward the next space; pulls back at forks (both routes) and while someone is choosing.
+local function dioramaShot(self): (Vector3?, number)
+	local state = self.State
+	if not state then
+		return self.Centre, 1
+	end
+	if state.Stage == "OrderRoll" or state.Stage == "OrderDone" then
+		local sum, count = Vector3.zero, 0
+		for _, seat in state.Seats do
+			local root = seat.Character and seat.Character.Parent and seat.Character:FindFirstChild("HumanoidRootPart")
+			if root then
+				sum += root.Position
+				count += 1
+			end
+		end
+		return if count > 0 then sum / count else self.Centre, 1.15
+	end
+	local seat = seatById(state, state.TurnId)
+	local space = seat and self.SpaceById and self.SpaceById[seat.SpaceId]
+	local root = seat and seat.Character and seat.Character.Parent and seat.Character:FindFirstChild("HumanoidRootPart")
+	local here = if root then root.Position elseif space then space.Position else self.Centre
+	if not space or not here then
+		return here, 1
+	end
+	local nextIds = space.Next or {}
+	if state.Stage == "Deciding" and #nextIds >= 2 then
+		local sum, count = space.Position, 1
+		for _, id in nextIds do
+			local first = self.SpaceById[id]
+			if first then
+				sum += first.Position
+				count += 1
+				local second = first.Next and self.SpaceById[first.Next[1]]
+				if second then
+					sum += second.Position
+					count += 1
+				end
+			end
+		end
+		return sum / count + DIORAMA_PROMPT_SHIFT, DIORAMA_FORK_ZOOM
+	end
+	local ahead = nextIds[1] and self.SpaceById[nextIds[1]]
+	local focus = if ahead then here:Lerp(ahead.Position, DIORAMA_LOOKAHEAD) else here
+	if state.Stage == "Deciding" then
+		return focus + DIORAMA_PROMPT_SHIFT, DIORAMA_DECIDE_ZOOM
+	end
+	return focus, 1
+end
+
 local function turnFocus(self): Vector3?
 	local state = self.State
 	if not state then
@@ -607,11 +699,20 @@ function BoardView:show()
 	camera.CameraType = Enum.CameraType.Scriptable
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
 		local festival = self.Layout and self.Layout.Festival
-		local goal = if self.MapOpen or festival then self.Centre else turnFocus(self)
+		local diorama = self:isDiorama() and not self.MapOpen
+		local goal, zoom = nil, 1
+		if self.MapOpen or festival then
+			goal = self.Centre
+		elseif diorama then
+			goal, zoom = dioramaShot(self)
+		else
+			goal = turnFocus(self)
+		end
 		if not goal then
 			return
 		end
 		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
+		self.Zoom += (zoom - self.Zoom) * (1 - math.exp(-3 * dt))
 		camera.CameraType = Enum.CameraType.Scriptable
 		-- MAP view, else the phone (touch) offset, else the desktop offset; the festival board
 		-- overrides all of them with its own whole-board framing.
@@ -619,12 +720,25 @@ function BoardView:show()
 			then MAP_OFFSET
 			elseif UserInputService.TouchEnabled then TOUCH_CAMERA_OFFSET
 			else CAMERA_OFFSET
+		if diorama then
+			offset = (if UserInputService.TouchEnabled then DIORAMA_TOUCH_OFFSET else DIORAMA_OFFSET) * self.Zoom
+		elseif self.MapOpen and self:isDiorama() then
+			-- MAP over a diorama board: slide the board right so the MAP panel (left) doesn't
+			-- cover it, and see it from a little lower so terraces and stairs read.
+			offset = Vector3.new(0, 112, 72)
+		end
 		if festival then
 			local aspect = camera.ViewportSize.X / math.max(1, camera.ViewportSize.Y)
 			local distance = math.max(190, 190 / math.max(0.5, aspect))
 			offset = Vector3.new(0, distance, distance * 0.38)
 		end
-		camera.CFrame = CFrame.lookAt(self.Focus + offset, self.Focus)
+		local aim = self.Focus
+		if self.MapOpen and self:isDiorama() then
+			-- Aim right of the board centre so the board sits in the free right part of the screen
+			-- (the MAP panel covers the left). Offsets alone would only tilt the view.
+			aim += Vector3.new(-30, 0, 0)
+		end
+		camera.CFrame = CFrame.lookAt(aim + offset, aim)
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -653,6 +767,7 @@ function BoardView:hide()
 	self.ItemKey = nil
 	self.Prompt.Visible = false
 	ContextActionService:UnbindAction(ROLL_ACTION)
+	self.Dice:clear()
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
 	local camera = Workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Custom
