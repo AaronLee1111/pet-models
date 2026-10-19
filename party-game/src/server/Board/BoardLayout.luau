@@ -156,6 +156,10 @@ function BoardLayout.load(data, spaceTypes)
 		Gates = data.Gates or {},
 		Bridge = data.Bridge,
 		Zones = data.Zones,
+		-- Presentation only (no rules): see Boards/SunnyLoopV2.luau
+		Style = data.Style,
+		Scene = data.Scene,
+		Presentation = data.Presentation,
 		Spaces = {},
 		Order = {},
 	}, Board)

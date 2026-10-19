@@ -15,6 +15,8 @@ local Workspace = game:GetService("Workspace")
 local Config = require(ReplicatedStorage.PartyShared.Config)
 
 local FestivalScene = require(script.Parent.FestivalScene)
+local MedallionKit = require(script.Parent.MedallionKit)
+local SkyGardenScene = require(script.Parent.SkyGardenScene)
 
 local BoardWorld = {}
 BoardWorld.__index = BoardWorld
@@ -57,10 +59,13 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 	-- Centre the layout on the origin. Grid z goes "up the board" = -Z in the world.
 	local centre = Vector3.new((minX + maxX) / 2 * spacing, 0, -(minZ + maxZ) / 2 * spacing)
 	local function worldAt(at): Vector3
-		return origin + Vector3.new(at[1] * spacing, 0, -at[2] * spacing) - centre
+		-- at[3] (optional) is the space's height in studs (terraces, bridges).
+		return origin + Vector3.new(at[1] * spacing, at[3] or 0, -at[2] * spacing) - centre
 	end
+	self.WorldAt = worldAt
+	local medallions = board.Style == "Medallion"
 
-	if not board.Bridge then
+	if not board.Bridge and not medallions then
 	part({
 		Name = "Base",
 		Size = Vector3.new((maxX - minX) * spacing + 30, 2, (maxZ - minZ) * spacing + 30),
@@ -75,6 +80,12 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		local space = board.Spaces[id]
 		local spaceType = spaceTypes[space.Type]
 		local position = worldAt(space.At)
+		if medallions then
+			-- Round medallion spaces + sloped sandy paths (MedallionKit); same Tops/Tiles API.
+			self.Tops[id] = position + Vector3.new(0, MedallionKit.TOP, 0)
+			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id)
+			continue
+		end
 		self.Tops[id] = position + Vector3.new(0, TILE_HEIGHT, 0)
 
 		local tile = part({
@@ -122,7 +133,15 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		end
 	end
 
+	if medallions then
+		for _, id in board.Order do
+			for _, nextId in board.Spaces[id].Next do
+				MedallionKit.path(folder, self.Tops[id], self.Tops[nextId], ("Path%d_%d"):format(id, nextId))
+			end
+		end
+	end
 	if board.Bridge then FestivalScene.build(self) end
+	if board.Scene == "SkyGarden" then SkyGardenScene.build(self) end
 	-- The collectible marker: a floating gold gem with a price tag.
 	local marker = part({
 		Name = "Collectible",
@@ -267,13 +286,19 @@ function BoardWorld:setBridgeState(state)
  if state then FestivalScene.status(self,state) end
 end
 
+-- Board lighting while the board is on screen (not during minigames). The festival has its
+-- dusk values; a scene can set self.LightingPreset (e.g. SkyGardenScene) to use its own.
 function BoardWorld:setFestivalLighting(active)
- if not self.Board.Bridge then return end
+ if not self.Board.Bridge and not self.LightingPreset then return end
  local lighting=game:GetService("Lighting")
  if active and not self.SavedLighting then
   self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
+  if self.LightingPreset then
+   for key,value in self.LightingPreset do lighting[key]=value end
+  else
   lighting.ClockTime=17.8;lighting.Ambient=Color3.fromRGB(145,130,180)
   lighting.OutdoorAmbient=Color3.fromRGB(155,150,190);lighting.Brightness=2
+  end
  elseif not active and self.SavedLighting then
   for key,value in self.SavedLighting do lighting[key]=value end
   self.SavedLighting=nil
