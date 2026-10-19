@@ -21,22 +21,26 @@ MedallionKit.DIAMETER = 10.5
 MedallionKit.TOP = 1.2
 MedallionKit.PATH_WIDTH = 4.5
 
-local CERAMIC = Color3.fromRGB(250, 244, 230)
-local RIM = Color3.fromRGB(226, 182, 92)
-local PATH = Color3.fromRGB(232, 210, 168)
+local CERAMIC = Color3.fromRGB(255, 252, 244) -- clean white
+local RIM = Color3.fromRGB(255, 196, 52) -- warm gold
+local PATH = Color3.fromRGB(255, 234, 178) -- pale golden cream
+local PATH_EDGE = Color3.fromRGB(238, 196, 120)
+local STEP_COLOUR = Color3.fromRGB(255, 224, 160)
 
 -- Shape and glyph per space type (colour comes from SpaceTypes).
+-- Colour is a brighter, more saturated take on each type's SpaceTypes hue (same hue family,
+-- so the MAP legend still matches); shape and glyph keep types readable without colour.
 local LOOK = {
-	Neutral = { Shape = "Dot", Glyph = "" },
-	Gain = { Shape = "Circle", Glyph = "+3" },
-	Lose = { Shape = "Diamond", Glyph = "−3" },
-	Event = { Shape = "Circle", Glyph = "?" },
-	Shop = { Shape = "Square", Glyph = "SHOP" },
-	Item = { Shape = "Square", Glyph = "ITEM" },
-	Duel = { Shape = "Ring", Glyph = "VS" },
-	Chaos = { Shape = "Diamond", Glyph = "!" },
-	Switch = { Shape = "Ring", Glyph = "⇄" },
-	Reward = { Shape = "Ring", Glyph = "GIFT" },
+	Neutral = { Shape = "Dot", Glyph = "", Color = Color3.fromRGB(255, 214, 120) },
+	Gain = { Shape = "Circle", Glyph = "+3", Color = Color3.fromRGB(30, 146, 255) },
+	Lose = { Shape = "Diamond", Glyph = "−3", Color = Color3.fromRGB(255, 56, 80) },
+	Event = { Shape = "Circle", Glyph = "?", Color = Color3.fromRGB(34, 206, 96) },
+	Shop = { Shape = "Square", Glyph = "SHOP", Color = Color3.fromRGB(190, 70, 255) },
+	Item = { Shape = "Square", Glyph = "ITEM", Color = Color3.fromRGB(0, 206, 226) },
+	Duel = { Shape = "Ring", Glyph = "VS", Color = Color3.fromRGB(255, 136, 20) },
+	Chaos = { Shape = "Diamond", Glyph = "!", Color = Color3.fromRGB(126, 46, 210) },
+	Switch = { Shape = "Ring", Glyph = "⇄", Color = Color3.fromRGB(255, 186, 30) },
+	Reward = { Shape = "Ring", Glyph = "GIFT", Color = Color3.fromRGB(255, 196, 20) },
 }
 MedallionKit.Look = LOOK
 
@@ -82,11 +86,11 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 	local base = disc(model, "Base", d, 1.0, position + Vector3.new(0, 0.5, 0), CERAMIC, Enum.Material.SmoothPlastic)
 	base:SetAttribute("SpaceId", id)
 	base:SetAttribute("SpaceType", typeKey)
-	decor(disc(model, "Rim", d + 0.6, 0.6, position + Vector3.new(0, 0.3, 0), RIM, Enum.Material.Metal))
+	decor(disc(model, "Rim", d + 0.8, 0.7, position + Vector3.new(0, 0.35, 0), RIM, Enum.Material.SmoothPlastic))
 
 	-- Inlay shape in the type colour, just proud of the base top
 	local inlayY = position + Vector3.new(0, 1.05, 0)
-	local colour = spaceType.Color
+	local colour = look.Color or spaceType.Color
 	if look.Shape == "Circle" then
 		decor(disc(model, "Inlay", 7.4, 0.2, inlayY, colour))
 	elseif look.Shape == "Dot" then
@@ -165,9 +169,24 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		Size = Vector3.new(MedallionKit.PATH_WIDTH, 0.5, length),
 		CFrame = CFrame.lookAt((a + b) / 2, b),
 		Color = PATH,
-		Material = Enum.Material.Sand,
+		Material = Enum.Material.SmoothPlastic,
 		Parent = parent,
 	})
+	-- A warm edging strip under the path so it separates cleanly from the grass
+	if math.abs(b.Y - a.Y) < 1.5 then
+		local edge = part({
+			Name = name .. "_Edge",
+			Size = Vector3.new(MedallionKit.PATH_WIDTH + 1.2, 0.4, length),
+			CFrame = CFrame.lookAt((a + b) / 2 - Vector3.new(0, 0.12, 0), b - Vector3.new(0, 0.12, 0)),
+			Color = PATH_EDGE,
+			Material = Enum.Material.SmoothPlastic,
+			Parent = parent,
+		})
+		edge.CanCollide = false
+		edge.CanQuery = false
+		edge.CanTouch = false
+		edge.CastShadow = false
+	end
 	-- Elevation transitions read as stairs: the slope stays (named, so gates find it) but is
 	-- hidden under a run of chunky steps. Steps are ~0.8 studs high, never fewer than 3.
 	local rise = b.Y - a.Y
@@ -187,8 +206,8 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 				Name = name .. "_Step" .. i,
 				Size = Vector3.new(MedallionKit.PATH_WIDTH, height, depth + 0.05),
 				CFrame = CFrame.lookAt(Vector3.new(centre.X, low + height / 2, centre.Z), Vector3.new(b.X, low + height / 2, b.Z)),
-				Color = PATH,
-				Material = Enum.Material.Sandstone,
+				Color = if i % 2 == 0 then STEP_COLOUR else PATH,
+				Material = Enum.Material.SmoothPlastic,
 				Parent = parent,
 			})
 			step.CanQuery = false
