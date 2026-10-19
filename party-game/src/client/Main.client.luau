@@ -14,6 +14,7 @@ local Net = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("
 local CameraController = require(script.Parent:WaitForChild("CameraController"))
 local Controls = require(script.Parent:WaitForChild("Controls"))
 local Onboarding = require(script.Parent:WaitForChild("Onboarding"))
+local SceneAmbience = require(script.Parent:WaitForChild("SceneAmbience"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
 local ActionBar = require(UI:WaitForChild("ActionBar"))
@@ -486,6 +487,9 @@ RunService.RenderStepped:Connect(function()
 	youMarker:setActive(youMarkerWanted())
 	youMarker:update()
 end)
+
+-- Board scenery motion (waterwheel, balloons, floating islands...), local only.
+SceneAmbience.start()
 
 -- Ask for the current state in case we joined mid-round.
 sendInput({ Kind = Net.Input.Ready })
