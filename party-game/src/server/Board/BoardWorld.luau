@@ -293,6 +293,7 @@ function BoardWorld:setFestivalLighting(active)
  local lighting=game:GetService("Lighting")
  if active and not self.SavedLighting then
   self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
+  for key in self.LightingPreset or {} do self.SavedLighting[key]=lighting[key] end
   if self.LightingPreset then
    for key,value in self.LightingPreset do lighting[key]=value end
    for _,child in self.LightingChildren or {} do child.Parent=lighting end
