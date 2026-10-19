@@ -53,7 +53,7 @@ Config.Match = {
 	-- Boards still in production (e.g. the Sunny Loop redesign). Offered in the picker only
 	-- when ShowPreviewBoards is on AND the server runs in Studio; live servers never see them.
 	PreviewBoards = { "SunnyLoopV2" },
-	ShowPreviewBoards = false,
+	ShowPreviewBoards = true, -- Studio only (WaitingRoom checks RunService:IsStudio())
 	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
 	Mode = "Board",
 	Modes = { "Board", "Minigames" },

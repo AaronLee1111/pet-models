@@ -62,6 +62,10 @@ Config.Match = {
 	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
 	Board = "Classic", -- default board: module name in PartyServer/Board/Boards
 	Boards = { "Classic", "MagicalFestival" }, -- boards the host can pick (in this order)
+	-- Boards still in production (e.g. the Sunny Loop redesign). Offered in the picker only
+	-- when ShowPreviewBoards is on AND the server runs in Studio; live servers never see them.
+	PreviewBoards = { "SunnyLoopV2" },
+	ShowPreviewBoards = true, -- Studio only (WaitingRoom checks RunService:IsStudio())
 	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
 	Mode = "Board",
 	Modes = { "Board", "Minigames" },
@@ -97,6 +101,10 @@ Config.Board = {
 	RollTimeout = 12, -- a player who doesn't roll in time rolls automatically
 	ChoiceTimeout = 10, -- unanswered prompts take their default option
 	HopTime = 0.35, -- seconds per space moved
+	-- Thrown-dice presentation (boards with Presentation = "Diorama"): seconds from the roll to
+	-- the first hop, so everyone sees the die fly, land and show its number.
+	DiceReveal = 1.9,
+	DiceRevealBot = 1.25,
 	BotRollDelay = { 0.8, 1.6 },
 	BotChoiceDelay = { 0.6, 1.4 },
 	LandPause = 1.5, -- beat after landing so everyone can read what happened
@@ -1132,13 +1140,22 @@ local function layoutMessage(board)
 			Name = spaceType.Name,
 			Color = spaceType.Color,
 			Position = current.World.Tops[id],
+			Next = space.Next, -- camera framing at forks
+			Landmark = space.Landmark,
 		})
 	end
 	local legend = {}
 	for key, spaceType in SpaceTypes do
 		table.insert(legend, { Type = key, Name = spaceType.Name, Short = spaceType.Short, Color = spaceType.Color })
 	end
-	return { Type = Net.Message.BoardLayout, Name = board.DisplayName, Spaces = spaces, Legend = legend, Festival = board.Bridge ~= nil }
+	return {
+		Type = Net.Message.BoardLayout,
+		Name = board.DisplayName,
+		Spaces = spaces,
+		Legend = legend,
+		Festival = board.Bridge ~= nil,
+		Presentation = board.Presentation, -- "Diorama": close turn camera + thrown dice
+	}
 end
 
 local function describeItems(seat)
@@ -1197,6 +1214,8 @@ local function stateMessage()
 		TurnName = turn and turn.Participant.Name,
 		Stage = current.Stage,
 		Roll = current.Roll,
+		RollId = current.RollId, -- changes every roll (thrown-dice presentation)
+		DiceFaces = current.DiceFaces,
 		Remaining = current.Remaining,
 		RollEndsAt = current.RollEndsAt,
 		Text = current.Text,
@@ -1739,13 +1758,19 @@ local function takeTurn(seat)
 	local roll, dice = match:rollTurn(seat)
 	current.Stage = "Moving"
 	current.Roll = roll
+	current.RollId = (current.RollId or 0) + 1
+	current.DiceFaces = dice
 	current.Remaining = roll
 	current.RollEndsAt = nil
 	current.Text = if #dice > 1
 		then ("%s rolled %s = %d"):format(seat.Participant.Name, table.concat(dice, " + "), roll)
 		else ("%s rolled a %d"):format(seat.Participant.Name, roll)
 	publish()
-	task.wait(0.8)
+	-- Thrown-dice boards give the die time to fly and land before the first hop; bots get the
+	-- short version. Other boards keep the old beat.
+	task.wait(if match.Board.Presentation == "Diorama"
+		then (if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
+		else 0.8)
 
 	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
 		current.Remaining = remaining
@@ -2241,6 +2266,10 @@ function BoardLayout.load(data, spaceTypes)
 		Gates = data.Gates or {},
 		Bridge = data.Bridge,
 		Zones = data.Zones,
+		-- Presentation only (no rules): see Boards/SunnyLoopV2.luau
+		Style = data.Style,
+		Scene = data.Scene,
+		Presentation = data.Presentation,
 		Spaces = {},
 		Order = {},
 	}, Board)
@@ -2275,6 +2304,8 @@ local Workspace = game:GetService("Workspace")
 local Config = require(ReplicatedStorage.PartyShared.Config)
 
 local FestivalScene = require(script.Parent.FestivalScene)
+local MedallionKit = require(script.Parent.MedallionKit)
+local SkyGardenScene = require(script.Parent.SkyGardenScene)
 
 local BoardWorld = {}
 BoardWorld.__index = BoardWorld
@@ -2317,10 +2348,13 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 	-- Centre the layout on the origin. Grid z goes "up the board" = -Z in the world.
 	local centre = Vector3.new((minX + maxX) / 2 * spacing, 0, -(minZ + maxZ) / 2 * spacing)
 	local function worldAt(at): Vector3
-		return origin + Vector3.new(at[1] * spacing, 0, -at[2] * spacing) - centre
+		-- at[3] (optional) is the space's height in studs (terraces, bridges).
+		return origin + Vector3.new(at[1] * spacing, at[3] or 0, -at[2] * spacing) - centre
 	end
+	self.WorldAt = worldAt
+	local medallions = board.Style == "Medallion"
 
-	if not board.Bridge then
+	if not board.Bridge and not medallions then
 	part({
 		Name = "Base",
 		Size = Vector3.new((maxX - minX) * spacing + 30, 2, (maxZ - minZ) * spacing + 30),
@@ -2335,6 +2369,12 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		local space = board.Spaces[id]
 		local spaceType = spaceTypes[space.Type]
 		local position = worldAt(space.At)
+		if medallions then
+			-- Round medallion spaces + sloped sandy paths (MedallionKit); same Tops/Tiles API.
+			self.Tops[id] = position + Vector3.new(0, MedallionKit.TOP, 0)
+			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id)
+			continue
+		end
 		self.Tops[id] = position + Vector3.new(0, TILE_HEIGHT, 0)
 
 		local tile = part({
@@ -2382,7 +2422,15 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		end
 	end
 
+	if medallions then
+		for _, id in board.Order do
+			for _, nextId in board.Spaces[id].Next do
+				MedallionKit.path(folder, self.Tops[id], self.Tops[nextId], ("Path%d_%d"):format(id, nextId))
+			end
+		end
+	end
 	if board.Bridge then FestivalScene.build(self) end
+	if board.Scene == "SkyGarden" then SkyGardenScene.build(self) end
 	-- The collectible marker: a floating gold gem with a price tag.
 	local marker = part({
 		Name = "Collectible",
@@ -2527,13 +2575,19 @@ function BoardWorld:setBridgeState(state)
  if state then FestivalScene.status(self,state) end
 end
 
+-- Board lighting while the board is on screen (not during minigames). The festival has its
+-- dusk values; a scene can set self.LightingPreset (e.g. SkyGardenScene) to use its own.
 function BoardWorld:setFestivalLighting(active)
- if not self.Board.Bridge then return end
+ if not self.Board.Bridge and not self.LightingPreset then return end
  local lighting=game:GetService("Lighting")
  if active and not self.SavedLighting then
   self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
+  if self.LightingPreset then
+   for key,value in self.LightingPreset do lighting[key]=value end
+  else
   lighting.ClockTime=17.8;lighting.Ambient=Color3.fromRGB(145,130,180)
   lighting.OutdoorAmbient=Color3.fromRGB(155,150,190);lighting.Brightness=2
+  end
  elseif not active and self.SavedLighting then
   for key,value in self.SavedLighting do lighting[key]=value end
   self.SavedLighting=nil
@@ -2679,8 +2733,127 @@ return {
 ]]></string>
             </Properties>
           </Item>
+          <Item class="ModuleScript" referent="17">
+            <Properties>
+              <string name="Name">SunnyLoopV2</string>
+              <string name="Source"><![CDATA[--[[
+	Sunny Loop v2 (PREVIEW): the production redesign of Sunny Loop as a floating sky-garden
+	festival with three areas around a sundial pavilion. Development variant: only offered in
+	the waiting room when Config.Match.ShowPreviewBoards is on (Studio). The original Sunny Loop
+	(Classic.luau) is unchanged and stays the default.
+
+	Same rules as Classic; only the route and the look differ. Plan, landmarks and art notes:
+	docs/SunnyLoopV2.md. Route plan picture: docs/sunny-loop-v2/route-plan.svg.
+
+	Each space adds to the Classic format:
+	  At      { x, z, height }: grid cell (x Config.Board.SpaceSpacing) + height in studs
+	  Area    "Stream" | "Orchard" | "Fair" | "Village" (art + camera grouping only)
+	  Landmark  the physical place this space belongs to (art + camera moments only)
+
+	Clockwise loop: Sun Gate (south) -> Orchard (west) -> Hilltop Fairground (north)
+	-> Waterwheel Village (east) -> Stream walk (south) -> Sun Gate.
+
+	  Fork A  5: Market Lane (6-9, past the Orchard Market shop)  | Hillside Steps (30-32, up the
+	          orchard terrace: shorter, riskier). Both rejoin at 10.
+	  Fork B 12: Fairground Road (13-24, the long way)              | Sundial Bridge (33-37, elevated
+	          over the stream and past the sundial; toll 3, the Bell Switch at 19 can close it).
+	          Rejoins at 25.
+	  Fork C 15: Fair Midway (16-18, event stage)                     | Crown Terrace (38-40, past the
+	          Crown pavilion and the fair kiosk). Both rejoin at 19 (Bell Switch).
+]]
+
+return {
+	Name = "SunnyLoopV2",
+	DisplayName = "Sunny Loop (preview)",
+	Preview = true, -- development variant (see Config.Match.PreviewBoards)
+	Style = "Medallion", -- round space medallions, height-aware paths
+	Scene = "SkyGarden", -- environment dressing (vertical slice: the orchard)
+	Presentation = "Diorama", -- close turn camera + thrown dice
+	Start = 1,
+	CrownSpaces = { 9, 17, 22, 26, 28, 31, 39 },
+	Gates = {
+		{ Id = "SundialBridge", From = 12, To = 33, Open = true, Toll = 3 },
+	},
+	Spaces = {
+		-- Stream walk + Sun Gate (south), heading west
+		{ Id = 1, Type = "Neutral", At = { 0.0, -4.6, 0 }, Next = { 2 }, Area = "Stream", Landmark = "SunGate" },
+		{ Id = 2, Type = "Gain", At = { -1.05, -4.7, 0 }, Next = { 3 }, Area = "Stream" },
+		{ Id = 3, Type = "Item", At = { -2.1, -4.5, 0 }, Next = { 4 }, Area = "Stream" },
+		-- Orchard (west), heading north
+		{ Id = 4, Type = "Gain", At = { -3.0, -4.0, 0 }, Next = { 5 }, Area = "Orchard" },
+		{
+			Id = 5,
+			Type = "Neutral",
+			At = { -3.7, -3.25, 0 },
+			Next = { 6, 30 },
+			Paths = { "Market Lane", "Hillside Steps" },
+			Area = "Orchard",
+			Landmark = "OrchardSignpost",
+		},
+		{ Id = 6, Type = "Gain", At = { -4.6, -2.75, 0 }, Next = { 7 }, Area = "Orchard" },
+		{ Id = 7, Type = "Shop", At = { -5.15, -1.85, 0 }, Next = { 8 }, Area = "Orchard", Landmark = "OrchardMarket" },
+		{ Id = 8, Type = "Lose", At = { -5.35, -0.85, 0 }, Next = { 9 }, Area = "Orchard" },
+		{ Id = 9, Type = "Gain", At = { -5.2, 0.15, 0 }, Next = { 10 }, Area = "Orchard" },
+		{ Id = 10, Type = "Gain", At = { -4.75, 1.1, 1 }, Next = { 11 }, Area = "Orchard" },
+		{ Id = 11, Type = "Lose", At = { -4.35, 2.05, 2 }, Next = { 12 }, Area = "Orchard" },
+		{
+			Id = 12,
+			Type = "Neutral",
+			At = { -3.7, 2.85, 3 },
+			Next = { 13, 33 },
+			Paths = { "Fairground Road", "Sundial Bridge (toll)" },
+			Area = "Orchard",
+			Landmark = "BridgeGate",
+		},
+		-- Hilltop Fairground (north), heading east
+		{ Id = 13, Type = "Gain", At = { -2.85, 3.5, 4 }, Next = { 14 }, Area = "Fair" },
+		{ Id = 14, Type = "Chaos", At = { -1.85, 3.9, 5 }, Next = { 15 }, Area = "Fair" },
+		{
+			Id = 15,
+			Type = "Neutral",
+			At = { -0.8, 4.05, 6 },
+			Next = { 16, 38 },
+			Paths = { "Fair Midway", "Crown Terrace" },
+			Area = "Fair",
+			Landmark = "FairSignpost",
+		},
+		{ Id = 16, Type = "Event", At = { 0.2, 3.55, 6 }, Next = { 17 }, Area = "Fair", Landmark = "EventStage" },
+		{ Id = 17, Type = "Gain", At = { 1.2, 3.4, 6 }, Next = { 18 }, Area = "Fair" },
+		{ Id = 18, Type = "Item", At = { 2.2, 3.6, 6 }, Next = { 19 }, Area = "Fair" },
+		{ Id = 19, Type = "Switch", At = { 3.1, 4.2, 6 }, Next = { 20 }, Area = "Fair", Landmark = "BellSwitch" },
+		-- Waterwheel Village (east), heading south
+		{ Id = 20, Type = "Gain", At = { 3.95, 3.6, 5 }, Next = { 21 }, Area = "Village" },
+		{ Id = 21, Type = "Lose", At = { 4.6, 2.75, 4 }, Next = { 22 }, Area = "Village" },
+		{ Id = 22, Type = "Gain", At = { 5.0, 1.75, 3 }, Next = { 23 }, Area = "Village" },
+		{ Id = 23, Type = "Reward", At = { 5.15, 0.7, 2 }, Next = { 24 }, Area = "Village", Landmark = "Waterwheel" },
+		{ Id = 24, Type = "Event", At = { 5.0, -0.35, 1 }, Next = { 25 }, Area = "Village" },
+		{ Id = 25, Type = "Gain", At = { 4.7, -1.35, 0 }, Next = { 26 }, Area = "Village" },
+		{ Id = 26, Type = "Item", At = { 4.1, -2.25, 0 }, Next = { 27 }, Area = "Village", Landmark = "MillDock" },
+		-- Stream walk (south), heading west back to the Sun Gate
+		{ Id = 27, Type = "Lose", At = { 3.3, -3.0, 0 }, Next = { 28 }, Area = "Stream" },
+		{ Id = 28, Type = "Gain", At = { 2.3, -3.65, 0 }, Next = { 29 }, Area = "Stream" },
+		{ Id = 29, Type = "Chaos", At = { 1.15, -4.25, 0 }, Next = { 1 }, Area = "Stream" },
+		-- Hillside Steps (fork A, up the orchard terrace)
+		{ Id = 30, Type = "Event", At = { -3.55, -2.15, 4 }, Next = { 31 }, Area = "Orchard", Landmark = "OrchardSteps" },
+		{ Id = 31, Type = "Reward", At = { -3.75, -1.05, 6 }, Next = { 32 }, Area = "Orchard", Landmark = "OrchardGrove" },
+		{ Id = 32, Type = "Duel", At = { -3.95, 0.05, 6 }, Next = { 10 }, Area = "Orchard" },
+		-- Sundial Bridge (fork B, elevated toll shortcut over the stream)
+		{ Id = 33, Type = "Lose", At = { -2.6, 2.2, 6 }, Next = { 34 }, Area = "Stream", Landmark = "SundialBridge" },
+		{ Id = 34, Type = "Gain", At = { -1.45, 1.35, 8 }, Next = { 35 }, Area = "Stream", Landmark = "SundialBridge" },
+		{ Id = 35, Type = "Event", At = { -0.1, 0.45, 10 }, Next = { 36 }, Area = "Stream", Landmark = "SundialPavilion" },
+		{ Id = 36, Type = "Reward", At = { 1.75, -0.3, 8 }, Next = { 37 }, Area = "Stream", Landmark = "SundialBridge" },
+		{ Id = 37, Type = "Neutral", At = { 3.3, -0.85, 4 }, Next = { 25 }, Area = "Village", Landmark = "SundialBridge" },
+		-- Crown Terrace (fork C, upper fairground)
+		{ Id = 38, Type = "Gain", At = { -0.2, 4.95, 9 }, Next = { 39 }, Area = "Fair" },
+		{ Id = 39, Type = "Neutral", At = { 1.0, 5.25, 10 }, Next = { 40 }, Area = "Fair", Landmark = "CrownPavilion" },
+		{ Id = 40, Type = "Shop", At = { 2.15, 5.05, 9 }, Next = { 19 }, Area = "Fair", Landmark = "FairKiosk" },
+	},
+}
+]]></string>
+            </Properties>
+          </Item>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">BotBrain</string>
             <string name="Source"><![CDATA[--[[
@@ -3067,7 +3240,7 @@ return BotBrain
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">ChaosEvents</string>
             <string name="Source"><![CDATA[--[[
@@ -3161,7 +3334,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">Events</string>
             <string name="Source"><![CDATA[--[[
@@ -3293,7 +3466,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">FestivalScene</string>
             <string name="Source"><![CDATA[-- Editable procedural blockout: shared lamps, rocks, crystals and seven landmark groups.
@@ -3432,7 +3605,7 @@ return Scene
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Items</string>
             <string name="Source"><![CDATA[--[[
@@ -3581,7 +3754,7 @@ return {
 		Description = "Open or close the Sunny Loop shortcut from anywhere",
 		Price = 4,
 		Weight = 2,
-		Boards = { "Classic" },
+		Boards = { "Classic", "SunnyLoopV2" },
 		Use = function(match, seat)
 			if #(match.Board.Gates or {}) == 0 then
 				return nil, "this board has no gates"
@@ -3607,7 +3780,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="22">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">Match</string>
             <string name="Source"><![CDATA[--[[
@@ -4819,7 +4992,214 @@ return Match
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="23">
+        <Item class="ModuleScript" referent="24">
+          <Properties>
+            <string name="Name">MedallionKit</string>
+            <string name="Source"><![CDATA[--[[
+	MedallionKit
+	Studio build of the board-space kit used by boards with Style = "Medallion" (Sunny Loop v2).
+	Same dimensions as the Blender kit (docs/SunnyLoopV2.md, "Board-space kit"), so the Blender
+	meshes can replace these parts one for one later:
+
+	  base     round ceramic medallion, 10.5 studs across, 1.2 tall, gold rim (one mesh, all types)
+	  inlay    the type's colour as a SHAPE: circle, diamond, rounded square or ring (colour-blind
+	           safe: shape + icon + colour all differ by type)
+	  icon     the type's symbol on top (text glyph until the rendered icon set exists)
+	  path     sandy path segment between two medallion edges, following the height change
+
+	  MedallionKit.TOP              height of the walkable top above the space's position
+	  MedallionKit.space(parent, position, typeKey, spaceType, id) -> base Part
+	  MedallionKit.path(parent, fromTop, toTop, name) -> Part?
+]]
+
+local MedallionKit = {}
+
+MedallionKit.DIAMETER = 10.5
+MedallionKit.TOP = 1.2
+MedallionKit.PATH_WIDTH = 4.5
+
+local CERAMIC = Color3.fromRGB(250, 244, 230)
+local RIM = Color3.fromRGB(226, 182, 92)
+local PATH = Color3.fromRGB(232, 210, 168)
+
+-- Shape and glyph per space type (colour comes from SpaceTypes).
+local LOOK = {
+	Neutral = { Shape = "Dot", Glyph = "" },
+	Gain = { Shape = "Circle", Glyph = "+3" },
+	Lose = { Shape = "Diamond", Glyph = "−3" },
+	Event = { Shape = "Circle", Glyph = "?" },
+	Shop = { Shape = "Square", Glyph = "SHOP" },
+	Item = { Shape = "Square", Glyph = "ITEM" },
+	Duel = { Shape = "Ring", Glyph = "VS" },
+	Chaos = { Shape = "Diamond", Glyph = "!" },
+	Switch = { Shape = "Ring", Glyph = "⇄" },
+	Reward = { Shape = "Ring", Glyph = "GIFT" },
+}
+MedallionKit.Look = LOOK
+
+local function part(props)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Material = Enum.Material.SmoothPlastic
+	for key, value in props do
+		(p :: any)[key] = value
+	end
+	return p
+end
+
+-- A flat disc lying on the ground (cylinders stand on their X axis).
+local function disc(parent, name, diameter, height, centre: Vector3, color, material)
+	return part({
+		Name = name,
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(height, diameter, diameter),
+		CFrame = CFrame.new(centre) * CFrame.Angles(0, 0, math.pi / 2),
+		Color = color,
+		Material = material or Enum.Material.SmoothPlastic,
+		Parent = parent,
+	})
+end
+
+local function decor(p)
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	return p
+end
+
+function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number)
+	local look = LOOK[typeKey] or LOOK.Neutral
+	local model = Instance.new("Model")
+	model.Name = "Space" .. id
+	local d = MedallionKit.DIAMETER
+	-- Base (walkable; the only collidable piece) + gold rim
+	local base = disc(model, "Base", d, 1.0, position + Vector3.new(0, 0.5, 0), CERAMIC, Enum.Material.SmoothPlastic)
+	base:SetAttribute("SpaceId", id)
+	base:SetAttribute("SpaceType", typeKey)
+	decor(disc(model, "Rim", d + 0.6, 0.6, position + Vector3.new(0, 0.3, 0), RIM, Enum.Material.Metal))
+
+	-- Inlay shape in the type colour, just proud of the base top
+	local inlayY = position + Vector3.new(0, 1.05, 0)
+	local colour = spaceType.Color
+	if look.Shape == "Circle" then
+		decor(disc(model, "Inlay", 7.4, 0.2, inlayY, colour))
+	elseif look.Shape == "Dot" then
+		decor(disc(model, "Inlay", 3.2, 0.2, inlayY, colour))
+	elseif look.Shape == "Ring" then
+		decor(disc(model, "Inlay", 7.6, 0.2, inlayY, colour))
+		decor(disc(model, "InlayHole", 4.6, 0.24, inlayY, CERAMIC, Enum.Material.SmoothPlastic))
+	elseif look.Shape == "Diamond" then
+		decor(part({
+			Name = "Inlay",
+			Size = Vector3.new(5.6, 0.2, 5.6),
+			CFrame = CFrame.new(inlayY) * CFrame.Angles(0, math.rad(45), 0),
+			Color = colour,
+			Parent = model,
+		}))
+	else -- Square (rounded look comes from the Blender insert later)
+		decor(part({
+			Name = "Inlay",
+			Size = Vector3.new(6, 0.2, 6),
+			CFrame = CFrame.new(inlayY),
+			Color = colour,
+			Parent = model,
+		}))
+	end
+
+	-- Icon / glyph, readable from the turn camera and the MAP
+	if look.Glyph ~= "" then
+		local plate = decor(part({
+			Name = "Icon",
+			Size = Vector3.new(6, 0.05, 6),
+			-- Turned so the glyph reads upright from the board camera (which looks north).
+			CFrame = CFrame.new(position + Vector3.new(0, 1.2, 0)) * CFrame.Angles(0, math.rad(-90), 0),
+			Transparency = 1,
+			Parent = model,
+		}))
+		local gui = Instance.new("SurfaceGui")
+		gui.Face = Enum.NormalId.Top
+		gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		gui.PixelsPerStud = 30
+		gui.LightInfluence = 0
+		gui.Parent = plate
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.TextStrokeTransparency = 0.2
+		label.TextStrokeColor3 = Color3.fromRGB(40, 30, 70)
+		label.Text = look.Glyph
+		label.Parent = gui
+		local pad = Instance.new("UIPadding")
+		local inset = UDim.new(0.18, 0)
+		pad.PaddingLeft, pad.PaddingRight, pad.PaddingTop, pad.PaddingBottom = inset, inset, inset, inset
+		pad.Parent = label
+	end
+
+	model.PrimaryPart = base
+	model.Parent = parent
+	return base
+end
+
+-- Path segment from one medallion's edge to the next, sloping with the height change.
+function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, name: string)
+	local flat = Vector3.new(toTop.X - fromTop.X, 0, toTop.Z - fromTop.Z)
+	local direction = flat.Unit
+	local radius = MedallionKit.DIAMETER / 2 - 0.4
+	local a = fromTop + direction * radius - Vector3.new(0, 0.35, 0)
+	local b = toTop - direction * radius - Vector3.new(0, 0.35, 0)
+	local length = (b - a).Magnitude
+	if flat.Magnitude < MedallionKit.DIAMETER or length < 0.5 then
+		return nil
+	end
+	local slope = part({
+		Name = name,
+		Size = Vector3.new(MedallionKit.PATH_WIDTH, 0.5, length),
+		CFrame = CFrame.lookAt((a + b) / 2, b),
+		Color = PATH,
+		Material = Enum.Material.Sand,
+		Parent = parent,
+	})
+	-- Elevation transitions read as stairs: the slope stays (named, so gates find it) but is
+	-- hidden under a run of chunky steps. Steps are ~0.8 studs high, never fewer than 3.
+	local rise = b.Y - a.Y
+	if math.abs(rise) >= 1.5 then
+		slope.Transparency = 1
+		slope.CanCollide = false
+		local run = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+		local count = math.max(3, math.ceil(math.abs(rise) / 0.8))
+		local depth = run.Magnitude / count
+		local low = math.min(a.Y, b.Y) - 0.5
+		for i = 1, count do
+			local t = (i - 0.5) / count
+			local topY = a.Y + rise * (if rise > 0 then i / count else (i - 1) / count) + 0.25
+			local height = math.max(0.4, topY - low)
+			local centre = a + run * t
+			local step = part({
+				Name = name .. "_Step" .. i,
+				Size = Vector3.new(MedallionKit.PATH_WIDTH, height, depth + 0.05),
+				CFrame = CFrame.lookAt(Vector3.new(centre.X, low + height / 2, centre.Z), Vector3.new(b.X, low + height / 2, b.Z)),
+				Color = PATH,
+				Material = Enum.Material.Sandstone,
+				Parent = parent,
+			})
+			step.CanQuery = false
+			step.CanTouch = false
+		end
+	end
+	return slope
+end
+
+return MedallionKit
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">RotatingBridge</string>
             <string name="Source"><![CDATA[-- Pure topology; no yields, rendering, randomness or mutation during queries.
@@ -4895,7 +5275,260 @@ return Bridge
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="26">
+          <Properties>
+            <string name="Name">SkyGardenScene</string>
+            <string name="Source"><![CDATA[--[[
+	SkyGardenScene
+	Environment for Sunny Loop v2 (Scene = "SkyGarden"). Clean Studio blockouts sized to the
+	modular dimensions in docs/SunnyLoopV2.md, so Blender pieces can replace them later.
+
+	  * Whole board: floating island ground under every space at its height (terrace columns
+	    with rock skirts), a stream pool round the sundial, a sundial placeholder, the bridge's
+	    stone piers, and the "Sunny day" lighting preset.
+	  * Vertical slice (the orchard, spaces 4-10 and 30-32): orchard ground and the raised
+	    Hillside Steps terrace with its rock face, the Orchard Market shop building, a fence
+	    between the two routes, orchard trees, the fork signpost at 5 and lamps.
+
+	Everything here is decoration: no collision, no queries, no touches. Gameplay positions
+	come from BoardWorld (Tops), so this file can change freely without touching the rules.
+]]
+
+local Scene = {}
+
+local GRASS = Color3.fromRGB(122, 196, 98)
+local GRASS_DARK = Color3.fromRGB(96, 168, 82)
+local ROCK = Color3.fromRGB(176, 160, 142)
+local ROCK_DARK = Color3.fromRGB(138, 122, 110)
+local WOOD = Color3.fromRGB(176, 120, 72)
+local WOOD_DARK = Color3.fromRGB(126, 84, 52)
+local CREAM = Color3.fromRGB(250, 240, 220)
+local RED = Color3.fromRGB(222, 72, 70)
+local WATER = Color3.fromRGB(80, 190, 235)
+local GOLD = Color3.fromRGB(242, 190, 72)
+local LEAF = Color3.fromRGB(86, 170, 72)
+local FRUIT = Color3.fromRGB(255, 132, 48)
+
+local function part(parent, name, size, cframe, color, material, shape)
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Size = size
+	p.CFrame = cframe
+	p.Color = color
+	p.Material = material or Enum.Material.SmoothPlastic
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	if shape then
+		p.Shape = shape
+	end
+	p.Parent = parent
+	return p
+end
+
+-- Upright cylinder (Roblox cylinders lie along X).
+local function column(parent, name, diameter, bottom: number, top: number, at: Vector3, color, material)
+	local height = top - bottom
+	return part(
+		parent,
+		name,
+		Vector3.new(height, diameter, diameter),
+		CFrame.new(at.X, bottom + height / 2, at.Z) * CFrame.Angles(0, 0, math.pi / 2),
+		color,
+		material,
+		Enum.PartType.Cylinder
+	)
+end
+
+local function group(parent, name)
+	local model = Instance.new("Model")
+	model.Name = name
+	model.Parent = parent
+	return model
+end
+
+local function sign(parent, text: string, cframe: CFrame, size: Vector3, color: Color3?)
+	local board = part(parent, "Sign", size, cframe, color or CREAM, Enum.Material.Wood)
+	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
+		local gui = Instance.new("SurfaceGui")
+		gui.Face = face
+		gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		gui.PixelsPerStud = 40
+		gui.Parent = board
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.TextColor3 = Color3.fromRGB(70, 44, 30)
+		label.Text = text
+		label.Parent = gui
+	end
+	return board
+end
+
+local function tree(parent, at: Vector3, scale: number)
+	local model = group(parent, "OrchardTree")
+	column(model, "Trunk", 1.6 * scale, at.Y, at.Y + 6 * scale, at, WOOD_DARK, Enum.Material.Wood)
+	local crown = at + Vector3.new(0, 8 * scale, 0)
+	part(model, "Canopy", Vector3.one * 8 * scale, CFrame.new(crown), LEAF, Enum.Material.Grass, Enum.PartType.Ball)
+	part(model, "Canopy2", Vector3.one * 5.5 * scale, CFrame.new(crown + Vector3.new(2.6, 1.6, 1) * scale), GRASS_DARK, Enum.Material.Grass, Enum.PartType.Ball)
+	for i = 1, 4 do -- a few big fruit, not dozens of small ones
+		local a = i * math.pi / 2 + 0.4
+		local fruit = crown + Vector3.new(math.cos(a) * 3.6, -1 + (i % 2), math.sin(a) * 3.6) * scale
+		part(model, "Fruit", Vector3.one * 1.3 * scale, CFrame.new(fruit), FRUIT, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+	end
+end
+
+local function lamp(parent, at: Vector3)
+	local model = group(parent, "Lamp")
+	column(model, "Post", 0.6, at.Y, at.Y + 6, at, WOOD_DARK, Enum.Material.Wood)
+	local light = part(model, "Lantern", Vector3.new(1.4, 1.8, 1.4), CFrame.new(at + Vector3.new(0, 6.6, 0)), Color3.fromRGB(255, 214, 120), Enum.Material.Neon)
+	local glow = Instance.new("PointLight")
+	glow.Range = 14
+	glow.Brightness = 0.8
+	glow.Color = Color3.fromRGB(255, 210, 140)
+	glow.Parent = light
+end
+
+-- A run of fence posts + two rails from a to b (on the ground at their heights).
+local function fence(parent, a: Vector3, b: Vector3)
+	local model = group(parent, "Fence")
+	local run = b - a
+	local count = math.max(2, math.floor(run.Magnitude / 4))
+	for i = 0, count do
+		local at = a + run * (i / count)
+		part(model, "Post", Vector3.new(0.5, 2.6, 0.5), CFrame.new(at + Vector3.new(0, 1.3, 0)), CREAM, Enum.Material.Wood)
+	end
+	for _, y in { 1.0, 2.0 } do
+		part(model, "Rail", Vector3.new(0.3, 0.3, run.Magnitude), CFrame.lookAt((a + b) / 2 + Vector3.new(0, y, 0), b + Vector3.new(0, y, 0)), CREAM, Enum.Material.Wood)
+	end
+end
+
+-- Ground column under a point: grass top at `top`, rock skirt below, ending under the island.
+local function ground(parent, at: Vector3, diameter: number, top: number)
+	column(parent, "Grass", diameter, top - 1, top, at, GRASS, Enum.Material.Grass)
+	column(parent, "Rock", diameter - 1, top - 9, top - 1, at, ROCK, Enum.Material.Rock)
+end
+
+-- Orchard Market: a small timber shop with a striped awning, counter and fruit crates,
+-- facing the space it serves.
+local function market(parent, at: Vector3, facing: Vector3)
+	local model = group(parent, "OrchardMarket")
+	local cf = CFrame.lookAt(at, Vector3.new(facing.X, at.Y, facing.Z))
+	local function place(name, size, offset, color, material, shape)
+		return part(model, name, size, cf * CFrame.new(offset), color, material, shape)
+	end
+	place("Floor", Vector3.new(14, 1, 11), Vector3.new(0, 0.5, 0), WOOD_DARK, Enum.Material.WoodPlanks)
+	place("Back", Vector3.new(14, 9, 1), Vector3.new(0, 5.5, 5), CREAM, Enum.Material.Plaster)
+	place("SideL", Vector3.new(1, 9, 10), Vector3.new(-6.5, 5.5, 0.5), CREAM, Enum.Material.Plaster)
+	place("SideR", Vector3.new(1, 9, 10), Vector3.new(6.5, 5.5, 0.5), CREAM, Enum.Material.Plaster)
+	place("BeamL", Vector3.new(1.2, 9.5, 1.2), Vector3.new(-6.5, 5.5, -4.6), WOOD, Enum.Material.Wood)
+	place("BeamR", Vector3.new(1.2, 9.5, 1.2), Vector3.new(6.5, 5.5, -4.6), WOOD, Enum.Material.Wood)
+	place("Roof", Vector3.new(16, 1, 13), Vector3.new(0, 10.6, 0.4), RED, Enum.Material.SmoothPlastic)
+	-- Striped awning (four wide stripes: fewer, bigger shapes)
+	for i = 0, 3 do
+		place("Awning" .. i, Vector3.new(4, 0.4, 5), Vector3.new(-6 + i * 4, 8.6, -6.8) , if i % 2 == 0 then RED else CREAM, Enum.Material.Fabric)
+			.CFrame = cf * CFrame.new(-6 + i * 4, 8.4, -6.6) * CFrame.Angles(math.rad(-22), 0, 0)
+	end
+	place("Counter", Vector3.new(11, 3, 2), Vector3.new(0, 2.5, -3.6), WOOD, Enum.Material.Wood)
+	for i, colour in { FRUIT, RED, Color3.fromRGB(250, 214, 70) } do
+		place("Crate" .. i, Vector3.new(2.6, 1.6, 2.2), Vector3.new(-4.4 + (i - 1) * 4.4, 4.8, -3.6), WOOD_DARK, Enum.Material.WoodPlanks)
+		place("Fruit" .. i, Vector3.new(2.2, 0.8, 1.8), Vector3.new(-4.4 + (i - 1) * 4.4, 5.8, -3.6), colour, Enum.Material.SmoothPlastic)
+	end
+	local s = sign(model, "ORCHARD MARKET", cf * CFrame.new(0, 12.4, -5.2), Vector3.new(11, 2.4, 0.4), GOLD)
+	s.Name = "MarketSign"
+	lamp(model, (cf * CFrame.new(-8.5, 0, -5.5)).Position)
+	return model
+end
+
+-- Fork signpost: one arrow board per route, each pointing at the route's first space.
+local function signpost(parent, at: Vector3, routes)
+	local model = group(parent, "Signpost")
+	column(model, "Pole", 0.7, at.Y, at.Y + 8, at, WOOD_DARK, Enum.Material.Wood)
+	for i, route in routes do
+		local y = at.Y + 7.2 - (i - 1) * 2
+		local target = Vector3.new(route.Toward.X, y, route.Toward.Z)
+		local cf = CFrame.lookAt(Vector3.new(at.X, y, at.Z), target) * CFrame.Angles(0, math.rad(90), 0)
+		sign(model, route.Label .. "  ›", cf * CFrame.new(-3.2, 0, 0), Vector3.new(6.4, 1.6, 0.35), route.Color)
+	end
+end
+
+function Scene.build(world)
+	local folder = world.Folder
+	local at = world.WorldAt
+	local board = world.Board
+	local scene = group(folder, "SkyGarden")
+
+	-- Sunny day (applied while the board is on screen; BoardWorld restores the old values).
+	world.LightingPreset = {
+		ClockTime = 14.2,
+		Brightness = 2.6,
+		Ambient = Color3.fromRGB(150, 140, 120),
+		OutdoorAmbient = Color3.fromRGB(170, 160, 140),
+	}
+
+	-- Island ground: one column per space at its height (terraces read as stacked mesas), and
+	-- thin stone piers under the Sundial Bridge instead of solid ground.
+	local island = group(scene, "Island")
+	for _, id in board.Order do
+		local space = board.Spaces[id]
+		local p = at(space.At)
+		if space.Landmark == "SundialBridge" or space.Landmark == "SundialPavilion" then
+			column(island, "Pier", 3.2, -6, p.Y, p, ROCK, Enum.Material.Cobblestone)
+		else
+			ground(island, p, 17, p.Y)
+		end
+	end
+	-- Base plate joining the islands, and a stream pool round the sundial.
+	local centre = at({ 0, -0.2, 0 })
+	column(island, "BasePlate", 150, -9, -1, centre, ROCK_DARK, Enum.Material.Rock)
+	column(island, "BaseGrass", 146, -1.2, -0.2, centre, GRASS_DARK, Enum.Material.Grass)
+	local pool = column(island, "StreamPool", 44, -0.5, -0.05, at({ 0.1, -0.6, 0 }), WATER, Enum.Material.Glass)
+	pool.Transparency = 0.25
+
+	-- Sundial pavilion placeholder (landmark stage: blockout only, modelled later in Blender).
+	local dial = group(scene, "SundialPavilion")
+	local dialAt = at({ 0.1, -1.1, 0 })
+	column(dial, "Dais", 22, -0.2, 2.4, dialAt, CREAM, Enum.Material.Marble)
+	column(dial, "Face", 16, 2.4, 3.2, dialAt, GOLD, Enum.Material.Metal)
+	part(dial, "Gnomon", Vector3.new(1, 7, 7), CFrame.new(dialAt + Vector3.new(0, 6, 0)) * CFrame.Angles(0, math.rad(35), math.rad(-30)), GOLD, Enum.Material.Metal, Enum.PartType.Wedge)
+
+	-- ===== Vertical slice: the orchard =====
+	local orchard = group(scene, "OrchardSlice")
+	-- Hillside terrace (spaces 30-32): one raised plateau with a rock face toward Market Lane.
+	local terrace = at({ -3.8, -1.0, 6 })
+	column(orchard, "TerraceTop", 30, 5, 6, terrace, GRASS, Enum.Material.Grass)
+	column(orchard, "TerraceRock", 29, -1, 5, terrace, ROCK, Enum.Material.Rock)
+	-- Fence on the terrace edge: the two routes stay visibly separate.
+	fence(orchard, at({ -4.65, -2.1, 6 }), at({ -4.75, 0.4, 6 }))
+	-- Orchard trees on the terrace and the outer edge (big, few).
+	for _, spot in { { -2.75, -1.6, 6 }, { -2.85, 0.2, 6 }, { -6.3, 0.9, 0 }, { -6.1, -3.4, 0 }, { -4.2, -4.9, 0 } } do
+		tree(orchard, at(spot), 1)
+	end
+	-- Orchard Market shop beside space 7, facing it.
+	local shopSpace = at(board.Spaces[7].At)
+	-- Faces between its space (east) and the board camera (south) so the storefront shows.
+	market(orchard, at({ -6.35, -1.95, 0 }), shopSpace + Vector3.new(0, 0, 14))
+	-- Fork signpost at 5: Market Lane (6) and Hillside Steps (30).
+	local fork = at(board.Spaces[5].At)
+	signpost(orchard, fork + Vector3.new(4.5, 0, 3.5), {
+		{ Label = "Market Lane", Toward = at(board.Spaces[6].At), Color = Color3.fromRGB(255, 236, 190) },
+		{ Label = "Hillside Steps", Toward = at(board.Spaces[30].At), Color = Color3.fromRGB(214, 240, 200) },
+	})
+	lamp(orchard, at({ -4.3, -3.75, 0 }))
+	lamp(orchard, at({ -4.2, 0.75, 6 }))
+	return scene
+end
+
+return Scene
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">SpaceTypes</string>
             <string name="Source"><![CDATA[--[[
@@ -5014,7 +5647,7 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="25">
+      <Item class="ModuleScript" referent="28">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -5308,7 +5941,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="26">
+      <Item class="ModuleScript" referent="29">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -5455,7 +6088,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="27">
+      <Item class="ModuleScript" referent="30">
         <Properties>
           <string name="Name">CosmeticService</string>
           <string name="Source"><![CDATA[--[[
@@ -5697,7 +6330,7 @@ return CosmeticService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="28">
+      <Item class="ModuleScript" referent="31">
         <Properties>
           <string name="Name">CosmeticShop</string>
           <string name="Source"><![CDATA[--[[
@@ -5825,7 +6458,7 @@ return CosmeticShop
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="29">
+      <Item class="ModuleScript" referent="32">
         <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
@@ -5955,7 +6588,7 @@ return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="30">
+      <Item class="Script" referent="33">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -6076,7 +6709,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="31">
+      <Item class="ModuleScript" referent="34">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -6212,7 +6845,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="32">
+      <Item class="ModuleScript" referent="35">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -6965,7 +7598,7 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="33">
+      <Item class="ModuleScript" referent="36">
         <Properties>
           <string name="Name">MinigameMode</string>
           <string name="Source"><![CDATA[--[[
@@ -7184,11 +7817,11 @@ return MinigameMode
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="34">
+      <Item class="Folder" referent="37">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">Bullseye</string>
             <string name="Source"><![CDATA[--[[
@@ -7436,7 +8069,7 @@ return Bullseye
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">BumperBout</string>
             <string name="Source"><![CDATA[--[[
@@ -8279,7 +8912,7 @@ return BumperBout
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -8592,7 +9225,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -9088,7 +9721,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -9761,7 +10394,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -10271,7 +10904,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -10428,7 +11061,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">PatternRecall</string>
             <string name="Source"><![CDATA[--[[
@@ -10683,7 +11316,7 @@ return PatternRecall
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -11100,7 +11733,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">QuickDraw</string>
             <string name="Source"><![CDATA[--[[
@@ -11292,7 +11925,7 @@ return QuickDraw
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">TrailTangle</string>
             <string name="Source"><![CDATA[--[[
@@ -11996,7 +12629,7 @@ return TrailTangle
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -12122,7 +12755,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="47">
+      <Item class="ModuleScript" referent="50">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -12268,7 +12901,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="48">
+      <Item class="ModuleScript" referent="51">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -12410,7 +13043,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -12533,7 +13166,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -12564,7 +13197,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -12712,7 +13345,7 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="52">
+      <Item class="ModuleScript" referent="55">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -12828,7 +13461,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="53">
+      <Item class="ModuleScript" referent="56">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -12953,7 +13586,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="54">
+      <Item class="ModuleScript" referent="57">
         <Properties>
           <string name="Name">SeatClaims</string>
           <string name="Source"><![CDATA[--[[
@@ -13117,7 +13750,7 @@ return SeatClaims
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="55">
+      <Item class="ModuleScript" referent="58">
         <Properties>
           <string name="Name">Tutorial</string>
           <string name="Source"><![CDATA[--[[
@@ -13260,7 +13893,7 @@ return Tutorial
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="56">
+      <Item class="ModuleScript" referent="59">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -13276,6 +13909,7 @@ return Tutorial
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
@@ -13285,11 +13919,22 @@ local Tutorial = require(script.Parent.Tutorial)
 
 local WaitingRoom = {}
 
+-- Boards the host can pick: the released ones, plus preview boards in Studio when switched on.
+function WaitingRoom.boardChoices(): { string }
+	local list = table.clone(Config.Match.Boards)
+	if Config.Match.ShowPreviewBoards and RunService:IsStudio() then
+		for _, id in Config.Match.PreviewBoards or {} do
+			table.insert(list, id)
+		end
+	end
+	return list
+end
+
 -- What each board in the picker is called on screen (its DisplayName, e.g. "Sunny Loop").
 function WaitingRoom.boardNames()
 	local names = {}
 	local folder = script.Parent:FindFirstChild("Board") and script.Parent.Board:FindFirstChild("Boards")
-	for _, id in Config.Match.Boards do
+	for _, id in WaitingRoom.boardChoices() do
 		local module = folder and folder:FindFirstChild(id)
 		local ok, data = pcall(function()
 			return module and require(module)
@@ -13313,7 +13958,7 @@ local function choices()
 		Mode = Config.Match.Modes,
 		Rounds = Config.Match.BoardRoundChoices,
 		Difficulty = Config.Match.BotDifficultyOrder,
-		Board = Config.Match.Boards,
+		Board = WaitingRoom.boardChoices(),
 	}
 end
 
@@ -13395,19 +14040,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="57">
+  <Item class="StarterPlayer" referent="60">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="58">
+    <Item class="StarterPlayerScripts" referent="61">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="59">
+      <Item class="Folder" referent="62">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -13631,7 +14276,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -13752,7 +14397,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="62">
+        <Item class="LocalScript" referent="65">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -14249,11 +14894,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="63">
+        <Item class="Folder" referent="66">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">BumperBout</string>
               <string name="Source"><![CDATA[--[[
@@ -14369,7 +15014,7 @@ return BumperBoutClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -14654,7 +15299,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -14909,7 +15554,7 @@ return PoleShimmyClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">TrailTangle</string>
               <string name="Source"><![CDATA[--[[
@@ -15051,7 +15696,7 @@ return TrailTangleClient
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="68">
+        <Item class="ModuleScript" referent="71">
           <Properties>
             <string name="Name">Onboarding</string>
             <string name="Source"><![CDATA[--[[
@@ -15605,11 +16250,11 @@ return Onboarding
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="69">
+        <Item class="Folder" referent="72">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -15759,7 +16404,329 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="74">
+            <Properties>
+              <string name="Name">BoardDice</string>
+              <string name="Source"><![CDATA[--[[
+	BoardDice
+	The thrown-dice moment on boards with Presentation = "Diorama" (Sunny Loop v2). Purely
+	local presentation: the server has already decided the number (state.DiceFaces); this only
+	shows it.
+
+	  1. The roller hops (a short crouch-and-jump on their piece).
+	  2. One die per rolled die leaves from above their head and tumbles in an arc onto the board
+	     beside them, toward the camera so it's in view.
+	  3. It bounces once and settles with the rolled face up.
+	  4. The number pops above it (the total too, for two or three dice), then it fades as the
+	     piece starts hopping.
+
+	  dice:throw(character, count)          start now (the local player pressing ROLL)
+	  dice:reveal(character, faces, rollId) the server's result: finish an ongoing throw, or
+	                                        play the whole thing (everyone else, bots)
+	  dice:clear()
+
+	Timing fits inside Config.Board.DiceReveal (players) / DiceRevealBot (bots): a full throw
+	takes ~1.5 s, the short (bot) version ~1.0 s. Reduced motion: no tumble, the dice just
+	appear showing their faces.
+]]
+
+local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Theme = require(script.Parent.Theme)
+
+local BoardDice = {}
+BoardDice.__index = BoardDice
+
+local SIZE = 3.4
+local FLIGHT = 0.75 -- seconds in the air (full version)
+local FLIGHT_SHORT = 0.5
+local MIN_TUMBLE = 0.6 -- the local throw never settles sooner than this, even on a fast server
+
+-- Number n is printed on FACES[n].Face; FACES[n].Up is the rotation that turns that face to
+-- point up (+Y). Opposite faces add up to 7, like a real die.
+local FACES = {
+	{ Face = Enum.NormalId.Top, Up = CFrame.new() },
+	{ Face = Enum.NormalId.Front, Up = CFrame.Angles(math.rad(90), 0, 0) },
+	{ Face = Enum.NormalId.Right, Up = CFrame.Angles(0, 0, math.rad(90)) },
+	{ Face = Enum.NormalId.Left, Up = CFrame.Angles(0, 0, math.rad(-90)) },
+	{ Face = Enum.NormalId.Back, Up = CFrame.Angles(math.rad(-90), 0, 0) },
+	{ Face = Enum.NormalId.Bottom, Up = CFrame.Angles(math.rad(180), 0, 0) },
+}
+
+-- The direction a face's printed number calls "up", in the die's own space (SurfaceGui
+-- convention: side faces read along +Y; Top and Bottom measured in Studio).
+local TEXT_UP = {
+	[Enum.NormalId.Top] = Vector3.new(-1, 0, 0),
+	[Enum.NormalId.Bottom] = Vector3.new(0, 0, -1),
+}
+
+-- The landed die's rotation: rolled face up, turned (in 90° steps) so its number reads upright
+-- from the camera.
+local function settleRotation(number: number): CFrame
+	local face = FACES[math.clamp(number, 1, 6)]
+	local textUp = TEXT_UP[face.Face] or Vector3.yAxis
+	local look = Workspace.CurrentCamera.CFrame.LookVector
+	local away = Vector3.new(look.X, 0, look.Z)
+	away = if away.Magnitude > 0.01 then away.Unit else Vector3.new(0, 0, -1)
+	local best, bestDot = CFrame.new(), -math.huge
+	for quarter = 0, 3 do
+		local turn = CFrame.Angles(0, quarter * math.pi / 2, 0) * face.Up
+		local dot = turn:VectorToWorldSpace(textUp):Dot(away)
+		if dot > bestDot then
+			best, bestDot = turn, dot
+		end
+	end
+	return best
+end
+
+local function reducedMotion(): boolean
+	local ok, value = pcall(function()
+		return (GuiService :: any).ReducedMotionEnabled
+	end)
+	return ok and value == true
+end
+
+local function makeDie(): Part
+	local die = Instance.new("Part")
+	die.Name = "BoardDie"
+	die.Size = Vector3.one * SIZE
+	die.Anchored = true
+	die.CanCollide = false
+	die.CanQuery = false
+	die.CanTouch = false
+	die.Material = Enum.Material.SmoothPlastic
+	die.Color = Color3.fromRGB(255, 250, 238)
+	for number, info in FACES do
+		local gui = Instance.new("SurfaceGui")
+		gui.Face = info.Face
+		gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		gui.PixelsPerStud = 50
+		gui.LightInfluence = 0.3
+		gui.Parent = die
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundColor3 = Color3.fromRGB(255, 250, 238)
+		label.BorderSizePixel = 0
+		label.Font = Theme.TitleFont
+		label.TextScaled = true
+		label.TextColor3 = if number == 1 then Color3.fromRGB(226, 72, 70) else Color3.fromRGB(60, 40, 110)
+		label.Text = tostring(number)
+		label.Parent = gui
+		label.Name = "Number"
+		-- Dots under 6 and 9 would be ambiguous: underline them, like real number dice.
+		if number == 6 then
+			label.Text = "<u>6</u>"
+			label.RichText = true
+		end
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Color3.fromRGB(242, 190, 72)
+		stroke.Thickness = 6
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.Parent = label
+	end
+	return die
+end
+
+function BoardDice.new()
+	return setmetatable({ Throw = nil }, BoardDice)
+end
+
+local function rootOf(character: Model?): BasePart?
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	return if root and root:IsA("BasePart") then root else nil
+end
+
+-- Where the dice land: beside the roller, nudged toward the camera so they're in view.
+local function landingSpot(root: BasePart, index: number, count: number): Vector3
+	local camera = Workspace.CurrentCamera
+	local toCamera = camera.CFrame.Position - root.Position
+	local flat = Vector3.new(toCamera.X, 0, toCamera.Z)
+	flat = if flat.Magnitude > 0.1 then flat.Unit else Vector3.new(0, 0, 1)
+	local side = Vector3.new(-flat.Z, 0, flat.X)
+	local spread = (index - (count + 1) / 2) * (SIZE + 1.2)
+	return root.Position + flat * 5.5 + side * (spread + 2.5) + Vector3.new(0, -3.2 + SIZE / 2 + 1.3, 0)
+end
+
+local function hop(root: BasePart)
+	local home = root.CFrame
+	local up = TweenService:Create(root, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = home + Vector3.new(0, 2.2, 0) })
+	up:Play()
+	up.Completed:Once(function()
+		-- Back down only if the server hasn't moved the piece meanwhile.
+		if (root.CFrame.Position - (home.Position + Vector3.new(0, 2.2, 0))).Magnitude < 0.5 then
+			TweenService:Create(root, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = home }):Play()
+		end
+	end)
+end
+
+function BoardDice:clear()
+	local throw = self.Throw
+	self.Throw = nil
+	if throw then
+		if throw.Connection then
+			throw.Connection:Disconnect()
+		end
+		for _, die in throw.Dice do
+			die:Destroy()
+		end
+		if throw.Tag then
+			throw.Tag:Destroy()
+		end
+	end
+end
+
+-- Starts a throw (faces unknown yet unless given). short = the bot version.
+function BoardDice:throw(character: Model?, count: number, faces: { number }?, short: boolean?)
+	self:clear()
+	local root = rootOf(character)
+	if not root then
+		return
+	end
+	local camera = Workspace.CurrentCamera
+	local throw = {
+		Started = os.clock(),
+		Flight = if short then FLIGHT_SHORT else FLIGHT,
+		Dice = {}, -- the die Parts
+		Paths = {}, -- per die: { Part, From, To, Spin, Settled }
+		Faces = faces,
+		Root = root,
+		Short = short,
+	}
+	self.Throw = throw
+	if not reducedMotion() then
+		hop(root)
+	end
+	local still = reducedMotion()
+	for i = 1, math.max(1, count) do
+		local die = makeDie()
+		local from = root.Position + Vector3.new(0, 3.4, 0)
+		local to = landingSpot(root, i, count)
+		die.CFrame = CFrame.new(from)
+		die.Parent = camera
+		table.insert(throw.Dice, die)
+		table.insert(throw.Paths, {
+			Part = die,
+			From = from,
+			To = to,
+			Spin = Vector3.new(math.random(7, 12), math.random(5, 10), math.random(6, 11)) * (if math.random() < 0.5 then -1 else 1),
+		})
+	end
+
+	throw.Connection = RunService.RenderStepped:Connect(function()
+		local t = os.clock() - throw.Started
+		local landed = t >= throw.Flight
+		for index, path in throw.Paths do
+			local die = path.Part
+			if not die.Parent then
+				continue
+			end
+			if still then
+				die.CFrame = CFrame.new(path.To)
+			elseif not landed then
+				local u = t / throw.Flight
+				local arc = 4 * u * (1 - u) * 5 -- 5-stud high arc
+				local position = path.From:Lerp(path.To, u) + Vector3.new(0, arc, 0)
+				die.CFrame = CFrame.new(position) * CFrame.fromEulerAnglesXYZ(path.Spin.X * t, path.Spin.Y * t, path.Spin.Z * t)
+			elseif not throw.Faces or t < math.max(throw.Flight, MIN_TUMBLE) + 0.05 then
+				-- Landed, result not known yet: a small bounce-wobble in place.
+				local wobble = math.abs(math.sin((t - throw.Flight) * 9)) * 0.6
+				die.CFrame = CFrame.new(path.To + Vector3.new(0, wobble, 0)) * CFrame.fromEulerAnglesXYZ(path.Spin.X * t * 0.3, path.Spin.Y * t * 0.3, 0)
+			elseif not path.Settled then
+				path.Settled = true
+				local target = CFrame.new(path.To) * settleRotation(throw.Faces[index] or 1)
+				TweenService:Create(die, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { CFrame = target }):Play()
+			end
+		end
+		-- Every die settled: pop the number once.
+		if throw.Faces and not throw.Tag then
+			local allSettled = true
+			for _, path in throw.Paths do
+				allSettled = allSettled and path.Settled == true
+			end
+			if allSettled or still then
+				self:popNumber(throw)
+			end
+		end
+	end)
+end
+
+function BoardDice:popNumber(throw)
+	local total = 0
+	for _, face in throw.Faces do
+		total += face
+	end
+	local anchor = throw.Dice[1]
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "DiceResult"
+	billboard.Size = UDim2.fromOffset(120, 90)
+	-- Above the die and nudged toward the camera, so the roller's YOU tag never covers it.
+	local toCamera = (Workspace.CurrentCamera.CFrame.Position - anchor.Position)
+	local nudge = Vector3.new(toCamera.X, 0, toCamera.Z)
+	nudge = if nudge.Magnitude > 0.01 then nudge.Unit * 2.5 else Vector3.zero
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, SIZE + 1.2, 0) + nudge
+	billboard.AlwaysOnTop = false
+	billboard.LightInfluence = 0
+	billboard.Adornee = anchor
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Theme.TitleFont
+	label.TextScaled = true
+	label.TextColor3 = Theme.Colors.Accent
+	label.TextStrokeTransparency = 0
+	label.TextStrokeColor3 = Theme.Colors.Overlay
+	label.Text = if #throw.Faces > 1 then ("= %d"):format(total) else tostring(total)
+	label.Parent = billboard
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.3
+	scale.Parent = label
+	billboard.Parent = Workspace.CurrentCamera
+	throw.Tag = billboard
+	TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	-- Leave it up briefly, then fade the dice away (the hops start right after).
+	task.delay(if throw.Short then 0.55 else 0.85, function()
+		if self.Throw ~= throw then
+			return
+		end
+		for _, die in throw.Dice do
+			TweenService:Create(die, TweenInfo.new(0.3), { Transparency = 1 }):Play()
+			for _, gui in die:GetChildren() do
+				if gui:IsA("SurfaceGui") then
+					gui.Enabled = false
+				end
+			end
+		end
+		TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		task.delay(0.35, function()
+			if self.Throw == throw then
+				self:clear()
+			end
+		end)
+	end)
+end
+
+-- The server's result for roll `rollId`: settles the local throw, or plays a full one.
+function BoardDice:reveal(character: Model?, faces: { number }, rollId: number, short: boolean?)
+	if self.LastRollId == rollId then
+		return
+	end
+	self.LastRollId = rollId
+	local throw = self.Throw
+	if throw and throw.Faces == nil and #throw.Paths == #faces and os.clock() - throw.Started < 3 then
+		throw.Faces = faces -- the local player's throw is already in the air
+		return
+	end
+	self:throw(character, #faces, faces, short)
+end
+
+return BoardDice
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -15782,6 +16749,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local BoardDice = require(script.Parent.BoardDice)
 local Theme = require(script.Parent.Theme)
 local make = Theme.make
 
@@ -15795,6 +16763,17 @@ local CAMERA_OFFSET = Vector3.new(0, 42, 34)
 -- world labels stay clear of the HUD and rounded screen edges. Desktop is unchanged.
 local TOUCH_CAMERA_OFFSET = Vector3.new(0, 60, 50)
 local MAP_OFFSET = Vector3.new(0, 115, 60) -- MAP view: high enough to see the whole board
+-- Diorama boards (Presentation = "Diorama", Sunny Loop v2): a closer turn camera on the active
+-- piece and the route just ahead; MAP stays the whole-board view. Phones sit a little farther
+-- back so the HUD columns never cover the neighbouring spaces.
+local DIORAMA_OFFSET = Vector3.new(0, 20, 23)
+local DIORAMA_TOUCH_OFFSET = Vector3.new(0, 23, 27)
+local DIORAMA_LOOKAHEAD = 0.35 -- how far the focus leans toward the next space
+local DIORAMA_FORK_ZOOM = 1.45 -- pull back at a fork so both routes are in view
+-- While a prompt card covers the bottom of the screen, aim a little south of the subject so it
+-- sits in the visible upper part instead of behind the card.
+local DIORAMA_PROMPT_SHIFT = Vector3.new(0, 0, 9)
+local DIORAMA_DECIDE_ZOOM = 1.2 -- shops, Crown offers and other choices: a little more context
 local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
@@ -15980,6 +16959,8 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.State = nil
 	self.Layout = nil
 	self.Focus = nil
+	self.Zoom = 1
+	self.Dice = BoardDice.new()
 	return self
 end
 
@@ -15987,6 +16968,10 @@ end
 
 function BoardView:setLayout(message)
 	self.Layout = message
+	self.SpaceById = {}
+	for _, space in message.Spaces do
+		self.SpaceById[space.Id] = space
+	end
 	local sum, count = Vector3.zero, 0
 	for _, space in message.Spaces do
 		sum += space.Position
@@ -16022,10 +17007,28 @@ local function compactSeatLine(seat): string
 end
 
 
+local function seatById(state, id)
+	for _, seat in (state and state.Seats) or {} do
+		if seat.Id == id then
+			return seat
+		end
+	end
+	return nil
+end
+
+function BoardView:isDiorama(): boolean
+	return self.Layout ~= nil and self.Layout.Presentation == "Diorama"
+end
+
 function BoardView:setState(message)
 	self.State = message
 	if not self.Visible then
 		return
+	end
+	-- Thrown dice: everyone sees the active piece throw; the roller's own throw already started.
+	if self:isDiorama() and message.Stage == "Moving" and message.RollId and message.DiceFaces then
+		local seat = seatById(message, message.TurnId)
+		self.Dice:reveal(seat and seat.Character, message.DiceFaces, message.RollId, seat ~= nil and seat.IsBot)
 	end
 	if self.MapOpen then
 		self:refreshMap()
@@ -16187,6 +17190,12 @@ function BoardView:roll()
 	if self.RollButton.Visible then
 		self.RollButton.Visible = false
 		ContextActionService:UnbindAction(ROLL_ACTION)
+		local state = self.State
+		-- Your own turn on a diorama board: the throw starts on the press, the number lands
+		-- when the server's roll arrives. (Turn-order rolls stay instant.)
+		if self:isDiorama() and state and state.Stage == "Roll" and state.TurnId == myId then
+			self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
+		end
 		self.Send({ Kind = "Roll" })
 	end
 end
@@ -16335,6 +17344,56 @@ end
 
 -- Visibility + camera -----------------------------------------------------------------------------
 
+-- Diorama turn camera: where to look and how far back. Follows the active piece, leaning
+-- toward the next space; pulls back at forks (both routes) and while someone is choosing.
+local function dioramaShot(self): (Vector3?, number)
+	local state = self.State
+	if not state then
+		return self.Centre, 1
+	end
+	if state.Stage == "OrderRoll" or state.Stage == "OrderDone" then
+		local sum, count = Vector3.zero, 0
+		for _, seat in state.Seats do
+			local root = seat.Character and seat.Character.Parent and seat.Character:FindFirstChild("HumanoidRootPart")
+			if root then
+				sum += root.Position
+				count += 1
+			end
+		end
+		return if count > 0 then sum / count else self.Centre, 1.15
+	end
+	local seat = seatById(state, state.TurnId)
+	local space = seat and self.SpaceById and self.SpaceById[seat.SpaceId]
+	local root = seat and seat.Character and seat.Character.Parent and seat.Character:FindFirstChild("HumanoidRootPart")
+	local here = if root then root.Position elseif space then space.Position else self.Centre
+	if not space or not here then
+		return here, 1
+	end
+	local nextIds = space.Next or {}
+	if state.Stage == "Deciding" and #nextIds >= 2 then
+		local sum, count = space.Position, 1
+		for _, id in nextIds do
+			local first = self.SpaceById[id]
+			if first then
+				sum += first.Position
+				count += 1
+				local second = first.Next and self.SpaceById[first.Next[1]]
+				if second then
+					sum += second.Position
+					count += 1
+				end
+			end
+		end
+		return sum / count + DIORAMA_PROMPT_SHIFT, DIORAMA_FORK_ZOOM
+	end
+	local ahead = nextIds[1] and self.SpaceById[nextIds[1]]
+	local focus = if ahead then here:Lerp(ahead.Position, DIORAMA_LOOKAHEAD) else here
+	if state.Stage == "Deciding" then
+		return focus + DIORAMA_PROMPT_SHIFT, DIORAMA_DECIDE_ZOOM
+	end
+	return focus, 1
+end
+
 local function turnFocus(self): Vector3?
 	local state = self.State
 	if not state then
@@ -16371,11 +17430,20 @@ function BoardView:show()
 	camera.CameraType = Enum.CameraType.Scriptable
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
 		local festival = self.Layout and self.Layout.Festival
-		local goal = if self.MapOpen or festival then self.Centre else turnFocus(self)
+		local diorama = self:isDiorama() and not self.MapOpen
+		local goal, zoom = nil, 1
+		if self.MapOpen or festival then
+			goal = self.Centre
+		elseif diorama then
+			goal, zoom = dioramaShot(self)
+		else
+			goal = turnFocus(self)
+		end
 		if not goal then
 			return
 		end
 		self.Focus = if self.Focus then self.Focus:Lerp(goal, 1 - math.exp(-4 * dt)) else goal
+		self.Zoom += (zoom - self.Zoom) * (1 - math.exp(-3 * dt))
 		camera.CameraType = Enum.CameraType.Scriptable
 		-- MAP view, else the phone (touch) offset, else the desktop offset; the festival board
 		-- overrides all of them with its own whole-board framing.
@@ -16383,12 +17451,25 @@ function BoardView:show()
 			then MAP_OFFSET
 			elseif UserInputService.TouchEnabled then TOUCH_CAMERA_OFFSET
 			else CAMERA_OFFSET
+		if diorama then
+			offset = (if UserInputService.TouchEnabled then DIORAMA_TOUCH_OFFSET else DIORAMA_OFFSET) * self.Zoom
+		elseif self.MapOpen and self:isDiorama() then
+			-- MAP over a diorama board: slide the board right so the MAP panel (left) doesn't
+			-- cover it, and see it from a little lower so terraces and stairs read.
+			offset = Vector3.new(0, 112, 72)
+		end
 		if festival then
 			local aspect = camera.ViewportSize.X / math.max(1, camera.ViewportSize.Y)
 			local distance = math.max(190, 190 / math.max(0.5, aspect))
 			offset = Vector3.new(0, distance, distance * 0.38)
 		end
-		camera.CFrame = CFrame.lookAt(self.Focus + offset, self.Focus)
+		local aim = self.Focus
+		if self.MapOpen and self:isDiorama() then
+			-- Aim right of the board centre so the board sits in the free right part of the screen
+			-- (the MAP panel covers the left). Offsets alone would only tilt the view.
+			aim += Vector3.new(-30, 0, 0)
+		end
+		camera.CFrame = CFrame.lookAt(aim + offset, aim)
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -16417,6 +17498,7 @@ function BoardView:hide()
 	self.ItemKey = nil
 	self.Prompt.Visible = false
 	ContextActionService:UnbindAction(ROLL_ACTION)
+	self.Dice:clear()
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
 	local camera = Workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Custom
@@ -16452,7 +17534,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="72">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">GuidePointer</string>
               <string name="Source"><![CDATA[--[[
@@ -16865,7 +17947,7 @@ return GuidePointer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -17145,7 +18227,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">InputHint</string>
               <string name="Source"><![CDATA[--[[
@@ -17233,7 +18315,7 @@ return InputHint
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -17385,7 +18467,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -17783,7 +18865,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -17898,7 +18980,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -18035,7 +19117,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -18154,7 +19236,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -18568,7 +19650,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -18657,7 +19739,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -18828,7 +19910,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -18966,7 +20048,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -19139,7 +20221,7 @@ return VoteScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">YouMarker</string>
               <string name="Source"><![CDATA[--[[
@@ -19313,18 +20395,18 @@ return YouMarker
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="86">
+  <Item class="Workspace" referent="90">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="87">
+    <Item class="Model" referent="91">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="88">
+      <Item class="Part" referent="92">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -19344,7 +20426,7 @@ return YouMarker
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="89">
+      <Item class="SpawnLocation" referent="93">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
