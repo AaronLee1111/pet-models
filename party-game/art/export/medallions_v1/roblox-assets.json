@@ -1,0 +1,152 @@
+[
+  {
+    "size": [
+      3.270400047302246,
+      0.31360048055648804,
+      3.270400047302246
+    ],
+    "mesh": "rbxassetid://129747393505767",
+    "name": "SunnyLoop_Space_Base_v1",
+    "texture": "rbxassetid://131676821016044"
+  },
+  {
+    "size": [
+      2.072000026702881,
+      0.08120033144950867,
+      2.072000026702881
+    ],
+    "mesh": "rbxassetid://133674026950004",
+    "name": "SunnyLoop_Space_Inlay_Circle_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      2.184000015258789,
+      0.08120036125183105,
+      2.184000015258789
+    ],
+    "mesh": "rbxassetid://114324496393630",
+    "name": "SunnyLoop_Space_Inlay_Diamond_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.8960000276565552,
+      0.08120012283325195,
+      0.8960000276565552
+    ],
+    "mesh": "rbxassetid://102401521750897",
+    "name": "SunnyLoop_Space_Inlay_Dot_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      2.128000020980835,
+      0.08120033144950867,
+      2.023848295211792
+    ],
+    "mesh": "rbxassetid://103163163957593",
+    "name": "SunnyLoop_Space_Inlay_Ring_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      1.6800000667572021,
+      0.08120027184486389,
+      1.6800000667572021
+    ],
+    "mesh": "rbxassetid://132487893214175",
+    "name": "SunnyLoop_Space_Inlay_Square_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.6440000534057617,
+      0.039200156927108765,
+      0.9520000219345093
+    ],
+    "mesh": "rbxassetid://76491628818693",
+    "name": "SunnyLoop_Space_Symbol_Chaos_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.9239999651908875,
+      0.039200156927108765,
+      0.937999963760376
+    ],
+    "mesh": "rbxassetid://114043688804137",
+    "name": "SunnyLoop_Space_Symbol_Duel_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.6859999895095825,
+      0.03920012712478638,
+      0.9016000032424927
+    ],
+    "mesh": "rbxassetid://109461956758068",
+    "name": "SunnyLoop_Space_Symbol_Event_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.699999988079071,
+      0.039200156927108765,
+      0.8819999694824219
+    ],
+    "mesh": "rbxassetid://86984235556069",
+    "name": "SunnyLoop_Space_Symbol_Gain_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.9239999651908875,
+      0.03920012712478638,
+      0.784000039100647
+    ],
+    "mesh": "rbxassetid://102514383368273",
+    "name": "SunnyLoop_Space_Symbol_Item_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.699999988079071,
+      0.03920012712478638,
+      0.8819999694824219
+    ],
+    "mesh": "rbxassetid://89082157148919",
+    "name": "SunnyLoop_Space_Symbol_Lose_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      0.8400000333786011,
+      0.039200156927108765,
+      0.8539999723434448
+    ],
+    "mesh": "rbxassetid://107781581582648",
+    "name": "SunnyLoop_Space_Symbol_Reward_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      1.0360000133514404,
+      0.03920012712478638,
+      0.7980000376701355
+    ],
+    "mesh": "rbxassetid://112342305732041",
+    "name": "SunnyLoop_Space_Symbol_Shop_v1",
+    "texture": ""
+  },
+  {
+    "size": [
+      1.0080000162124634,
+      0.03920012712478638,
+      0.8960000276565552
+    ],
+    "mesh": "rbxassetid://102220150843807",
+    "name": "SunnyLoop_Space_Symbol_Switch_v1",
+    "texture": ""
+  }
+]

@@ -1,0 +1,393 @@
+{
+  "version": 1,
+  "units": "0.28m per stud",
+  "forward": "Blender +Y / Roblox -Z",
+  "layers": {
+    "base_top": 1.12,
+    "bed_top": 0.86,
+    "insert_bottom": 0.91,
+    "insert_top": 1.2,
+    "symbol_bottom": 1.24,
+    "symbol_top": 1.38
+  },
+  "assets": [
+    {
+      "name": "SunnyLoop_Space_Base_v1",
+      "triangles": 380,
+      "material_count": 1,
+      "texture_dimensions": [
+        512,
+        512
+      ],
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -5.840000152587891,
+          -5.840000152587891,
+          0.0
+        ],
+        [
+          5.840000152587891,
+          5.840000152587891,
+          1.1200000047683716
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Inlay_Dot_v1",
+      "triangles": 76,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.600000023841858,
+          -1.600000023841858,
+          0.9100000858306885
+        ],
+        [
+          1.600000023841858,
+          1.600000023841858,
+          1.2000000476837158
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Inlay_Circle_v1",
+      "triangles": 76,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -3.700000047683716,
+          -3.700000047683716,
+          0.9100000858306885
+        ],
+        [
+          3.700000047683716,
+          3.700000047683716,
+          1.2000000476837158
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Inlay_Diamond_v1",
+      "triangles": 12,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -3.9000000953674316,
+          -3.9000000953674316,
+          0.9100000858306885
+        ],
+        [
+          3.9000000953674316,
+          3.9000000953674316,
+          1.2000000476837158
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Inlay_Square_v1",
+      "triangles": 28,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -3.0,
+          -3.0,
+          0.9100000858306885
+        ],
+        [
+          3.0,
+          3.0,
+          1.2000000476837158
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Inlay_Ring_v1",
+      "triangles": 80,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -3.799999952316284,
+          -3.6140148639678955,
+          0.9100000858306885
+        ],
+        [
+          3.799999952316284,
+          3.6140148639678955,
+          1.2000000476837158
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Gain_v1",
+      "triangles": 24,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.25,
+          -1.5,
+          1.2400000095367432
+        ],
+        [
+          1.25,
+          1.649999976158142,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Lose_v1",
+      "triangles": 24,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.25,
+          -1.649999976158142,
+          1.2400000095367432
+        ],
+        [
+          1.25,
+          1.5,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Event_v1",
+      "triangles": 76,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.2000000476837158,
+          -1.6699999570846558,
+          1.2400000095367432
+        ],
+        [
+          1.25,
+          1.5499999523162842,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Shop_v1",
+      "triangles": 28,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.850000023841858,
+          -1.350000023841858,
+          1.2400000095367432
+        ],
+        [
+          1.850000023841858,
+          1.5,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Item_v1",
+      "triangles": 36,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.649999976158142,
+          -1.2999999523162842,
+          1.2400000095367432
+        ],
+        [
+          1.649999976158142,
+          1.5,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Duel_v1",
+      "triangles": 52,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.649999976158142,
+          -1.649999976158142,
+          1.2400000095367432
+        ],
+        [
+          1.649999976158142,
+          1.7000000476837158,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Chaos_v1",
+      "triangles": 24,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.100000023841858,
+          -1.7000000476837158,
+          1.2400000095367432
+        ],
+        [
+          1.2000000476837158,
+          1.7000000476837158,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Switch_v1",
+      "triangles": 48,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.7999999523162842,
+          -1.600000023841858,
+          1.2400000095367432
+        ],
+        [
+          1.7999999523162842,
+          1.600000023841858,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    },
+    {
+      "name": "SunnyLoop_Space_Symbol_Reward_v1",
+      "triangles": 40,
+      "material_count": 1,
+      "texture_dimensions": null,
+      "pivot_studs": [
+        0,
+        0,
+        0
+      ],
+      "bounds_blender_studs": [
+        [
+          -1.5,
+          -1.399999976158142,
+          1.2400000095367432
+        ],
+        [
+          1.5,
+          1.649999976158142,
+          1.3799999952316284
+        ]
+      ],
+      "collision": "none; retain existing 10.5-stud collider",
+      "non_manifold_edges": 0
+    }
+  ]
+}
