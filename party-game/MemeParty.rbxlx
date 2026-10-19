@@ -2582,6 +2582,7 @@ function BoardWorld:setFestivalLighting(active)
  local lighting=game:GetService("Lighting")
  if active and not self.SavedLighting then
   self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
+  for key in self.LightingPreset or {} do self.SavedLighting[key]=lighting[key] end
   if self.LightingPreset then
    for key,value in self.LightingPreset do lighting[key]=value end
    for _,child in self.LightingChildren or {} do child.Parent=lighting end
@@ -5021,22 +5022,26 @@ MedallionKit.DIAMETER = 10.5
 MedallionKit.TOP = 1.2
 MedallionKit.PATH_WIDTH = 4.5
 
-local CERAMIC = Color3.fromRGB(250, 244, 230)
-local RIM = Color3.fromRGB(226, 182, 92)
-local PATH = Color3.fromRGB(232, 210, 168)
+local CERAMIC = Color3.fromRGB(255, 252, 244) -- clean white
+local RIM = Color3.fromRGB(255, 196, 52) -- warm gold
+local PATH = Color3.fromRGB(255, 234, 178) -- pale golden cream
+local PATH_EDGE = Color3.fromRGB(238, 196, 120)
+local STEP_COLOUR = Color3.fromRGB(255, 224, 160)
 
 -- Shape and glyph per space type (colour comes from SpaceTypes).
+-- Colour is a brighter, more saturated take on each type's SpaceTypes hue (same hue family,
+-- so the MAP legend still matches); shape and glyph keep types readable without colour.
 local LOOK = {
-	Neutral = { Shape = "Dot", Glyph = "" },
-	Gain = { Shape = "Circle", Glyph = "+3" },
-	Lose = { Shape = "Diamond", Glyph = "−3" },
-	Event = { Shape = "Circle", Glyph = "?" },
-	Shop = { Shape = "Square", Glyph = "SHOP" },
-	Item = { Shape = "Square", Glyph = "ITEM" },
-	Duel = { Shape = "Ring", Glyph = "VS" },
-	Chaos = { Shape = "Diamond", Glyph = "!" },
-	Switch = { Shape = "Ring", Glyph = "⇄" },
-	Reward = { Shape = "Ring", Glyph = "GIFT" },
+	Neutral = { Shape = "Dot", Glyph = "", Color = Color3.fromRGB(255, 214, 120) },
+	Gain = { Shape = "Circle", Glyph = "+3", Color = Color3.fromRGB(30, 146, 255) },
+	Lose = { Shape = "Diamond", Glyph = "−3", Color = Color3.fromRGB(255, 56, 80) },
+	Event = { Shape = "Circle", Glyph = "?", Color = Color3.fromRGB(34, 206, 96) },
+	Shop = { Shape = "Square", Glyph = "SHOP", Color = Color3.fromRGB(190, 70, 255) },
+	Item = { Shape = "Square", Glyph = "ITEM", Color = Color3.fromRGB(0, 206, 226) },
+	Duel = { Shape = "Ring", Glyph = "VS", Color = Color3.fromRGB(255, 136, 20) },
+	Chaos = { Shape = "Diamond", Glyph = "!", Color = Color3.fromRGB(126, 46, 210) },
+	Switch = { Shape = "Ring", Glyph = "⇄", Color = Color3.fromRGB(255, 186, 30) },
+	Reward = { Shape = "Ring", Glyph = "GIFT", Color = Color3.fromRGB(255, 196, 20) },
 }
 MedallionKit.Look = LOOK
 
@@ -5082,11 +5087,11 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 	local base = disc(model, "Base", d, 1.0, position + Vector3.new(0, 0.5, 0), CERAMIC, Enum.Material.SmoothPlastic)
 	base:SetAttribute("SpaceId", id)
 	base:SetAttribute("SpaceType", typeKey)
-	decor(disc(model, "Rim", d + 0.6, 0.6, position + Vector3.new(0, 0.3, 0), RIM, Enum.Material.Metal))
+	decor(disc(model, "Rim", d + 0.8, 0.7, position + Vector3.new(0, 0.35, 0), RIM, Enum.Material.SmoothPlastic))
 
 	-- Inlay shape in the type colour, just proud of the base top
 	local inlayY = position + Vector3.new(0, 1.05, 0)
-	local colour = spaceType.Color
+	local colour = look.Color or spaceType.Color
 	if look.Shape == "Circle" then
 		decor(disc(model, "Inlay", 7.4, 0.2, inlayY, colour))
 	elseif look.Shape == "Dot" then
@@ -5165,9 +5170,24 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		Size = Vector3.new(MedallionKit.PATH_WIDTH, 0.5, length),
 		CFrame = CFrame.lookAt((a + b) / 2, b),
 		Color = PATH,
-		Material = Enum.Material.Sand,
+		Material = Enum.Material.SmoothPlastic,
 		Parent = parent,
 	})
+	-- A warm edging strip under the path so it separates cleanly from the grass
+	if math.abs(b.Y - a.Y) < 1.5 then
+		local edge = part({
+			Name = name .. "_Edge",
+			Size = Vector3.new(MedallionKit.PATH_WIDTH + 1.2, 0.4, length),
+			CFrame = CFrame.lookAt((a + b) / 2 - Vector3.new(0, 0.12, 0), b - Vector3.new(0, 0.12, 0)),
+			Color = PATH_EDGE,
+			Material = Enum.Material.SmoothPlastic,
+			Parent = parent,
+		})
+		edge.CanCollide = false
+		edge.CanQuery = false
+		edge.CanTouch = false
+		edge.CastShadow = false
+	end
 	-- Elevation transitions read as stairs: the slope stays (named, so gates find it) but is
 	-- hidden under a run of chunky steps. Steps are ~0.8 studs high, never fewer than 3.
 	local rise = b.Y - a.Y
@@ -5187,8 +5207,8 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 				Name = name .. "_Step" .. i,
 				Size = Vector3.new(MedallionKit.PATH_WIDTH, height, depth + 0.05),
 				CFrame = CFrame.lookAt(Vector3.new(centre.X, low + height / 2, centre.Z), Vector3.new(b.X, low + height / 2, b.Z)),
-				Color = PATH,
-				Material = Enum.Material.Sandstone,
+				Color = if i % 2 == 0 then STEP_COLOUR else PATH,
+				Material = Enum.Material.SmoothPlastic,
 				Parent = parent,
 			})
 			step.CanQuery = false
@@ -5283,34 +5303,74 @@ return Bridge
             <string name="Name">SkyGardenScene</string>
             <string name="Source"><![CDATA[--[[
 	SkyGardenScene
-	Environment for Sunny Loop v2 (Scene = "SkyGarden"). Clean Studio blockouts sized to the
-	modular dimensions in docs/SunnyLoopV2.md, so Blender pieces can replace them later.
+	Environment for Sunny Loop v2 (Scene = "SkyGarden"): a bright, toy-like floating sky-garden.
+	Clean Studio blockouts sized to the modular dimensions in docs/SunnyLoopV2.md, so Blender
+	pieces can replace them later.
 
-	  * Whole board: floating island ground under every space at its height (terrace columns
-	    with rock skirts), a stream pool round the sundial, a sundial placeholder, the bridge's
-	    stone piers, and the "Sunny day" lighting preset.
-	  * Vertical slice (the orchard, spaces 4-10 and 30-32): orchard ground and the raised
-	    Hillside Steps terrace with its rock face, the Orchard Market shop building, a fence
-	    between the two routes, orchard trees, the fork signpost at 5 and lamps.
+	Look rules (UI & Visual Style: saturated, playful, readable):
+	  * Flat clean colour, not texture: tinted materials (Grass, Rock, Fabric, Sand...) are drawn
+	    as SmoothPlastic so colours stay pure; only Marble, Wood planks, Metal, Glass and Neon keep
+	    their material. Neon only for magic and important signals.
+	  * Each zone has its own palette: Orchard lime + red/orange/yellow fruit + red-and-white
+	    market; Village mint grass, turquoise water, honey wood, blue roofs, coral/pink/yellow
+	    flowers; Fairground coral, magenta, purple, cyan and gold stripes and bulbs; centre ivory +
+	    gold + cyan magic. Cliffs are warm peach/sandstone with colour variation.
+	  * Landmarks out-rank decoration: unique palettes, glow or motion (sundial sunbeam and
+	    sparkles, spinning crown, turning waterwheel, stage bulbs), clear space around them.
+	  * Trees come in families (lime, emerald, yellow-green, blossom, golden) with varied size,
+	    shape and tilt, grouped in clusters with open meadows between.
+	  * Background: floating garden islands, kites and balloon bunches, layered clouds.
+	Motion runs on the client (client/SceneAmbience) from attributes set here:
+	  AmbientSpin = degrees per second (+ AmbientAxis "X"/"Y"/"Z"), AmbientBob = studs.
 
+	Deterministic (fixed seed), so the board looks the same every match and on every client.
 	Everything here is decoration: no collision, no queries, no touches. Gameplay positions
 	come from BoardWorld (Tops), so this file can change freely without touching the rules.
 ]]
 
 local Scene = {}
 
-local GRASS = Color3.fromRGB(128, 214, 86)
-local GRASS_DARK = Color3.fromRGB(104, 194, 78)
-local ROCK = Color3.fromRGB(196, 178, 156)
-local ROCK_DARK = Color3.fromRGB(162, 142, 124)
-local WOOD = Color3.fromRGB(176, 120, 72)
-local WOOD_DARK = Color3.fromRGB(126, 84, 52)
-local CREAM = Color3.fromRGB(250, 240, 220)
-local RED = Color3.fromRGB(222, 72, 70)
-local WATER = Color3.fromRGB(80, 190, 235)
-local GOLD = Color3.fromRGB(242, 190, 72)
-local LEAF = Color3.fromRGB(96, 192, 70)
-local FRUIT = Color3.fromRGB(255, 132, 48)
+local GRASS = Color3.fromRGB(112, 208, 50) -- lime
+local GRASS_DARK = Color3.fromRGB(118, 210, 78)
+local ROCK = Color3.fromRGB(232, 156, 96) -- warm sandstone
+local ROCK_DARK = Color3.fromRGB(206, 124, 86)
+local ROCK_PINK = Color3.fromRGB(224, 132, 128)
+local WOOD = Color3.fromRGB(236, 172, 92) -- honey
+local WOOD_DARK = Color3.fromRGB(184, 118, 64)
+local CREAM = Color3.fromRGB(255, 247, 228)
+local RED = Color3.fromRGB(255, 72, 84)
+local WATER = Color3.fromRGB(34, 214, 240) -- luminous turquoise
+local GOLD = Color3.fromRGB(255, 200, 48)
+local CYAN = Color3.fromRGB(70, 236, 255)
+local LEAF = Color3.fromRGB(132, 222, 60)
+local FRUIT = Color3.fromRGB(255, 132, 30)
+local FRUITS = { Color3.fromRGB(255, 60, 70), FRUIT, Color3.fromRGB(255, 214, 40) }
+local MAGENTA = Color3.fromRGB(240, 60, 190)
+local PURPLE = Color3.fromRGB(150, 80, 255)
+local CORAL = Color3.fromRGB(255, 110, 100)
+
+-- Ground colour per zone (two shades each, alternated for variation)
+local ZONE_GRASS = {
+	Orchard = { Color3.fromRGB(112, 208, 50), Color3.fromRGB(92, 194, 54) },
+	Fair = { Color3.fromRGB(134, 206, 62), Color3.fromRGB(104, 196, 76) },
+	Village = { Color3.fromRGB(52, 196, 108), Color3.fromRGB(40, 182, 100) },
+	Stream = { Color3.fromRGB(80, 204, 84), Color3.fromRGB(64, 190, 88) },
+}
+local CLIFFS = { ROCK, ROCK_DARK, ROCK_PINK }
+
+-- Materials whose textures darken a colour are drawn as flat plastic (clean toy look).
+local FLAT = {
+	[Enum.Material.Grass] = true,
+	[Enum.Material.Rock] = true,
+	[Enum.Material.Slate] = true,
+	[Enum.Material.Fabric] = true,
+	[Enum.Material.Sand] = true,
+	[Enum.Material.Sandstone] = true,
+	[Enum.Material.Brick] = true,
+	[Enum.Material.Cobblestone] = true,
+	[Enum.Material.Plaster] = true,
+	[Enum.Material.Wood] = true,
+}
 
 local function part(parent, name, size, cframe, color, material, shape)
 	local p = Instance.new("Part")
@@ -5322,7 +5382,7 @@ local function part(parent, name, size, cframe, color, material, shape)
 	p.Size = size
 	p.CFrame = cframe
 	p.Color = color
-	p.Material = material or Enum.Material.SmoothPlastic
+	p.Material = if material and not FLAT[material] then material else Enum.Material.SmoothPlastic
 	p.TopSurface = Enum.SurfaceType.Smooth
 	p.BottomSurface = Enum.SurfaceType.Smooth
 	if shape then
@@ -5345,6 +5405,8 @@ local function column(parent, name, diameter, bottom: number, top: number, at: V
 		Enum.PartType.Cylinder
 	)
 end
+
+local sparkles -- defined with the other pieces below (the market uses it)
 
 local function group(parent, name)
 	local model = Instance.new("Model")
@@ -5373,23 +5435,42 @@ local function sign(parent, text: string, cframe: CFrame, size: Vector3, color: 
 	return board
 end
 
+local ORCHARD_LEAVES = {
+	{ Color3.fromRGB(132, 222, 60), Color3.fromRGB(176, 236, 80) },
+	{ Color3.fromRGB(80, 206, 96), Color3.fromRGB(130, 226, 110) },
+	{ Color3.fromRGB(184, 230, 60), Color3.fromRGB(150, 220, 56) },
+}
+
+-- Orchard fruit tree: lime/emerald/yellow-green canopies of 2-3 balls, red, orange or yellow
+-- fruit. Size, canopy shape and tilt vary (seeded by position so it's stable).
 local function tree(parent, at: Vector3, scale: number)
+	local rng = Random.new(math.floor(at.X * 13 + at.Z * 7))
 	local model = group(parent, "OrchardTree")
-	column(model, "Trunk", 1.6 * scale, at.Y, at.Y + 6 * scale, at, WOOD_DARK, Enum.Material.Wood)
-	local crown = at + Vector3.new(0, 8 * scale, 0)
-	part(model, "Canopy", Vector3.one * 8 * scale, CFrame.new(crown), LEAF, Enum.Material.Grass, Enum.PartType.Ball)
-	part(model, "Canopy2", Vector3.one * 5.5 * scale, CFrame.new(crown + Vector3.new(2.6, 1.6, 1) * scale), GRASS_DARK, Enum.Material.Grass, Enum.PartType.Ball)
-	for i = 1, 4 do -- a few big fruit, not dozens of small ones
-		local a = i * math.pi / 2 + 0.4
-		local fruit = crown + Vector3.new(math.cos(a) * 3.6, -1 + (i % 2), math.sin(a) * 3.6) * scale
-		part(model, "Fruit", Vector3.one * 1.3 * scale, CFrame.new(fruit), FRUIT, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+	local leaves = ORCHARD_LEAVES[rng:NextInteger(1, #ORCHARD_LEAVES)]
+	local tilt = CFrame.Angles(rng:NextNumber(-0.12, 0.12), 0, rng:NextNumber(-0.12, 0.12))
+	local h = rng:NextNumber(5, 7) * scale
+	local trunk = column(model, "Trunk", 1.5 * scale, at.Y, at.Y + h, at, WOOD_DARK, Enum.Material.Wood)
+	trunk.CFrame = CFrame.new(at) * tilt * CFrame.new(0, h / 2, 0) * CFrame.Angles(0, 0, math.pi / 2)
+	local crown = (CFrame.new(at) * tilt * CFrame.new(0, h + 2 * scale, 0)).Position
+	local big = rng:NextNumber(7, 9) * scale
+	part(model, "Canopy", Vector3.one * big, CFrame.new(crown), leaves[1], nil, Enum.PartType.Ball)
+	for k = 1, rng:NextInteger(1, 2) do
+		local a = rng:NextNumber(0, math.pi * 2)
+		part(model, "Canopy" .. k + 1, Vector3.one * big * rng:NextNumber(0.55, 0.7), CFrame.new(crown + Vector3.new(math.cos(a) * big * 0.38, rng:NextNumber(0.5, 1.6) * scale, math.sin(a) * big * 0.38)), leaves[2], nil, Enum.PartType.Ball)
+	end
+	local fruitColour = FRUITS[rng:NextInteger(1, #FRUITS)]
+	for i = 1, 5 do -- a few big fruit, not dozens of small ones
+		local a = i * math.pi * 2 / 5 + 0.4
+		local fruit = crown + Vector3.new(math.cos(a) * big * 0.47, rng:NextNumber(-1.5, 1), math.sin(a) * big * 0.47)
+		part(model, "Fruit", Vector3.one * 1.4 * scale, CFrame.new(fruit), fruitColour, nil, Enum.PartType.Ball)
 	end
 end
 
 local function lamp(parent, at: Vector3)
 	local model = group(parent, "Lamp")
 	column(model, "Post", 0.6, at.Y, at.Y + 6, at, WOOD_DARK, Enum.Material.Wood)
-	local light = part(model, "Lantern", Vector3.new(1.4, 1.8, 1.4), CFrame.new(at + Vector3.new(0, 6.6, 0)), Color3.fromRGB(255, 214, 120), Enum.Material.Neon)
+	part(model, "Cap", Vector3.new(2, 0.5, 2), CFrame.new(at + Vector3.new(0, 7.75, 0)), GOLD)
+	local light = part(model, "Lantern", Vector3.new(1.4, 1.8, 1.4), CFrame.new(at + Vector3.new(0, 6.6, 0)), Color3.fromRGB(255, 226, 120), Enum.Material.Neon)
 	local glow = Instance.new("PointLight")
 	glow.Range = 14
 	glow.Brightness = 0.8
@@ -5414,7 +5495,7 @@ end
 -- Ground column under a point: grass top at `top`, rock skirt below, ending under the island.
 local function ground(parent, at: Vector3, diameter: number, top: number)
 	column(parent, "Grass", diameter, top - 1, top, at, GRASS, Enum.Material.Grass)
-	column(parent, "Rock", diameter - 1, top - 9, top - 1, at, ROCK, Enum.Material.Rock)
+	column(parent, "Rock", diameter - 1, top - 9, top - 1, at, CLIFFS[(math.floor(at.X + at.Z) % 3) + 1], Enum.Material.Rock)
 end
 
 -- Orchard Market: a small timber shop with a striped awning, counter and fruit crates,
@@ -5425,26 +5506,33 @@ local function market(parent, at: Vector3, facing: Vector3)
 	local function place(name, size, offset, color, material, shape)
 		return part(model, name, size, cf * CFrame.new(offset), color, material, shape)
 	end
-	place("Floor", Vector3.new(14, 1, 11), Vector3.new(0, 0.5, 0), WOOD_DARK, Enum.Material.WoodPlanks)
-	place("Back", Vector3.new(14, 9, 1), Vector3.new(0, 5.5, 5), CREAM, Enum.Material.Plaster)
-	place("SideL", Vector3.new(1, 9, 10), Vector3.new(-6.5, 5.5, 0.5), CREAM, Enum.Material.Plaster)
-	place("SideR", Vector3.new(1, 9, 10), Vector3.new(6.5, 5.5, 0.5), CREAM, Enum.Material.Plaster)
-	place("BeamL", Vector3.new(1.2, 9.5, 1.2), Vector3.new(-6.5, 5.5, -4.6), WOOD, Enum.Material.Wood)
-	place("BeamR", Vector3.new(1.2, 9.5, 1.2), Vector3.new(6.5, 5.5, -4.6), WOOD, Enum.Material.Wood)
-	place("Roof", Vector3.new(16, 1, 13), Vector3.new(0, 10.6, 0.4), RED, Enum.Material.SmoothPlastic)
-	-- Striped awning (four wide stripes: fewer, bigger shapes)
-	for i = 0, 3 do
-		place("Awning" .. i, Vector3.new(4, 0.4, 5), Vector3.new(-6 + i * 4, 8.6, -6.8) , if i % 2 == 0 then RED else CREAM, Enum.Material.Fabric)
-			.CFrame = cf * CFrame.new(-6 + i * 4, 8.4, -6.6) * CFrame.Angles(math.rad(-22), 0, 0)
+	place("Floor", Vector3.new(14, 1, 11), Vector3.new(0, 0.5, 0), WOOD, Enum.Material.WoodPlanks)
+	place("Back", Vector3.new(14, 9, 1), Vector3.new(0, 5.5, 5), CREAM)
+	place("SideL", Vector3.new(1, 9, 10), Vector3.new(-6.5, 5.5, 0.5), CREAM)
+	place("SideR", Vector3.new(1, 9, 10), Vector3.new(6.5, 5.5, 0.5), CREAM)
+	place("BeamL", Vector3.new(1.2, 9.5, 1.2), Vector3.new(-6.5, 5.5, -4.6), RED)
+	place("BeamR", Vector3.new(1.2, 9.5, 1.2), Vector3.new(6.5, 5.5, -4.6), RED)
+	place("Roof", Vector3.new(16, 1, 13), Vector3.new(0, 10.6, 0.4), RED)
+	place("RoofTrim", Vector3.new(16.4, 0.5, 13.4), Vector3.new(0, 10, 0.4), CREAM)
+	-- Red-and-white striped awning (six stripes)
+	for i = 0, 5 do
+		local stripe = place("Awning" .. i, Vector3.new(2.67, 0.4, 5), Vector3.zero, if i % 2 == 0 then RED else CREAM)
+		stripe.CFrame = cf * CFrame.new(-6.67 + i * 2.67, 8.4, -6.6) * CFrame.Angles(math.rad(-22), 0, 0)
 	end
-	place("Counter", Vector3.new(11, 3, 2), Vector3.new(0, 2.5, -3.6), WOOD, Enum.Material.Wood)
-	for i, colour in { FRUIT, RED, Color3.fromRGB(250, 214, 70) } do
+	place("Counter", Vector3.new(11, 3, 2), Vector3.new(0, 2.5, -3.6), WOOD)
+	for i, colour in FRUITS do
 		place("Crate" .. i, Vector3.new(2.6, 1.6, 2.2), Vector3.new(-4.4 + (i - 1) * 4.4, 4.8, -3.6), WOOD_DARK, Enum.Material.WoodPlanks)
-		place("Fruit" .. i, Vector3.new(2.2, 0.8, 1.8), Vector3.new(-4.4 + (i - 1) * 4.4, 5.8, -3.6), colour, Enum.Material.SmoothPlastic)
+		place("Fruit" .. i, Vector3.new(2.2, 0.8, 1.8), Vector3.new(-4.4 + (i - 1) * 4.4, 5.8, -3.6), colour)
 	end
-	local s = sign(model, "ORCHARD MARKET", cf * CFrame.new(0, 12.4, -5.2), Vector3.new(11, 2.4, 0.4), GOLD)
+	-- Giant apple on the roof: the shop reads from across the board
+	local apple = place("BigApple", Vector3.one * 5, Vector3.new(0, 13.6, 0.4), RED, nil, Enum.PartType.Ball)
+	place("AppleLeaf", Vector3.new(0.4, 1.6, 2.6), Vector3.new(0.8, 16.4, 0.4), LEAF)
+	place("AppleStem", Vector3.new(0.4, 1.4, 0.4), Vector3.new(0, 16.3, 0.4), WOOD_DARK)
+	sparkles(apple, Color3.fromRGB(255, 240, 160), 2, 0.8)
+	local s = sign(model, "ORCHARD MARKET", cf * CFrame.new(0, 11.8, -6.6), Vector3.new(11, 2.4, 0.4), GOLD)
 	s.Name = "MarketSign"
 	lamp(model, (cf * CFrame.new(-8.5, 0, -5.5)).Position)
+	lamp(model, (cf * CFrame.new(8.5, 0, -5.5)).Position)
 	return model
 end
 
@@ -5463,37 +5551,68 @@ end
 
 -- More pieces --------------------------------------------------------------------------------
 
+-- Foliage families: { main, highlight } pairs, picked per tree so masses don't merge.
 local LEAVES = {
-	Color3.fromRGB(96, 196, 70),
-	Color3.fromRGB(126, 214, 82),
-	Color3.fromRGB(78, 176, 76),
-	Color3.fromRGB(156, 222, 92),
+	Color3.fromRGB(132, 222, 60), -- lime
+	Color3.fromRGB(70, 204, 110), -- emerald
+	Color3.fromRGB(186, 232, 64), -- yellow-green
+	Color3.fromRGB(96, 218, 150), -- mint
 }
--- A few blossom / golden trees for colour (fair and village)
+local FAMILIES = {
+	{ Color3.fromRGB(132, 222, 60), Color3.fromRGB(178, 238, 84) },
+	{ Color3.fromRGB(64, 200, 108), Color3.fromRGB(112, 226, 132) },
+	{ Color3.fromRGB(186, 232, 64), Color3.fromRGB(150, 222, 58) },
+	{ Color3.fromRGB(86, 214, 156), Color3.fromRGB(140, 236, 180) },
+}
+-- Blossom / golden canopies for colour pops
 local BLOSSOMS = {
-	Color3.fromRGB(255, 170, 200),
-	Color3.fromRGB(255, 205, 90),
-	Color3.fromRGB(250, 140, 170),
+	{ Color3.fromRGB(255, 150, 210), Color3.fromRGB(255, 196, 230) },
+	{ Color3.fromRGB(255, 200, 50), Color3.fromRGB(255, 230, 110) },
+	{ Color3.fromRGB(196, 150, 255), Color3.fromRGB(226, 196, 255) },
+	{ Color3.fromRGB(255, 130, 110), Color3.fromRGB(255, 182, 150) },
 }
 local FLOWERS = {
-	Color3.fromRGB(255, 120, 150),
-	Color3.fromRGB(255, 220, 90),
-	Color3.fromRGB(250, 250, 255),
-	Color3.fromRGB(170, 120, 255),
-	Color3.fromRGB(255, 150, 70),
+	Color3.fromRGB(255, 90, 150),
+	Color3.fromRGB(255, 220, 50),
+	Color3.fromRGB(255, 255, 255),
+	Color3.fromRGB(180, 110, 255),
+	Color3.fromRGB(255, 140, 60),
+	Color3.fromRGB(80, 200, 255),
 }
 local STRIPES = {
-	{ RED, CREAM },
-	{ Color3.fromRGB(70, 130, 230), CREAM },
-	{ Color3.fromRGB(250, 190, 60), Color3.fromRGB(240, 90, 60) },
-	{ Color3.fromRGB(150, 90, 220), CREAM },
+	{ CORAL, CREAM },
+	{ MAGENTA, Color3.fromRGB(255, 220, 60) },
+	{ CYAN, CREAM },
+	{ PURPLE, GOLD },
 }
-local STONE = Color3.fromRGB(226, 218, 200)
-local ROOF_BLUE = Color3.fromRGB(80, 120, 200)
-local ROOF_RED = Color3.fromRGB(205, 85, 70)
+local STONE = Color3.fromRGB(255, 244, 222) -- warm ivory
+local ROOF_BLUE = Color3.fromRGB(40, 140, 255)
+local ROOF_RED = Color3.fromRGB(255, 86, 96)
+local ROOF_COLOURS = { ROOF_BLUE, ROOF_RED, Color3.fromRGB(255, 150, 40), Color3.fromRGB(150, 90, 255) }
 
 local function ball(parent, name, size: number, at: Vector3, color, material)
-	return part(parent, name, Vector3.one * size, CFrame.new(at), color, material or Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+	return part(parent, name, Vector3.one * size, CFrame.new(at), color, material, Enum.PartType.Ball)
+end
+
+local function spin(model: Instance, degreesPerSecond: number, axis: string?)
+	model:SetAttribute("AmbientSpin", degreesPerSecond)
+	model:SetAttribute("AmbientAxis", axis or "Y")
+end
+
+sparkles = function(parent: BasePart, color: Color3, rate: number, size: number?)
+	local p = Instance.new("ParticleEmitter")
+	p.Name = "Sparkles"
+	p.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	p.Color = ColorSequence.new(color)
+	p.LightEmission = 0.8
+	p.Rate = rate
+	p.Lifetime = NumberRange.new(1.6, 2.6)
+	p.Speed = NumberRange.new(1.5, 3.5)
+	p.SpreadAngle = Vector2.new(25, 25)
+	p.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size or 0.9), NumberSequenceKeypoint.new(1, 0) })
+	p.Acceleration = Vector3.new(0, 2, 0)
+	p.Parent = parent
+	return p
 end
 
 -- A cone-like roof from stacked shrinking discs (no meshes needed).
@@ -5502,57 +5621,72 @@ local function roof(parent, diameter: number, base: number, height: number, at: 
 	for i = 0, steps - 1 do
 		local d = diameter * (1 - i / steps) + 0.6
 		local y0 = base + height * i / steps
-		column(parent, "Roof" .. i, d, y0, y0 + height / steps, at, colors[i % #colors + 1], Enum.Material.Fabric)
+		column(parent, "Roof" .. i, d, y0, y0 + height / steps, at, colors[i % #colors + 1])
 	end
-	ball(parent, "Finial", 1.2, at + Vector3.new(0, base + height + 0.4 - at.Y, 0), GOLD, Enum.Material.Metal)
+	ball(parent, "Finial", 1.4, at + Vector3.new(0, base + height + 0.4 - at.Y, 0), GOLD, Enum.Material.Metal)
 end
 
+-- Round tree: 2-3 canopy balls of one family (or a blossom), varied size, tilt and shape.
 local function roundTree(parent, at: Vector3, scale: number, rng, blossom: boolean?)
 	local model = group(parent, "Tree")
-	column(model, "Trunk", 1.4 * scale, at.Y, at.Y + 5 * scale, at, WOOD_DARK, Enum.Material.Wood)
-	local leaf = if blossom then BLOSSOMS[rng:NextInteger(1, #BLOSSOMS)] else LEAVES[rng:NextInteger(1, #LEAVES)]
-	ball(model, "Canopy", 7 * scale, at + Vector3.new(0, 7 * scale, 0), leaf, Enum.Material.Grass)
-	ball(model, "Canopy2", 4.5 * scale, at + Vector3.new(1.8, 8.6, -0.8) * scale, if blossom then leaf else LEAVES[rng:NextInteger(1, #LEAVES)], Enum.Material.Grass)
+	local family = if blossom then BLOSSOMS[rng:NextInteger(1, #BLOSSOMS)] else FAMILIES[rng:NextInteger(1, #FAMILIES)]
+	local tilt = CFrame.Angles(rng:NextNumber(-0.14, 0.14), 0, rng:NextNumber(-0.14, 0.14))
+	local h = rng:NextNumber(4, 6.5) * scale
+	local trunk = column(model, "Trunk", 1.3 * scale, at.Y, at.Y + h, at, WOOD_DARK)
+	trunk.CFrame = CFrame.new(at) * tilt * CFrame.new(0, h / 2, 0) * CFrame.Angles(0, 0, math.pi / 2)
+	local crown = (CFrame.new(at) * tilt * CFrame.new(0, h + 1.6 * scale, 0)).Position
+	local big = rng:NextNumber(5.5, 8.5) * scale
+	ball(model, "Canopy", big, crown, family[1])
+	local extra = rng:NextInteger(1, 2)
+	for k = 1, extra do
+		local a = rng:NextNumber(0, math.pi * 2)
+		ball(model, "Canopy" .. k + 1, big * rng:NextNumber(0.5, 0.72), crown + Vector3.new(math.cos(a) * big * 0.4, rng:NextNumber(0.3, 1.4) * scale, math.sin(a) * big * 0.4), family[2])
+	end
 end
 
-local function pineTree(parent, at: Vector3, scale: number)
+local function pineTree(parent, at: Vector3, scale: number, rng)
 	local model = group(parent, "Pine")
-	column(model, "Trunk", 1.1 * scale, at.Y, at.Y + 3 * scale, at, WOOD_DARK, Enum.Material.Wood)
+	column(model, "Trunk", 1.1 * scale, at.Y, at.Y + 3 * scale, at, WOOD_DARK)
+	local green = if rng:NextNumber() < 0.5 then Color3.fromRGB(46, 196, 120) else Color3.fromRGB(80, 210, 100)
 	for i = 0, 2 do
 		local d = (6.5 - i * 1.8) * scale
-		column(model, "Tier" .. i, d, at.Y + (2.5 + i * 2.6) * scale, at.Y + (5 + i * 2.6) * scale, at, Color3.fromRGB(60, 140, 80), Enum.Material.Grass)
+		column(model, "Tier" .. i, d, at.Y + (2.5 + i * 2.6) * scale, at.Y + (5 + i * 2.6) * scale, at, if i == 2 then green:Lerp(Color3.new(1, 1, 1), 0.2) else green)
 	end
 end
 
 local function bush(parent, at: Vector3, rng)
 	local s = rng:NextNumber(2.4, 4)
-	ball(parent, "Bush", s, at + Vector3.new(0, s * 0.35, 0), LEAVES[rng:NextInteger(1, #LEAVES)], Enum.Material.Grass)
-	if rng:NextNumber() < 0.5 then
-		ball(parent, "Berry", 0.9, at + Vector3.new(s * 0.3, s * 0.7, -s * 0.2), FLOWERS[rng:NextInteger(1, #FLOWERS)])
+	local family = FAMILIES[rng:NextInteger(1, #FAMILIES)]
+	ball(parent, "Bush", s, at + Vector3.new(0, s * 0.35, 0), family[2])
+	if rng:NextNumber() < 0.7 then
+		for k = 1, 2 do
+			ball(parent, "Berry", 0.9, at + Vector3.new(s * 0.3 * (k * 2 - 3), s * 0.62, -s * 0.2), FLOWERS[rng:NextInteger(1, #FLOWERS)])
+		end
 	end
 end
 
-local function flowerBed(parent, at: Vector3, rng)
-	local bed = column(parent, "FlowerBed", rng:NextNumber(4, 6), at.Y - 0.2, at.Y + 0.35, at, GRASS_DARK, Enum.Material.Grass)
+local function flowerBed(parent, at: Vector3, rng, palette)
+	local bed = column(parent, "FlowerBed", rng:NextNumber(4, 6), at.Y - 0.2, at.Y + 0.35, at, Color3.fromRGB(96, 206, 80))
 	bed.CastShadow = false
-	local colour = FLOWERS[rng:NextInteger(1, #FLOWERS)]
-	for i = 1, 4 do
-		local a = i * math.pi / 2 + rng:NextNumber(0, 1)
-		local f = ball(parent, "Flower", 1.1, at + Vector3.new(math.cos(a) * 1.4, 0.7, math.sin(a) * 1.4), if i == 4 then FLOWERS[rng:NextInteger(1, #FLOWERS)] else colour)
+	local pick = palette or FLOWERS
+	local colour = pick[rng:NextInteger(1, #pick)]
+	for i = 1, 5 do
+		local a = i * math.pi * 2 / 5 + rng:NextNumber(0, 0.6)
+		local f = ball(parent, "Flower", 1.2, at + Vector3.new(math.cos(a) * 1.5, 0.75, math.sin(a) * 1.5), if i == 5 then pick[rng:NextInteger(1, #pick)] else colour)
 		f.CastShadow = false
 	end
 end
 
 local function rock(parent, at: Vector3, rng, scale: number?)
 	local s = (scale or 1) * rng:NextNumber(1.6, 3.4)
-	local r = part(parent, "Rock", Vector3.new(s * 1.3, s, s), CFrame.new(at + Vector3.new(0, s * 0.35, 0)) * CFrame.Angles(rng:NextNumber(-0.3, 0.3), rng:NextNumber(0, 6), rng:NextNumber(-0.3, 0.3)), ROCK, Enum.Material.Slate)
+	local r = part(parent, "Rock", Vector3.new(s * 1.3, s, s), CFrame.new(at + Vector3.new(0, s * 0.35, 0)) * CFrame.Angles(rng:NextNumber(-0.3, 0.3), rng:NextNumber(0, 6), rng:NextNumber(-0.3, 0.3)), CLIFFS[rng:NextInteger(1, #CLIFFS)])
 	r.CastShadow = false
 	return r
 end
 
 local function crate(parent, at: Vector3, rng)
 	local c = part(parent, "Crate", Vector3.new(2.4, 1.6, 2), CFrame.new(at + Vector3.new(0, 0.8, 0)) * CFrame.Angles(0, rng:NextNumber(0, 1.5), 0), WOOD, Enum.Material.WoodPlanks)
-	part(parent, "Apples", Vector3.new(2, 0.6, 1.6), c.CFrame * CFrame.new(0, 1, 0), if rng:NextNumber() < 0.5 then FRUIT else RED, Enum.Material.SmoothPlastic)
+	part(parent, "Apples", Vector3.new(2, 0.6, 1.6), c.CFrame * CFrame.new(0, 1, 0), FRUITS[rng:NextInteger(1, #FRUITS)])
 end
 
 -- A small cottage with a wedge roof, facing `facing`.
@@ -5560,16 +5694,17 @@ local function cottage(parent, at: Vector3, facing: Vector3, rng, roofColor)
 	local model = group(parent, "Cottage")
 	local cf = CFrame.lookAt(at, Vector3.new(facing.X, at.Y, facing.Z))
 	local w, d = rng:NextNumber(7, 9), rng:NextNumber(6, 8)
-	part(model, "Walls", Vector3.new(w, 5, d), cf * CFrame.new(0, 2.5, 0), CREAM, Enum.Material.Plaster)
+	part(model, "Walls", Vector3.new(w, 5, d), cf * CFrame.new(0, 2.5, 0), CREAM)
 	for side = -1, 1, 2 do
-		part(model, "Roof", Vector3.new(w + 1, 3, d / 2 + 0.6), cf * CFrame.new(0, 6.5, side * (d / 4 + 0.15)) * CFrame.Angles(0, if side < 0 then math.pi else 0, 0), roofColor or ROOF_BLUE, Enum.Material.SmoothPlastic, Enum.PartType.Wedge)
+		part(model, "Roof", Vector3.new(w + 1, 3, d / 2 + 0.6), cf * CFrame.new(0, 6.5, side * (d / 4 + 0.15)) * CFrame.Angles(0, if side < 0 then math.pi else 0, 0), roofColor or ROOF_BLUE, nil, Enum.PartType.Wedge)
 	end
-	part(model, "Door", Vector3.new(1.6, 2.8, 0.3), cf * CFrame.new(0, 1.4, -d / 2 - 0.1), WOOD_DARK, Enum.Material.Wood)
+	part(model, "Door", Vector3.new(1.6, 2.8, 0.3), cf * CFrame.new(0, 1.4, -d / 2 - 0.1), WOOD)
 	for x = -1, 1, 2 do
-		local win = part(model, "Window", Vector3.new(1.4, 1.4, 0.3), cf * CFrame.new(x * w / 3.2, 3, -d / 2 - 0.1), Color3.fromRGB(255, 220, 140), Enum.Material.Neon)
+		local win = part(model, "Window", Vector3.new(1.4, 1.4, 0.3), cf * CFrame.new(x * w / 3.2, 3, -d / 2 - 0.1), Color3.fromRGB(255, 226, 130), Enum.Material.Neon)
 		win.CastShadow = false
+		part(model, "Box", Vector3.new(1.8, 0.5, 0.6), cf * CFrame.new(x * w / 3.2, 2.1, -d / 2 - 0.4), FLOWERS[rng:NextInteger(1, #FLOWERS)])
 	end
-	part(model, "Chimney", Vector3.new(1.2, 3, 1.2), cf * CFrame.new(w / 3, 7.5, d / 5), STONE, Enum.Material.Brick)
+	part(model, "Chimney", Vector3.new(1.2, 3, 1.2), cf * CFrame.new(w / 3, 7.5, d / 5), ROCK_PINK)
 	return model
 end
 
@@ -5577,141 +5712,181 @@ end
 local function booth(parent, at: Vector3, facing: Vector3, stripes)
 	local model = group(parent, "Booth")
 	local cf = CFrame.lookAt(at, Vector3.new(facing.X, at.Y, facing.Z))
-	part(model, "Counter", Vector3.new(6, 2.6, 3), cf * CFrame.new(0, 1.3, 0), WOOD, Enum.Material.Wood)
+	part(model, "Counter", Vector3.new(6, 2.6, 3), cf * CFrame.new(0, 1.3, 0), stripes[1])
+	part(model, "CounterTop", Vector3.new(6.4, 0.4, 3.4), cf * CFrame.new(0, 2.8, 0), CREAM)
 	for x = -1, 1, 2 do
-		part(model, "Post", Vector3.new(0.5, 6, 0.5), cf * CFrame.new(x * 2.7, 3, 1.2), CREAM, Enum.Material.Wood)
+		part(model, "Post", Vector3.new(0.5, 6, 0.5), cf * CFrame.new(x * 2.7, 3, 1.2), GOLD)
 	end
 	for i = 0, 2 do
-		local stripe = part(model, "Awning", Vector3.new(2.1, 0.4, 4.2), cf * CFrame.new(-2.1 + i * 2.1, 6.2, 0) * CFrame.Angles(math.rad(-15), 0, 0), stripes[i % 2 + 1], Enum.Material.Fabric)
+		local stripe = part(model, "Awning", Vector3.new(2.1, 0.4, 4.2), cf * CFrame.new(-2.1 + i * 2.1, 6.2, 0) * CFrame.Angles(math.rad(-15), 0, 0), stripes[i % 2 + 1])
 		stripe.CastShadow = false
 	end
-	ball(model, "Prize", 1.4, (cf * CFrame.new(0, 3.3, 0)).Position, FLOWERS[1])
+	ball(model, "Prize", 1.4, (cf * CFrame.new(0, 3.6, 0)).Position, FLOWERS[1])
 end
 
 -- A string of triangle flags between two posts.
 local function bunting(parent, a: Vector3, b: Vector3, rng)
 	local model = group(parent, "Bunting")
 	for _, p in { a, b } do
-		column(model, "Pole", 0.5, p.Y, p.Y + 8, p, WOOD_DARK, Enum.Material.Wood)
+		column(model, "Pole", 0.5, p.Y, p.Y + 8, p, GOLD)
 	end
 	local top1, top2 = a + Vector3.new(0, 7.6, 0), b + Vector3.new(0, 7.6, 0)
 	local length = (top2 - top1).Magnitude
 	part(model, "Rope", Vector3.new(0.15, 0.15, length), CFrame.lookAt((top1 + top2) / 2, top2), CREAM)
+	local colours = { CORAL, GOLD, CYAN, MAGENTA, Color3.fromRGB(120, 230, 90), PURPLE }
 	local count = math.max(3, math.floor(length / 2.5))
 	for i = 1, count do
 		local p = top1:Lerp(top2, i / (count + 1)) - Vector3.new(0, 0.2 + math.sin(i / (count + 1) * math.pi) * 0.8, 0)
-		local flag = part(model, "Flag", Vector3.new(0.1, 1.4, 1.2), CFrame.lookAt(p, p + (top2 - top1)) * CFrame.new(0, -0.7, 0) * CFrame.Angles(0, math.rad(90), math.rad(180)), FLOWERS[(i + rng:NextInteger(0, 4)) % #FLOWERS + 1], Enum.Material.Fabric, Enum.PartType.Wedge)
+		local flag = part(model, "Flag", Vector3.new(0.1, 1.5, 1.3), CFrame.lookAt(p, p + (top2 - top1)) * CFrame.new(0, -0.7, 0) * CFrame.Angles(0, math.rad(90), math.rad(180)), colours[(i + rng:NextInteger(0, 1)) % #colours + 1], nil, Enum.PartType.Wedge)
 		flag.CastShadow = false
 	end
 end
 
 local function balloon(parent, at: Vector3, rng)
 	local h = rng:NextNumber(7, 10)
-	part(parent, "String", Vector3.new(0.08, h, 0.08), CFrame.new(at + Vector3.new(0, h / 2, 0)), CREAM)
-	ball(parent, "Balloon", 1.8, at + Vector3.new(0, h + 0.9, 0), FLOWERS[rng:NextInteger(1, #FLOWERS)])
+	local model = group(parent, "Balloon")
+	part(model, "String", Vector3.new(0.08, h, 0.08), CFrame.new(at + Vector3.new(0, h / 2, 0)), CREAM)
+	ball(model, "Balloon", 2, at + Vector3.new(0, h + 1, 0), FLOWERS[rng:NextInteger(1, #FLOWERS)])
+	model:SetAttribute("AmbientBob", 0.6)
 end
 
 -- Big striped circus tent (fairground hero).
 local function circusTent(parent, at: Vector3)
 	local model = group(parent, "CircusTent")
-	column(model, "Floor", 22, at.Y - 0.2, at.Y + 0.5, at, WOOD, Enum.Material.WoodPlanks)
-	local wallColours = { RED, CREAM }
+	column(model, "Floor", 22, at.Y - 0.2, at.Y + 0.5, at, GOLD)
+	local wallColours = { CORAL, CREAM }
 	for i = 0, 11 do
 		local a = i / 12 * math.pi * 2
 		local p = at + Vector3.new(math.cos(a) * 9.4, 0, math.sin(a) * 9.4)
-		part(model, "Wall" .. i, Vector3.new(5.2, 7, 0.6), CFrame.lookAt(p + Vector3.new(0, 4, 0), at + Vector3.new(0, 4, 0)), wallColours[i % 2 + 1], Enum.Material.Fabric)
+		part(model, "Wall" .. i, Vector3.new(5.2, 7, 0.6), CFrame.lookAt(p + Vector3.new(0, 4, 0), at + Vector3.new(0, 4, 0)), wallColours[i % 2 + 1])
 	end
-	roof(model, 22, at.Y + 7.5, 9, at, { RED, CREAM })
-	part(model, "Flag", Vector3.new(0.2, 2, 3), CFrame.new(at + Vector3.new(1.5, 18.8, 0)), GOLD, Enum.Material.Fabric)
-	column(model, "FlagPole", 0.4, at.Y + 16.5, at.Y + 20, at, WOOD_DARK)
+	roof(model, 22, at.Y + 7.5, 9, at, { MAGENTA, CREAM })
+	column(model, "Trim", 23, at.Y + 7.3, at.Y + 8.1, at, GOLD)
+	for i = 0, 7 do -- bulbs round the rim
+		local a = i / 8 * math.pi * 2
+		local bulb = ball(model, "Bulb" .. i, 0.9, at + Vector3.new(math.cos(a) * 11.6, 7.7, math.sin(a) * 11.6), Color3.fromRGB(255, 240, 160), Enum.Material.Neon)
+		bulb.CastShadow = false
+	end
+	local flag = part(model, "Flag", Vector3.new(0.2, 2, 3), CFrame.new(at + Vector3.new(1.5, 18.8, 0)), CYAN)
+	flag.CastShadow = false
+	column(model, "FlagPole", 0.4, at.Y + 16.5, at.Y + 20, at, GOLD)
 	return model
 end
 
 local function stage(parent, at: Vector3, facing: Vector3)
 	local model = group(parent, "EventStage")
 	local cf = CFrame.lookAt(at, Vector3.new(facing.X, at.Y, facing.Z))
-	part(model, "Deck", Vector3.new(14, 2, 9), cf * CFrame.new(0, 1, 0), WOOD, Enum.Material.WoodPlanks)
-	part(model, "Back", Vector3.new(14, 9, 0.8), cf * CFrame.new(0, 5.5, 4.2), Color3.fromRGB(150, 60, 160), Enum.Material.Fabric)
+	part(model, "Deck", Vector3.new(14, 2, 9), cf * CFrame.new(0, 1, 0), PURPLE)
+	part(model, "DeckTop", Vector3.new(14.4, 0.3, 9.4), cf * CFrame.new(0, 2.1, 0), WOOD, Enum.Material.WoodPlanks)
+	part(model, "Back", Vector3.new(14, 9, 0.8), cf * CFrame.new(0, 5.5, 4.2), MAGENTA)
 	for x = -1, 1, 2 do
-		part(model, "Curtain", Vector3.new(2.4, 8, 0.6), cf * CFrame.new(x * 6, 6, 3.6), RED, Enum.Material.Fabric)
-		local light = part(model, "Spot", Vector3.new(1.2, 1.2, 1.2), cf * CFrame.new(x * 5, 10.5, 3.6), Color3.fromRGB(255, 240, 180), Enum.Material.Neon)
+		part(model, "Curtain", Vector3.new(2.4, 8, 0.6), cf * CFrame.new(x * 6, 6, 3.6), CORAL)
+		local light = part(model, "Spot", Vector3.new(1.2, 1.2, 1.2), cf * CFrame.new(x * 5, 10.5, 3.6), Color3.fromRGB(255, 244, 190), Enum.Material.Neon)
 		light.CastShadow = false
 	end
 	part(model, "Arch", Vector3.new(15, 1.4, 1.4), cf * CFrame.new(0, 10, 3.6), GOLD, Enum.Material.Metal)
+	for i = 0, 6 do
+		local bulb = ball(model, "Bulb" .. i, 0.8, (cf * CFrame.new(-6 + i * 2, 9.1, 3.1)).Position, if i % 2 == 0 then Color3.fromRGB(255, 240, 160) else CYAN, Enum.Material.Neon)
+		bulb.CastShadow = false
+	end
 	local s = sign(model, "★ STAGE ★", cf * CFrame.new(0, 11.6, 3.6) * CFrame.Angles(0, math.pi, 0), Vector3.new(8, 1.8, 0.4), GOLD)
 	s.Name = "StageSign"
+	sparkles(model.Back, Color3.fromRGB(255, 220, 255), 3, 0.8)
 end
 
 local function crownPavilion(parent, at: Vector3, facing: Vector3)
 	local model = group(parent, "CrownPavilion")
 	local cf = CFrame.lookAt(at, Vector3.new(facing.X, at.Y, facing.Z))
 	column(model, "Plinth", 15, at.Y - 0.5, at.Y + 1.2, at, STONE, Enum.Material.Marble)
+	column(model, "PlinthTrim", 15.6, at.Y + 0.9, at.Y + 1.4, at, GOLD)
 	for i = 0, 5 do
 		local a = i / 6 * math.pi * 2
-		column(model, "Pillar" .. i, 1.4, at.Y + 1.2, at.Y + 10, at + Vector3.new(math.cos(a) * 5.6, 0, math.sin(a) * 5.6), Color3.fromRGB(250, 246, 236), Enum.Material.Marble)
+		column(model, "Pillar" .. i, 1.4, at.Y + 1.2, at.Y + 10, at + Vector3.new(math.cos(a) * 5.6, 0, math.sin(a) * 5.6), Color3.fromRGB(255, 252, 244), Enum.Material.Marble)
 	end
 	column(model, "Ring", 14, at.Y + 10, at.Y + 11.2, at, GOLD, Enum.Material.Metal)
-	ball(model, "Dome", 11, at + Vector3.new(0, 11, 0), Color3.fromRGB(250, 246, 236), Enum.Material.Marble)
-	-- Crown on top: a band with five gold points and a red gem
+	ball(model, "Dome", 11, at + Vector3.new(0, 11, 0), PURPLE)
+	-- Crown on top: a band with five gold points and a red gem; slowly turning
+	local crown = group(model, "CrownTop")
 	local top = at + Vector3.new(0, 17, 0)
-	column(model, "CrownBand", 5, top.Y - 0.8, top.Y + 0.6, top, GOLD, Enum.Material.Metal)
+	column(crown, "CrownBand", 5, top.Y - 0.8, top.Y + 0.6, top, GOLD, Enum.Material.Metal)
 	for i = 0, 4 do
 		local a = i / 5 * math.pi * 2
-		part(model, "CrownPoint" .. i, Vector3.new(0.6, 2.4, 1.6), CFrame.new(top + Vector3.new(math.cos(a) * 2.1, 1.6, math.sin(a) * 2.1)) * CFrame.Angles(0, -a, 0), GOLD, Enum.Material.Metal, Enum.PartType.Wedge)
+		part(crown, "CrownPoint" .. i, Vector3.new(0.6, 2.4, 1.6), CFrame.new(top + Vector3.new(math.cos(a) * 2.1, 1.6, math.sin(a) * 2.1)) * CFrame.Angles(0, -a, 0), GOLD, Enum.Material.Metal, Enum.PartType.Wedge)
+		ball(crown, "Jewel" .. i, 0.7, top + Vector3.new(math.cos(a) * 2.6, 0, math.sin(a) * 2.6), if i % 2 == 0 then CYAN else MAGENTA, Enum.Material.Neon)
 	end
-	ball(model, "Gem", 1.3, top + Vector3.new(0, 0, 0), Color3.fromRGB(230, 40, 70), Enum.Material.Glass)
-	part(model, "Carpet", Vector3.new(4, 0.2, 9), cf * CFrame.new(0, 1.3 - 0.2, -6), RED, Enum.Material.Fabric)
+	local gem = ball(crown, "Gem", 1.4, top, Color3.fromRGB(255, 40, 90), Enum.Material.Neon)
+	sparkles(gem, Color3.fromRGB(255, 230, 120), 5, 1)
+	spin(crown, 20)
+	local glow = Instance.new("PointLight")
+	glow.Range = 18
+	glow.Brightness = 1.4
+	glow.Color = Color3.fromRGB(255, 210, 120)
+	glow.Parent = gem
+	part(model, "Carpet", Vector3.new(4, 0.2, 9), cf * CFrame.new(0, 1.3 - 0.2, -6), RED)
 	for x = -1, 1, 2 do
-		part(model, "Banner", Vector3.new(2.4, 5, 0.2), cf * CFrame.new(x * 7.5, 6, -1), RED, Enum.Material.Fabric)
+		part(model, "Banner", Vector3.new(2.4, 5, 0.2), cf * CFrame.new(x * 7.5, 6, -1), if x < 0 then MAGENTA else PURPLE)
 		column(model, "BannerPole", 0.4, at.Y, at.Y + 9, (cf * CFrame.new(x * 7.5, 0, -1)).Position, GOLD, Enum.Material.Metal)
+		ball(model, "BannerTop", 1, (cf * CFrame.new(x * 7.5, 9.3, -1)).Position, GOLD, Enum.Material.Metal)
 	end
 end
 
 local function waterwheelMill(parent, at: Vector3, wheelSide: Vector3)
 	local model = group(parent, "WaterwheelMill")
 	local cf = CFrame.lookAt(at, Vector3.new(wheelSide.X, at.Y, wheelSide.Z))
-	part(model, "Base", Vector3.new(12, 3, 10), cf * CFrame.new(0, 1.5, 0), STONE, Enum.Material.Cobblestone)
-	part(model, "Walls", Vector3.new(11, 7, 9), cf * CFrame.new(0, 6.5, 0), CREAM, Enum.Material.Plaster)
-	for side = -1, 1, 2 do
-		part(model, "Roof", Vector3.new(12.5, 4.5, 5.2), cf * CFrame.new(0, 12.2, side * 2.4) * CFrame.Angles(0, if side < 0 then 0 else math.pi, 0), ROOF_BLUE, Enum.Material.Slate, Enum.PartType.Wedge)
-	end
-	part(model, "Chimney", Vector3.new(1.6, 5, 1.6), cf * CFrame.new(-3.5, 13, 1.5), STONE, Enum.Material.Brick)
+	part(model, "Base", Vector3.new(12, 3, 10), cf * CFrame.new(0, 1.5, 0), ROCK_PINK)
+	part(model, "Walls", Vector3.new(11, 7, 9), cf * CFrame.new(0, 6.5, 0), CREAM)
 	for x = -1, 1, 2 do
-		local win = part(model, "Window", Vector3.new(1.6, 1.8, 0.3), cf * CFrame.new(x * 3, 7, 4.6), Color3.fromRGB(255, 220, 140), Enum.Material.Neon)
-		win.CastShadow = false
+		part(model, "Timber", Vector3.new(0.8, 7, 9.2), cf * CFrame.new(x * 5.3, 6.5, 0), WOOD)
 	end
-	-- Wheel on the stream side (front = -Z of cf, toward wheelSide)
+	for side = -1, 1, 2 do
+		part(model, "Roof", Vector3.new(12.5, 4.5, 5.2), cf * CFrame.new(0, 12.2, side * 2.4) * CFrame.Angles(0, if side < 0 then 0 else math.pi, 0), ROOF_BLUE, nil, Enum.PartType.Wedge)
+	end
+	part(model, "Chimney", Vector3.new(1.6, 5, 1.6), cf * CFrame.new(-3.5, 13, 1.5), ROCK_PINK)
+	for x = -1, 1, 2 do
+		local win = part(model, "Window", Vector3.new(1.6, 1.8, 0.3), cf * CFrame.new(x * 3, 7, 4.6), Color3.fromRGB(255, 226, 130), Enum.Material.Neon)
+		win.CastShadow = false
+		part(model, "Box", Vector3.new(2.2, 0.6, 0.7), cf * CFrame.new(x * 3, 5.8, 4.9), if x < 0 then CORAL else Color3.fromRGB(255, 220, 60))
+	end
+	-- Wheel on the stream side (front = -Z of cf, toward wheelSide); turns on the client
 	local hub = cf * CFrame.new(0, 5, -6.2)
 	local wheel = group(model, "Wheel")
-	part(wheel, "Rim", Vector3.new(1.4, 11, 11), hub * CFrame.Angles(0, math.rad(90), 0), WOOD_DARK, Enum.Material.Wood, Enum.PartType.Cylinder)
-	part(wheel, "Inner", Vector3.new(1.6, 8.5, 8.5), hub * CFrame.Angles(0, math.rad(90), 0), WOOD, Enum.Material.Wood, Enum.PartType.Cylinder)
+	part(wheel, "Rim", Vector3.new(1.4, 11, 11), hub * CFrame.Angles(0, math.rad(90), 0), WOOD, nil, Enum.PartType.Cylinder)
+	part(wheel, "Inner", Vector3.new(1.6, 8.5, 8.5), hub * CFrame.Angles(0, math.rad(90), 0), ROOF_BLUE, nil, Enum.PartType.Cylinder)
 	for i = 0, 3 do
-		part(wheel, "Spoke" .. i, Vector3.new(10.6, 0.7, 1.7), hub * CFrame.Angles(0, 0, i * math.pi / 4), WOOD_DARK, Enum.Material.Wood)
+		part(wheel, "Spoke" .. i, Vector3.new(10.6, 0.7, 1.7), hub * CFrame.Angles(0, 0, i * math.pi / 4), WOOD)
 	end
+	ball(wheel, "Hub", 1.8, hub.Position, GOLD, Enum.Material.Metal)
+	wheel:SetAttribute("AmbientSpin", 30)
+	wheel:SetAttribute("AmbientAxis", "Z")
+	wheel.WorldPivot = hub
+	local splash = part(model, "Splash", Vector3.new(4, 0.4, 4), hub * CFrame.new(0, -5.2, 0), Color3.fromRGB(230, 252, 255))
+	splash.Transparency = 0.3
+	splash.CastShadow = false
 	part(model, "Dock", Vector3.new(8, 0.6, 6), cf * CFrame.new(7, 0.3, -5), WOOD, Enum.Material.WoodPlanks)
-	part(model, "Boat", Vector3.new(3, 1.2, 6), cf * CFrame.new(9, 0.2, -10) * CFrame.Angles(0, 0.4, 0), WOOD, Enum.Material.Wood)
+	part(model, "Boat", Vector3.new(3, 1.2, 6), cf * CFrame.new(9, 0.2, -10) * CFrame.Angles(0, 0.4, 0), CORAL)
 	return model
 end
 
 local function bellTower(parent, at: Vector3)
 	local model = group(parent, "BellSwitch")
 	for x = -1, 1, 2 do
-		part(model, "Leg", Vector3.new(0.8, 9, 0.8), CFrame.new(at + Vector3.new(x * 2.4, 4.5, 0)), WOOD_DARK, Enum.Material.Wood)
+		part(model, "Leg", Vector3.new(0.8, 9, 0.8), CFrame.new(at + Vector3.new(x * 2.4, 4.5, 0)), CYAN)
 	end
-	part(model, "Beam", Vector3.new(6, 0.8, 1), CFrame.new(at + Vector3.new(0, 9, 0)), WOOD, Enum.Material.Wood)
-	ball(model, "Bell", 3, at + Vector3.new(0, 7.2, 0), GOLD, Enum.Material.Metal)
-	part(model, "Roof", Vector3.new(7, 1.6, 3), CFrame.new(at + Vector3.new(0, 10.2, 0)), ROOF_RED, Enum.Material.SmoothPlastic)
+	part(model, "Beam", Vector3.new(6, 0.8, 1), CFrame.new(at + Vector3.new(0, 9, 0)), GOLD)
+	local bell = ball(model, "Bell", 3, at + Vector3.new(0, 7.2, 0), GOLD, Enum.Material.Metal)
+	sparkles(bell, Color3.fromRGB(255, 240, 150), 2, 0.7)
+	part(model, "Roof", Vector3.new(7, 1.6, 3), CFrame.new(at + Vector3.new(0, 10.2, 0)), CORAL)
 end
 
 local function kiosk(parent, at: Vector3)
 	local model = group(parent, "FairKiosk")
-	column(model, "Floor", 9, at.Y, at.Y + 0.6, at, WOOD, Enum.Material.WoodPlanks)
-	column(model, "Counter", 6, at.Y + 0.6, at.Y + 3, at, CREAM, Enum.Material.Wood)
+	column(model, "Floor", 9, at.Y, at.Y + 0.6, at, GOLD)
+	column(model, "Counter", 6, at.Y + 0.6, at.Y + 3, at, CYAN)
 	for i = 0, 3 do
 		local a = i / 4 * math.pi * 2 + 0.4
 		column(model, "Post" .. i, 0.5, at.Y, at.Y + 6.5, at + Vector3.new(math.cos(a) * 3.8, 0, math.sin(a) * 3.8), GOLD, Enum.Material.Metal)
 	end
-	roof(model, 10, at.Y + 6.5, 4, at, { ROOF_BLUE, CREAM })
+	roof(model, 10, at.Y + 6.5, 4, at, { PURPLE, CREAM })
 end
 
 local function sunGate(parent, a: Vector3, b: Vector3)
@@ -5722,28 +5897,33 @@ local function sunGate(parent, a: Vector3, b: Vector3)
 	local side = Vector3.new(-dir.Z, 0, dir.X)
 	for s = -1, 1, 2 do
 		column(model, "Post", 1.2, mid.Y, mid.Y + 8.5, mid + side * s * 4.2, STONE, Enum.Material.Marble)
+		ball(model, "PostCap", 1.6, mid + side * s * 4.2 + Vector3.new(0, 8.6, 0), GOLD, Enum.Material.Metal)
 	end
 	part(model, "Lintel", Vector3.new(10, 0.9, 1.1), CFrame.lookAt(mid + Vector3.new(0, 8.6, 0), mid + Vector3.new(0, 8.6, 0) + side) * CFrame.Angles(0, math.rad(90), 0), GOLD, Enum.Material.Metal)
 	local sun = part(model, "Sun", Vector3.new(0.5, 3, 3), CFrame.lookAt(mid + Vector3.new(0, 10, 0), mid + Vector3.new(0, 10, 0) + dir) * CFrame.Angles(0, math.rad(90), 0), Color3.fromRGB(255, 210, 70), Enum.Material.Neon, Enum.PartType.Cylinder)
 	sun.CastShadow = false
 end
 
--- Sundial pavilion: marble dais in the pool, ring of columns, gold dial and gnomon, banners.
+-- Sundial pavilion: the board's focal point. Ivory dais in the pool, ring of columns with cyan
+-- gems, bright gold dial and gnomon, a soft sunbeam and rising sparkles.
 local function sundialPavilion(parent, at: Vector3)
 	local model = group(parent, "SundialPavilion")
-	column(model, "Base", 30, at.Y - 2, at.Y + 1, at, STONE, Enum.Material.Cobblestone)
-	column(model, "Dais", 22, at.Y + 1, at.Y + 3.4, at, Color3.fromRGB(250, 246, 236), Enum.Material.Marble)
-	column(model, "Face", 16, at.Y + 3.4, at.Y + 4.2, at, GOLD, Enum.Material.Metal)
+	column(model, "Base", 30, at.Y - 2, at.Y + 1, at, STONE, Enum.Material.Marble)
+	column(model, "BaseTrim", 30.6, at.Y + 0.6, at.Y + 1.2, at, CYAN)
+	column(model, "Dais", 22, at.Y + 1, at.Y + 3.4, at, Color3.fromRGB(255, 252, 244), Enum.Material.Marble)
+	local face = column(model, "Face", 16, at.Y + 3.4, at.Y + 4.2, at, GOLD, Enum.Material.Metal)
+	column(model, "FaceInner", 10, at.Y + 4.2, at.Y + 4.4, at, Color3.fromRGB(255, 232, 120))
 	for i = 0, 11 do
 		local a = i / 12 * math.pi * 2
-		part(model, "Hour" .. i, Vector3.new(0.3, 0.2, 1.6), CFrame.new(at + Vector3.new(math.cos(a) * 6.6, 4.3, math.sin(a) * 6.6)) * CFrame.Angles(0, -a + math.pi / 2, 0), Color3.fromRGB(130, 80, 30), Enum.Material.Metal)
+		part(model, "Hour" .. i, Vector3.new(0.3, 0.2, 1.6), CFrame.new(at + Vector3.new(math.cos(a) * 6.6, 4.3, math.sin(a) * 6.6)) * CFrame.Angles(0, -a + math.pi / 2, 0), Color3.fromRGB(200, 110, 30), Enum.Material.Metal)
 	end
 	part(model, "Gnomon", Vector3.new(1, 8, 8), CFrame.new(at + Vector3.new(0, 8.2, 0)) * CFrame.Angles(0, math.rad(35), 0), GOLD, Enum.Material.Metal, Enum.PartType.Wedge)
 	for i = 0, 7 do
 		local a = i / 8 * math.pi * 2
 		local p = at + Vector3.new(math.cos(a) * 10.2, 0, math.sin(a) * 10.2)
-		column(model, "Pillar" .. i, 1.3, at.Y + 3.4, at.Y + 12, p, Color3.fromRGB(250, 246, 236), Enum.Material.Marble)
-		ball(model, "PillarCap" .. i, 1.8, p + Vector3.new(0, 12.4 - p.Y + at.Y, 0), GOLD, Enum.Material.Metal)
+		column(model, "Pillar" .. i, 1.3, at.Y + 3.4, at.Y + 12, p, Color3.fromRGB(255, 252, 244), Enum.Material.Marble)
+		local gem = ball(model, "PillarGem" .. i, 1.8, p + Vector3.new(0, 12.4 - p.Y + at.Y, 0), CYAN, Enum.Material.Neon)
+		gem.CastShadow = false
 	end
 	-- Open gold ring on the pillars (segments, so the dial stays visible from above)
 	for i = 0, 15 do
@@ -5755,56 +5935,111 @@ local function sundialPavilion(parent, at: Vector3)
 		local a = i / 4 * math.pi * 2 + math.pi / 4
 		local p = at + Vector3.new(math.cos(a) * 14.5, 0, math.sin(a) * 14.5)
 		column(model, "BannerPole" .. i, 0.5, at.Y, at.Y + 13, p, GOLD, Enum.Material.Metal)
-		part(model, "Banner" .. i, Vector3.new(2.6, 6, 0.2), CFrame.lookAt(p + Vector3.new(0, 9, 0), at + Vector3.new(0, 9, 0)) * CFrame.new(1.4, 0, 0), Color3.fromRGB(60, 90, 200), Enum.Material.Fabric)
+		part(model, "Banner" .. i, Vector3.new(2.6, 6, 0.2), CFrame.lookAt(p + Vector3.new(0, 9, 0), at + Vector3.new(0, 9, 0)) * CFrame.new(1.4, 0, 0), if i % 2 == 0 then Color3.fromRGB(40, 140, 255) else CYAN)
 	end
+	-- Sunbeam: one soft beam from the dial up into the sky, plus rising cyan/gold sparkles
+	local low = Instance.new("Attachment")
+	low.Position = Vector3.new(0.5, 0, 0)
+	low.Parent = face
+	local high = Instance.new("Attachment")
+	high.Position = Vector3.new(40, 0, 0)
+	high.Parent = face
+	local beam = Instance.new("Beam")
+	beam.Attachment0 = low
+	beam.Attachment1 = high
+	beam.Width0 = 12
+	beam.Width1 = 22
+	beam.FaceCamera = true
+	beam.LightEmission = 1
+	beam.Color = ColorSequence.new(Color3.fromRGB(255, 236, 150), Color3.fromRGB(150, 240, 255))
+	beam.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.72), NumberSequenceKeypoint.new(1, 1) })
+	beam.Parent = face
+	sparkles(face, CYAN, 6, 1.1)
+	sparkles(face, Color3.fromRGB(255, 220, 90), 4, 0.9)
 	local glow = Instance.new("PointLight")
-	glow.Range = 24
-	glow.Brightness = 1.2
-	glow.Color = Color3.fromRGB(255, 215, 120)
-	glow.Parent = model:FindFirstChild("Face")
+	glow.Range = 26
+	glow.Brightness = 1.4
+	glow.Color = Color3.fromRGB(255, 225, 140)
+	glow.Parent = face
 end
 
--- A small floating island for the backdrop: grass top, tapering rock, trees, maybe a cottage.
+-- A small floating garden island for the backdrop: bright top, sandstone underside, a blossom
+-- or two, sometimes a cottage; slowly bobbing.
 local function floatingIsland(parent, at: Vector3, size: number, rng)
 	local model = group(parent, "FloatingIsland")
-	column(model, "Grass", size, at.Y - 1.5, at.Y, at, GRASS, Enum.Material.Grass)
+	column(model, "Grass", size, at.Y - 1.5, at.Y, at, ZONE_GRASS.Stream[rng:NextInteger(1, 2)])
 	local d, y = size - 1, at.Y - 1.5
 	for i = 1, 4 do
 		local h = size * 0.28
-		column(model, "Rock" .. i, d, y - h, y, at + Vector3.new(rng:NextNumber(-1, 1), 0, rng:NextNumber(-1, 1)), if i % 2 == 0 then ROCK else ROCK_DARK, Enum.Material.Rock)
+		column(model, "Rock" .. i, d, y - h, y, at + Vector3.new(rng:NextNumber(-1, 1), 0, rng:NextNumber(-1, 1)), CLIFFS[(i % 3) + 1])
 		y -= h
 		d *= 0.68
 	end
 	local trees = rng:NextInteger(1, 3)
-	for _ = 1, trees do
+	for k = 1, trees do
 		local p = at + Vector3.new(rng:NextNumber(-0.3, 0.3) * size, 0, rng:NextNumber(-0.3, 0.3) * size)
-		roundTree(model, p, size / 16, rng)
+		roundTree(model, p, size / 16, rng, k == 1 and rng:NextNumber() < 0.6)
 	end
 	if rng:NextNumber() < 0.6 then
-		cottage(model, at + Vector3.new(size * 0.15, 0, -size * 0.1), at + Vector3.new(0, 0, 50), rng, if rng:NextNumber() < 0.5 then ROOF_RED else ROOF_BLUE)
+		cottage(model, at + Vector3.new(size * 0.15, 0, -size * 0.1), at + Vector3.new(0, 0, 50), rng, ROOF_COLOURS[rng:NextInteger(1, #ROOF_COLOURS)])
 	end
+	if rng:NextNumber() < 0.5 then
+		local fall = part(model, "Fall", Vector3.new(size * 0.18, size * 1.2, 0.8), CFrame.new(at + Vector3.new(0, -size * 0.6, size * 0.47)), WATER)
+		fall.Transparency = 0.15
+		fall.CastShadow = false
+	end
+	model:SetAttribute("AmbientBob", rng:NextNumber(0.8, 1.6))
 	return model
 end
 
+-- Soft cloud: white puffs with a warm-cream underside.
 local function cloud(parent, at: Vector3, size: number, rng)
 	local model = group(parent, "Cloud")
 	for i = 1, 5 do
 		local s = size * rng:NextNumber(0.5, 1)
-		local c = ball(model, "Puff", s, at + Vector3.new(rng:NextNumber(-1, 1) * size, rng:NextNumber(-0.2, 0.3) * size, rng:NextNumber(-0.6, 0.6) * size), Color3.fromRGB(255, 255, 255))
+		local y = rng:NextNumber(-0.2, 0.3) * size
+		local c = ball(model, "Puff", s, at + Vector3.new(rng:NextNumber(-1, 1) * size, y, rng:NextNumber(-0.6, 0.6) * size), if y < 0 then Color3.fromRGB(255, 246, 236) else Color3.fromRGB(255, 255, 255))
 		c.CastShadow = false
-		c.Transparency = 0.08
 	end
+end
+
+-- A kite on a long string, gently bobbing.
+local function kite(parent, at: Vector3, anchor: Vector3, rng)
+	local model = group(parent, "Kite")
+	local colour = ({ CORAL, MAGENTA, CYAN, GOLD, PURPLE })[rng:NextInteger(1, 5)]
+	local body = part(model, "Kite", Vector3.new(4, 4, 0.3), CFrame.lookAt(at, anchor) * CFrame.Angles(0, 0, math.rad(45)), colour)
+	body.CastShadow = false
+	part(model, "Cross", Vector3.new(0.3, 5.4, 0.35), body.CFrame * CFrame.Angles(0, 0, math.rad(45)), CREAM)
+	for k = 1, 3 do
+		local bow = part(model, "Bow" .. k, Vector3.new(0.9, 0.9, 0.2), CFrame.new(at - Vector3.new(0, 2.8 + k * 1.4, 0)) * CFrame.Angles(0, 0, math.rad(45)), FLOWERS[rng:NextInteger(1, #FLOWERS)])
+		bow.CastShadow = false
+	end
+	local length = (anchor - at).Magnitude
+	local string = part(model, "String", Vector3.new(0.08, 0.08, length), CFrame.lookAt((anchor + at) / 2, at), CREAM)
+	string.CastShadow = false
+	model:SetAttribute("AmbientBob", 1.2)
+end
+
+-- A bunch of balloons floating free in the sky.
+local function balloonBunch(parent, at: Vector3, rng)
+	local model = group(parent, "BalloonBunch")
+	for k = 1, 5 do
+		local b = ball(model, "Balloon" .. k, 3, at + Vector3.new(rng:NextNumber(-2.5, 2.5), rng:NextNumber(0, 3), rng:NextNumber(-2.5, 2.5)), FLOWERS[(k + rng:NextInteger(0, 5)) % #FLOWERS + 1])
+		b.CastShadow = false
+	end
+	part(model, "Strings", Vector3.new(0.1, 6, 0.1), CFrame.new(at - Vector3.new(0, 4, 0)), CREAM)
+	model:SetAttribute("AmbientBob", 1.5)
 end
 
 local function waterfall(parent, top: Vector3, width: number, drop: number, facing: Vector3)
 	local cf = CFrame.lookAt(top, top + facing)
-	local fall = part(parent, "Waterfall", Vector3.new(width, drop, 1.2), cf * CFrame.new(0, -drop / 2, -0.8), Color3.fromRGB(150, 220, 255), Enum.Material.Glass)
-	fall.Transparency = 0.15
+	local fall = part(parent, "Waterfall", Vector3.new(width, drop, 1.2), cf * CFrame.new(0, -drop / 2, -0.8), Color3.fromRGB(120, 230, 255), Enum.Material.Glass)
+	fall.Transparency = 0.1
 	fall.CastShadow = false
-	local foam = part(parent, "Foam", Vector3.new(width + 1, 1, 2), cf * CFrame.new(0, 0, -0.6), Color3.fromRGB(240, 250, 255), Enum.Material.SmoothPlastic)
+	local foam = part(parent, "Foam", Vector3.new(width + 1, 1, 2), cf * CFrame.new(0, 0, -0.6), Color3.fromRGB(240, 252, 255))
 	foam.CastShadow = false
 	local mist = Instance.new("ParticleEmitter")
-	mist.Rate = 6
+	mist.Rate = 5
 	mist.Lifetime = NumberRange.new(1.5, 2.5)
 	mist.Speed = NumberRange.new(1, 3)
 	mist.Size = NumberSequence.new(3, 6)
@@ -5834,31 +6069,45 @@ function Scene.build(world)
 	local rng = Random.new(20261018)
 
 	-- Sunny day (applied while the board is on screen; BoardWorld restores the old values).
+	-- Warm high sun, bright warm fill (no crushed shadows), soft shadows; colours come from the
+	-- materials, so the grade stays mild.
 	world.LightingPreset = {
-		ClockTime = 14.2,
-		Brightness = 2.8,
-		Ambient = Color3.fromRGB(150, 140, 120),
-		OutdoorAmbient = Color3.fromRGB(175, 165, 145),
+		ClockTime = 13.4,
+		Brightness = 2.1,
+		Ambient = Color3.fromRGB(118, 112, 124),
+		OutdoorAmbient = Color3.fromRGB(138, 138, 150),
+		ColorShift_Top = Color3.fromRGB(255, 238, 205),
+		ColorShift_Bottom = Color3.fromRGB(150, 210, 255),
+		EnvironmentDiffuseScale = 0.25,
+		EnvironmentSpecularScale = 0.2,
+		ExposureCompensation = -0.1,
+		ShadowSoftness = 0.35,
 	}
+	-- Rich cyan-blue sky, gentle depth, no grey haze
 	local atmosphere = Instance.new("Atmosphere")
 	atmosphere.Name = "SkyGardenAtmosphere"
-	atmosphere.Density = 0.28
-	atmosphere.Offset = 0.15
-	atmosphere.Color = Color3.fromRGB(205, 230, 255)
-	atmosphere.Decay = Color3.fromRGB(120, 170, 230)
-	atmosphere.Glare = 0.2
-	atmosphere.Haze = 1.2
+	atmosphere.Density = 0.2
+	atmosphere.Offset = 0.25
+	atmosphere.Color = Color3.fromRGB(176, 226, 255)
+	atmosphere.Decay = Color3.fromRGB(80, 170, 255)
+	atmosphere.Glare = 0.15
+	atmosphere.Haze = 0.2
 	local grade = Instance.new("ColorCorrectionEffect")
 	grade.Name = "SkyGardenGrade"
-	grade.Saturation = 0.18
-	grade.Contrast = 0.06
+	grade.Saturation = 0.12
+	grade.Contrast = 0.08
 	grade.Brightness = 0.02
+	grade.TintColor = Color3.fromRGB(255, 251, 244)
 	local bloom = Instance.new("BloomEffect")
 	bloom.Name = "SkyGardenBloom"
-	bloom.Intensity = 0.35
-	bloom.Size = 20
-	bloom.Threshold = 1.6
-	world.LightingChildren = { atmosphere, grade, bloom }
+	bloom.Intensity = 0.25
+	bloom.Size = 16
+	bloom.Threshold = 2
+	local rays = Instance.new("SunRaysEffect")
+	rays.Name = "SkyGardenSunRays"
+	rays.Intensity = 0.04
+	rays.Spread = 0.6
+	world.LightingChildren = { atmosphere, grade, bloom, rays }
 
 	-- Spaces, paths and landmark positions in world space ---------------------------------------
 	local spaces = {} -- { Pos, H, Area, Bridge }
@@ -6028,14 +6277,19 @@ function Scene.build(world)
 			local edge = not (inside[key(ix + 1, iz)] and inside[key(ix - 1, iz)] and inside[key(ix, iz + 1)] and inside[key(ix, iz - 1)])
 			local centre = Vector3.new(p.X, 0, p.Y)
 			local wet = inWater(p)
-			local g = column(island, "Ground", STEP + 3.5, top - 1, top, centre, if wet then ROCK_DARK elseif (ix + iz) % 3 == 0 then GRASS_DARK else GRASS, if wet then Enum.Material.Slate else Enum.Material.Grass)
+			local zone = nearestSpace(p)
+			local shades = ZONE_GRASS[zone and zone.Area or "Stream"] or ZONE_GRASS.Stream
+			-- Water bed is pale sand, so the transparent water reads luminous turquoise
+			local g = column(island, "Ground", STEP + 3.5, top - 1, top, centre, if wet then Color3.fromRGB(255, 232, 176) else shades[(ix + iz) % 2 + 1])
 			g.CastShadow = false
 			local bottom = if edge then islandY - rng:NextNumber(14, 26) else islandY - 7
-			column(island, "Cliff", STEP + (if edge then 2.5 else 3), bottom, top - 1, centre, if (ix * 7 + iz) % 2 == 0 then ROCK else ROCK_DARK, Enum.Material.Rock)
+			column(island, "Cliff", STEP + (if edge then 2.5 else 3), bottom, top - 1, centre, CLIFFS[(ix * 7 + iz * 3) % 3 + 1])
 			if edge then
-				-- hanging rock under the rim
+				-- grass lip over the cliff edge, then a hanging rock under the rim
+				local lip = column(island, "Lip", STEP + 4.2, top - 1.6, top - 0.6, centre, shades[1]:Lerp(Color3.fromRGB(60, 190, 80), 0.25))
+				lip.CastShadow = false
 				local hang = rng:NextNumber(8, 20)
-				column(island, "Hang", STEP * 0.7, bottom - hang, bottom, centre + Vector3.new(rng:NextNumber(-2, 2), 0, rng:NextNumber(-2, 2)), ROCK_DARK, Enum.Material.Rock)
+				column(island, "Hang", STEP * 0.7, bottom - hang, bottom, centre + Vector3.new(rng:NextNumber(-2, 2), 0, rng:NextNumber(-2, 2)), CLIFFS[rng:NextInteger(1, 3)])
 			end
 		end
 	end
@@ -6054,7 +6308,7 @@ function Scene.build(world)
 		local d, y = rng:NextNumber(18, 26), islandY - 20
 		for t = 1, 4 do
 			local h = rng:NextNumber(8, 12)
-			column(island, "Underrock", d, y - h, y, Vector3.new(c.X, 0, c.Y), if t % 2 == 0 then ROCK else ROCK_DARK, Enum.Material.Rock)
+			column(island, "Underrock", d, y - h, y, Vector3.new(c.X, 0, c.Y), CLIFFS[(i + t) % 3 + 1])
 			y -= h
 			d *= 0.62
 		end
@@ -6095,7 +6349,7 @@ function Scene.build(world)
 			if i % 3 == 0 then
 				rock(water, Vector3.new(p.X, islandY - 0.8, p.Z), rng)
 			else
-				local pad = column(water, "LilyPad", rng:NextNumber(2, 3.2), islandY - 0.3, islandY - 0.1, p, Color3.fromRGB(90, 180, 90), Enum.Material.Grass)
+				local pad = column(water, "LilyPad", rng:NextNumber(2, 3.2), islandY - 0.3, islandY - 0.1, p, Color3.fromRGB(96, 224, 96))
 				pad.CastShadow = false
 				if i % 2 == 0 then
 					ball(water, "Lily", 0.9, Vector3.new(p.X, islandY + 0.1, p.Z), FLOWERS[1]).CastShadow = false
@@ -6124,8 +6378,8 @@ function Scene.build(world)
 		away = if away.Magnitude > 0.1 then away.Unit else Vector3.new(0, 0, 1)
 		local side = Vector3.new(-away.Z, 0, away.X)
 		signpost(marks, base + side * 7 + away * 2, {
-			{ Label = fork[4], Toward = a, Color = Color3.fromRGB(255, 236, 190) },
-			{ Label = fork[5], Toward = b, Color = Color3.fromRGB(214, 240, 200) },
+			{ Label = fork[4], Toward = a, Color = Color3.fromRGB(255, 220, 90) },
+			{ Label = fork[5], Toward = b, Color = Color3.fromRGB(150, 236, 200) },
 		})
 	end
 	-- Sundial Bridge: stone railings with gold caps along every bridge segment
@@ -6138,7 +6392,7 @@ function Scene.build(world)
 			for s = -1, 1, 2 do
 				local p0, p1 = a + side * s * 3, b + side * s * 3
 				part(marks, "Rail", Vector3.new(0.7, 1.6, (p1 - p0).Magnitude), CFrame.lookAt((p0 + p1) / 2 + Vector3.new(0, 0.6, 0), p1 + Vector3.new(0, 0.6, 0)), STONE, Enum.Material.Marble)
-				ball(marks, "RailCap", 1.1, p0 + Vector3.new(0, 1.7, 0), GOLD, Enum.Material.Metal)
+				ball(marks, "RailCap", 1.1, p0 + Vector3.new(0, 1.7, 0), CYAN, Enum.Material.Neon).CastShadow = false
 			end
 			local mid = (a + b) / 2
 			part(marks, "Arch", Vector3.new(5, 2, (b - a).Magnitude * 0.9), CFrame.lookAt(mid - Vector3.new(0, 2.2, 0), b - Vector3.new(0, 2.2, 0)), STONE, Enum.Material.Cobblestone)
@@ -6170,6 +6424,14 @@ function Scene.build(world)
 	end
 
 	-- Scatter: themed planting and props on every free patch -------------------------------------
+	-- Trees grow in clusters (low-frequency noise) with open flower meadows between them, never
+	-- on the camera side of a path, and never tall within sight of a landmark.
+	local ZONE_FLOWERS = {
+		Orchard = { Color3.fromRGB(255, 60, 70), Color3.fromRGB(255, 150, 30), Color3.fromRGB(255, 220, 40), Color3.fromRGB(255, 255, 255) },
+		Village = { CORAL, Color3.fromRGB(255, 120, 190), Color3.fromRGB(255, 226, 60) },
+		Fair = { MAGENTA, PURPLE, CYAN, GOLD },
+		Stream = { Color3.fromRGB(255, 255, 255), CYAN, Color3.fromRGB(255, 226, 60), Color3.fromRGB(255, 130, 200) },
+	}
 	local life = group(scene, "Life")
 	local SCATTER = 6
 	for ix = math.floor((minX - 30) / SCATTER), math.ceil((maxX + 30) / SCATTER) do
@@ -6185,62 +6447,70 @@ function Scene.build(world)
 			end
 			local s = nearestSpace(p)
 			local area = s and s.Area or "Stream"
+			local flowers = ZONE_FLOWERS[area] or FLOWERS
 			local y = heightAt(p)
 			local pos = Vector3.new(p.X, y, p.Y)
 			local roll = rng:NextNumber()
-			if inFrontOfPath(p) then
+			local grove = math.noise(p.X / 34, p.Y / 34, 0.37) > -0.05
+			local front = inFrontOfPath(p)
+			local low = front or isReserved(p, 9) or not grove
+			if low then
 				if roll < 0.45 then
-					flowerBed(life, pos, rng)
-				elseif roll < 0.8 then
+					flowerBed(life, pos, rng, flowers)
+				elseif roll < 0.72 then
 					bush(life, pos, rng)
-				elseif area == "Orchard" then
-					crate(life, pos, rng)
-				else
-					rock(life, pos, rng, 0.7)
-				end
+				elseif roll < 0.85 then
+					if area == "Orchard" then
+						crate(life, pos, rng)
+					elseif area == "Fair" and not front then
+						balloon(life, pos, rng)
+					else
+						flowerBed(life, pos, rng, flowers)
+					end
+				end -- else: open grass (breathing room)
 			elseif area == "Orchard" then
-				if roll < 0.32 then
-					tree(life, pos, rng:NextNumber(0.75, 1))
-				elseif roll < 0.5 then
+				if roll < 0.5 then
+					tree(life, pos, rng:NextNumber(0.7, 1.05))
+				elseif roll < 0.65 then
 					crate(life, pos, rng)
-				elseif roll < 0.75 then
-					flowerBed(life, pos, rng)
+				elseif roll < 0.85 then
+					flowerBed(life, pos, rng, flowers)
 				else
 					bush(life, pos, rng)
 				end
 			elseif area == "Fair" then
-				if roll < 0.14 then
+				if roll < 0.16 then
 					booth(life, pos, s.Pos, STRIPES[rng:NextInteger(1, #STRIPES)])
-				elseif roll < 0.3 then
+				elseif roll < 0.32 then
 					balloon(life, pos, rng)
-				elseif roll < 0.48 then
-					roundTree(life, pos, rng:NextNumber(0.8, 1.1), rng, rng:NextNumber() < 0.45)
-				elseif roll < 0.75 then
-					flowerBed(life, pos, rng)
+				elseif roll < 0.55 then
+					roundTree(life, pos, rng:NextNumber(0.75, 1.1), rng, rng:NextNumber() < 0.55)
+				elseif roll < 0.82 then
+					flowerBed(life, pos, rng, flowers)
 				else
 					bush(life, pos, rng)
 				end
 			elseif area == "Village" then
 				if roll < 0.12 and d > 11 then
-					cottage(life, pos, s.Pos, rng, if rng:NextNumber() < 0.5 then ROOF_RED else ROOF_BLUE)
-				elseif roll < 0.38 then
-					if rng:NextNumber() < 0.4 then
-						pineTree(life, pos, rng:NextNumber(0.9, 1.2))
+					cottage(life, pos, s.Pos, rng, ROOF_COLOURS[rng:NextInteger(1, #ROOF_COLOURS)])
+				elseif roll < 0.45 then
+					if rng:NextNumber() < 0.35 then
+						pineTree(life, pos, rng:NextNumber(0.85, 1.25), rng)
 					else
-						roundTree(life, pos, rng:NextNumber(0.8, 1.1), rng, rng:NextNumber() < 0.3)
+						roundTree(life, pos, rng:NextNumber(0.75, 1.15), rng, rng:NextNumber() < 0.35)
 					end
-				elseif roll < 0.62 then
-					flowerBed(life, pos, rng)
+				elseif roll < 0.72 then
+					flowerBed(life, pos, rng, flowers)
 				else
 					bush(life, pos, rng)
 				end
 			else -- Stream walk
-				if roll < 0.25 then
-					roundTree(life, pos, rng:NextNumber(0.8, 1.1), rng, rng:NextNumber() < 0.2)
-				elseif roll < 0.45 then
+				if roll < 0.35 then
+					roundTree(life, pos, rng:NextNumber(0.75, 1.1), rng, rng:NextNumber() < 0.3)
+				elseif roll < 0.5 then
 					rock(life, pos, rng)
-				elseif roll < 0.75 then
-					flowerBed(life, pos, rng)
+				elseif roll < 0.8 then
+					flowerBed(life, pos, rng, flowers)
 				else
 					bush(life, pos, rng)
 				end
@@ -6271,6 +6541,17 @@ function Scene.build(world)
 		local a = rng:NextNumber(0, math.pi * 2)
 		local r = rng:NextNumber(200, 340)
 		cloud(back, centre + Vector3.new(math.cos(a) * r, rng:NextNumber(10, 60), math.sin(a) * r), rng:NextNumber(10, 20), rng)
+	end
+	-- Kites flying off the island rim and balloon bunches drifting in the sky
+	for i = 1, 6 do
+		local a = i / 6 * math.pi * 2 + 0.3
+		local rim = centre + Vector3.new(math.cos(a) * 70, 0, math.sin(a) * 66)
+		kite(back, rim + Vector3.new(math.cos(a) * 30, rng:NextNumber(30, 45), math.sin(a) * 30), rim, rng)
+	end
+	for i = 1, 8 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(95, 170)
+		balloonBunch(back, centre + Vector3.new(math.cos(a) * r, rng:NextNumber(20, 55), math.sin(a) * r), rng)
 	end
 	-- A deep layer of big low clouds instead of a flat floor (fills the space under the board)
 	for i = 1, 36 do
@@ -15174,6 +15455,7 @@ local Net = require(ReplicatedStorage:WaitForChild("PartyShared"):WaitForChild("
 local CameraController = require(script.Parent:WaitForChild("CameraController"))
 local Controls = require(script.Parent:WaitForChild("Controls"))
 local Onboarding = require(script.Parent:WaitForChild("Onboarding"))
+local SceneAmbience = require(script.Parent:WaitForChild("SceneAmbience"))
 local UI = script.Parent:WaitForChild("UI")
 local Theme = require(UI:WaitForChild("Theme"))
 local ActionBar = require(UI:WaitForChild("ActionBar"))
@@ -15646,6 +15928,9 @@ RunService.RenderStepped:Connect(function()
 	youMarker:setActive(youMarkerWanted())
 	youMarker:update()
 end)
+
+-- Board scenery motion (waterwheel, balloons, floating islands...), local only.
+SceneAmbience.start()
 
 -- Ask for the current state in case we joined mid-round.
 sendInput({ Kind = Net.Input.Ready })
@@ -17008,11 +17293,101 @@ return Onboarding
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="72">
+        <Item class="ModuleScript" referent="72">
+          <Properties>
+            <string name="Name">SceneAmbience</string>
+            <string name="Source"><![CDATA[--[[
+	SceneAmbience
+	Small decorative motion for board scenes, run locally on each client (nothing replicates per
+	frame). Board scene builders mark models with attributes:
+	  AmbientSpin  degrees per second around the model's pivot (AmbientAxis "X" | "Y" | "Z")
+	  AmbientBob   studs of gentle up-and-down drift
+	Used by SkyGardenScene: waterwheel, crown on the Crown Pavilion, balloons, kites, floating
+	islands. Only models inside workspace.PartyBoard are animated; nothing runs without a board.
+]]
+
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local SceneAmbience = {}
+
+local entries = {} -- { Model, Base: CFrame, Spin, Axis, Bob, Phase }
+local boardFolder = nil
+local connection = nil
+
+local function collect(folder: Instance)
+	table.clear(entries)
+	for _, d in folder:GetDescendants() do
+		if d:IsA("Model") then
+			local spin, bob = d:GetAttribute("AmbientSpin"), d:GetAttribute("AmbientBob")
+			if spin or bob then
+				table.insert(entries, {
+					Model = d,
+					Base = d:GetPivot(),
+					Spin = spin,
+					Axis = d:GetAttribute("AmbientAxis") or "Y",
+					Bob = bob,
+					Phase = (#entries * 1.7) % (math.pi * 2),
+				})
+			end
+		end
+	end
+end
+
+local function step()
+	if not boardFolder or not boardFolder.Parent then
+		boardFolder = nil
+		table.clear(entries)
+		return
+	end
+	local t = os.clock()
+	for _, e in entries do
+		local cf = e.Base
+		if e.Bob then
+			cf += Vector3.new(0, math.sin(t * 0.8 + e.Phase) * e.Bob, 0)
+		end
+		if e.Spin then
+			local angle = math.rad(e.Spin * t)
+			local turn = if e.Axis == "X" then CFrame.Angles(angle, 0, 0)
+				elseif e.Axis == "Z" then CFrame.Angles(0, 0, angle)
+				else CFrame.Angles(0, angle, 0)
+			cf = cf * turn
+		end
+		e.Model:PivotTo(cf)
+	end
+end
+
+function SceneAmbience.start()
+	if connection then
+		return
+	end
+	local function watch(child: Instance)
+		if child.Name == "PartyBoard" then
+			boardFolder = child
+			task.defer(collect, child) -- after replication settles
+			task.delay(3, function()
+				if boardFolder == child then
+					collect(child)
+				end
+			end)
+		end
+	end
+	for _, child in Workspace:GetChildren() do
+		watch(child)
+	end
+	Workspace.ChildAdded:Connect(watch)
+	connection = RunService.RenderStepped:Connect(step)
+end
+
+return SceneAmbience
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="73">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="73">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -17162,7 +17537,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">BoardDice</string>
               <string name="Source"><![CDATA[--[[
@@ -17484,7 +17859,7 @@ return BoardDice
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -18292,7 +18667,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">GuidePointer</string>
               <string name="Source"><![CDATA[--[[
@@ -18705,7 +19080,7 @@ return GuidePointer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -18985,7 +19360,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="78">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">InputHint</string>
               <string name="Source"><![CDATA[--[[
@@ -19073,7 +19448,7 @@ return InputHint
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="79">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -19225,7 +19600,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="80">
+          <Item class="ModuleScript" referent="81">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -19623,7 +19998,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="81">
+          <Item class="ModuleScript" referent="82">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -19738,7 +20113,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="82">
+          <Item class="ModuleScript" referent="83">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -19875,7 +20250,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="83">
+          <Item class="ModuleScript" referent="84">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -19994,7 +20369,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="84">
+          <Item class="ModuleScript" referent="85">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -20408,7 +20783,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="85">
+          <Item class="ModuleScript" referent="86">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -20497,7 +20872,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="86">
+          <Item class="ModuleScript" referent="87">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -20668,7 +21043,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -20806,7 +21181,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -20979,7 +21354,7 @@ return VoteScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">YouMarker</string>
               <string name="Source"><![CDATA[--[[
@@ -21153,18 +21528,18 @@ return YouMarker
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="90">
+  <Item class="Workspace" referent="91">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="91">
+    <Item class="Model" referent="92">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="92">
+      <Item class="Part" referent="93">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -21184,7 +21559,7 @@ return YouMarker
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="93">
+      <Item class="SpawnLocation" referent="94">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
