@@ -98,7 +98,7 @@ function SceneAudit.run(folder: Instance)
 	local signatures = {}
 	for _, d in folder:GetDescendants() do
 		if d:IsA("BasePart") and visible(d) then
-			local sig = table.concat({ d.ClassName, tostring((d :: any).Shape), tostring(d.Size), tostring(d.CFrame) }, "|")
+			local sig = table.concat({ d.ClassName, (if d:IsA("Part") then tostring(d.Shape) elseif d:IsA("MeshPart") then d.MeshId else ""), tostring(d.Size), tostring(d.CFrame) }, "|")
 			if signatures[sig] then
 				table.insert(report.Duplicates, { signatures[sig], d })
 			else

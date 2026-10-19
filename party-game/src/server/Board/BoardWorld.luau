@@ -85,7 +85,7 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 			-- Round medallion spaces + sloped sandy paths (MedallionKit); same Tops/Tiles API.
 			self.Tops[id] = position + Vector3.new(0, MedallionKit.TOP, 0)
 			local refined = board.Scene == "SkyGarden" and SkyGardenKit.isRefined(space.Area)
-			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id, refined)
+			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id, refined, board.Name == "SunnyLoopV2")
 			continue
 		end
 		self.Tops[id] = position + Vector3.new(0, TILE_HEIGHT, 0)

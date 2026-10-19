@@ -1,21 +1,11 @@
 --[[
-	MedallionKit
-	Studio build of the board-space kit used by boards with Style = "Medallion" (Sunny Loop v2).
-	Same dimensions as the Blender kit (docs/SunnyLoopV2.md, "Board-space kit"), so the Blender
-	meshes can replace these parts one for one later:
-
-	  base     round ceramic medallion, 10.5 studs across, 1.2 tall, gold rim (one mesh, all types)
-	  inlay    the type's colour as a SHAPE: circle, diamond, rounded square or ring (colour-blind
-	           safe: shape + icon + colour all differ by type)
-	  icon     the type's symbol on top (text glyph until the rendered icon set exists)
-	  path     sandy path segment between two medallion edges, following the height change
-
-	  MedallionKit.TOP              height of the walkable top above the space's position
-	  MedallionKit.space(parent, position, typeKey, spaceType, id) -> base Part
-	  MedallionKit.path(parent, fromTop, toTop, name) -> Part?
+ Sunny Loop medallions: Blender mesh slice with the previous visuals as a load fallback.
+ The collider, presentation top, paths, attributes and dynamic text retain their contract.
+ See docs/medallions-v1/README.md for source/import scale and outstanding rollout gates.
 ]]
 
 local MedallionKit = {}
+local Meshes = require(script.Parent.MedallionMeshes)
 
 --[[
 	Vertical layers of a space, in studs above its position. Every visible face of a space sits
@@ -24,7 +14,7 @@ local MedallionKit = {}
 	  1.16 recess top · 1.20 field top · 1.235 symbol top · 1.265 symbol hole top ·
 	  1.275 icon plate (SurfaceGui) · ~1.45 active-space ring (BoardWorld:setActiveSpace)
 ]]
-MedallionKit.LayerPlanes = { 0.295, 0.75, 1.0, 1.12, 1.16, 1.2, 1.235, 1.265 }
+MedallionKit.LayerPlanes = { 0.295, 0.75, 0.86, 0.91, 1.0, 1.12, 1.16, 1.2, 1.235, 1.24, 1.265, 1.38, 1.445 }
 
 MedallionKit.DIAMETER = 10.5
 MedallionKit.TOP = 1.2
@@ -51,6 +41,7 @@ local LOOK = {
 	Switch = { Shape = "Ring", Glyph = "⇄", Color = Color3.fromRGB(255, 186, 30) },
 	Reward = { Shape = "Ring", Glyph = "GIFT", Color = Color3.fromRGB(255, 196, 20) },
 }
+LOOK.Gift = LOOK.Reward
 MedallionKit.Look = LOOK
 
 local function part(props)
@@ -128,7 +119,7 @@ local function refinedSpace(model, position: Vector3, look, colour: Color3)
 	end
 end
 
-function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number, refined: boolean?)
+function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number, refined: boolean?, meshEligible: boolean?)
 	local look = LOOK[typeKey] or LOOK.Neutral
 	local model = Instance.new("Model")
 	model.Name = "Space" .. id
@@ -139,7 +130,10 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 	base:SetAttribute("SpaceType", typeKey)
 	local colour = look.Color or spaceType.Color
 	local inlayY = position + Vector3.new(0, 1.05, 0)
-	if refined then
+	local meshed = meshEligible and Meshes.enabled(id) and Meshes.build(model, position, typeKey, look.Shape, colour)
+	if meshed then
+		base.Transparency = 1
+	elseif refined then
 		refinedSpace(model, position, look, colour)
 	else
 	decor(disc(model, "Rim", d + 0.8, 0.7, position + Vector3.new(0, 0.35, 0), RIM, Enum.Material.SmoothPlastic))
@@ -172,12 +166,12 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 	end
 
 	-- Icon / glyph, readable from the turn camera and the MAP
-	if look.Glyph ~= "" then
+	if look.Glyph ~= "" and (not meshed or typeKey == "Gain" or typeKey == "Lose") then
 		local plate = decor(part({
 			Name = "Icon",
-			Size = Vector3.new(6, 0.05, 6),
+			Size = if meshed then Vector3.new(2, 0.05, 4) else Vector3.new(6, 0.05, 6),
 			-- Turned so the glyph reads upright from the board camera (which looks north).
-			CFrame = CFrame.new(position + Vector3.new(0, if refined then 1.25 else 1.2, 0)) * CFrame.Angles(0, math.rad(-90), 0),
+			CFrame = CFrame.new(position + (if meshed then Vector3.new(0, 1.42, 2.65) else Vector3.new(0, if refined then 1.25 else 1.2, 0))) * CFrame.Angles(0, math.rad(-90), 0),
 			Transparency = 1,
 			Parent = model,
 		}))

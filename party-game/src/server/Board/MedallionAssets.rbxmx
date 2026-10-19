@@ -1,0 +1,622 @@
+<roblox version="4">
+  <Item class="Folder" referent="kit">
+    <Properties>
+      <string name="Name">MedallionAssets</string>
+    </Properties>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Base_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Base_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://129747393505767</url>
+        </Content>
+        <Content name="TextureID">
+          <url>rbxassetid://131676821016044</url>
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>11.680000305175781</X>
+          <Y>1.1200000047683716</Y>
+          <Z>11.680000305175781</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>3.270400047302246</X>
+          <Y>0.31360048055648804</Y>
+          <Z>3.270400047302246</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>0.5600000023841858</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Inlay_Circle_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Inlay_Circle_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://133674026950004</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>7.400000095367432</X>
+          <Y>0.28999996185302734</Y>
+          <Z>7.400000095367432</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>2.072000026702881</X>
+          <Y>0.08120033144950867</Y>
+          <Z>2.072000026702881</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.0550000667572021</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Inlay_Diamond_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Inlay_Diamond_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://114324496393630</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>7.800000190734863</X>
+          <Y>0.28999996185302734</Y>
+          <Z>7.800000190734863</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>2.184000015258789</X>
+          <Y>0.08120036125183105</Y>
+          <Z>2.184000015258789</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.0550000667572021</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Inlay_Dot_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Inlay_Dot_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://102401521750897</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>3.200000047683716</X>
+          <Y>0.28999996185302734</Y>
+          <Z>3.200000047683716</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.8960000276565552</X>
+          <Y>0.08120012283325195</Y>
+          <Z>0.8960000276565552</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.0550000667572021</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Inlay_Ring_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Inlay_Ring_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://103163163957593</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>7.599999904632568</X>
+          <Y>0.28999996185302734</Y>
+          <Z>7.228029727935791</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>2.128000020980835</X>
+          <Y>0.08120033144950867</Y>
+          <Z>2.023848295211792</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.0550000667572021</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Inlay_Square_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Inlay_Square_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://132487893214175</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>6.0</X>
+          <Y>0.28999996185302734</Y>
+          <Z>6.0</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>1.6800000667572021</X>
+          <Y>0.08120027184486389</Y>
+          <Z>1.6800000667572021</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.0550000667572021</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Chaos_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Chaos_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://76491628818693</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>2.3000000715255737</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.4000000953674316</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.6440000534057617</X>
+          <Y>0.039200156927108765</Y>
+          <Z>0.9520000219345093</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.050000011920928955</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Duel_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Duel_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://114043688804137</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>3.299999952316284</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.350000023841858</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.9239999651908875</X>
+          <Y>0.039200156927108765</Y>
+          <Z>0.937999963760376</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.025000035762786865</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Event_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Event_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://109461956758068</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>2.450000047683716</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.21999990940094</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.6859999895095825</X>
+          <Y>0.03920012712478638</Y>
+          <Z>0.9016000032424927</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.02499997615814209</X>
+          <Y>1.3100000023841858</Y>
+          <Z>-0.06000000238418579</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Gain_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Gain_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://86984235556069</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>2.5</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.149999976158142</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.699999988079071</X>
+          <Y>0.039200156927108765</Y>
+          <Z>0.8819999694824219</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.07499998807907104</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Item_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Item_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://102514383368273</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>3.299999952316284</X>
+          <Y>0.13999998569488525</Y>
+          <Z>2.799999952316284</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.9239999651908875</X>
+          <Y>0.03920012712478638</Y>
+          <Z>0.784000039100647</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.10000002384185791</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Lose_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Lose_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://89082157148919</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>2.5</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.149999976158142</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.699999988079071</X>
+          <Y>0.03920012712478638</Y>
+          <Z>0.8819999694824219</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>-0.07499998807907104</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Reward_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Reward_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://107781581582648</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>3.0</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.049999952316284</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>0.8400000333786011</X>
+          <Y>0.039200156927108765</Y>
+          <Z>0.8539999723434448</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.125</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Shop_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Shop_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://112342305732041</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>3.700000047683716</X>
+          <Y>0.13999998569488525</Y>
+          <Z>2.850000023841858</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>1.0360000133514404</X>
+          <Y>0.03920012712478638</Y>
+          <Z>0.7980000376701355</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.07499998807907104</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+    <Item class="MeshPart" referent="SunnyLoop_Space_Symbol_Switch_v1">
+      <Properties>
+        <string name="Name">SunnyLoop_Space_Symbol_Switch_v1</string>
+        <Content name="MeshId">
+          <url>rbxassetid://102220150843807</url>
+        </Content>
+        <Content name="TextureID">
+          <url />
+        </Content>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">false</bool>
+        <bool name="CanTouch">false</bool>
+        <bool name="CanQuery">false</bool>
+        <bool name="CastShadow">false</bool>
+        <Vector3 name="Size">
+          <X>3.5999999046325684</X>
+          <Y>0.13999998569488525</Y>
+          <Z>3.200000047683716</Z>
+        </Vector3>
+        <Vector3 name="InitialSize">
+          <X>1.0080000162124634</X>
+          <Y>0.03920012712478638</Y>
+          <Z>0.8960000276565552</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>-0.0</X>
+          <Y>1.3100000023841858</Y>
+          <Z>0.0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3uint8 name="Color3uint8">4294967295</Color3uint8>
+      </Properties>
+    </Item>
+  </Item>
+</roblox>
