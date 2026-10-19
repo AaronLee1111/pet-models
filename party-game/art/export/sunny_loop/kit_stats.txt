@@ -1,0 +1,11 @@
+PG_Tree_Orchard_A	tris=252	materials=5
+PG_Tree_Riverside_A	tris=232	materials=4
+PG_Tree_Fair_A	tris=232	materials=4
+PG_FlowerBed_Round	tris=408	materials=5
+PG_FlowerBed_Long	tris=444	materials=5
+PG_Bush_A	tris=60	materials=3
+PG_Rock_A	tris=40	materials=4
+PG_Rock_B	tris=40	materials=4
+PG_Rock_C	tris=40	materials=4
+PG_Path_Edge_12	tris=96	materials=3
+PG_Space_Medallion	tris=620	materials=5
