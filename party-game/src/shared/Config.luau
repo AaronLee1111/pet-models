@@ -50,6 +50,10 @@ Config.Match = {
 	BotDifficultyOrder = { "Easy", "Normal", "Hard" },
 	Board = "Classic", -- default board: module name in PartyServer/Board/Boards
 	Boards = { "Classic", "MagicalFestival" }, -- boards the host can pick (in this order)
+	-- Boards still in production (e.g. the Sunny Loop redesign). Offered in the picker only
+	-- when ShowPreviewBoards is on AND the server runs in Studio; live servers never see them.
+	PreviewBoards = { "SunnyLoopV2" },
+	ShowPreviewBoards = false,
 	-- "Board": full board party.  "Minigames": back-to-back minigames only, most coins wins.
 	Mode = "Board",
 	Modes = { "Board", "Minigames" },
@@ -85,6 +89,10 @@ Config.Board = {
 	RollTimeout = 12, -- a player who doesn't roll in time rolls automatically
 	ChoiceTimeout = 10, -- unanswered prompts take their default option
 	HopTime = 0.35, -- seconds per space moved
+	-- Thrown-dice presentation (boards with Presentation = "Diorama"): seconds from the roll to
+	-- the first hop, so everyone sees the die fly, land and show its number.
+	DiceReveal = 1.9,
+	DiceRevealBot = 1.25,
 	BotRollDelay = { 0.8, 1.6 },
 	BotChoiceDelay = { 0.6, 1.4 },
 	LandPause = 1.5, -- beat after landing so everyone can read what happened

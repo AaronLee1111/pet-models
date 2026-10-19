@@ -11,6 +11,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.PartyShared.Config)
@@ -20,11 +21,22 @@ local Tutorial = require(script.Parent.Tutorial)
 
 local WaitingRoom = {}
 
+-- Boards the host can pick: the released ones, plus preview boards in Studio when switched on.
+function WaitingRoom.boardChoices(): { string }
+	local list = table.clone(Config.Match.Boards)
+	if Config.Match.ShowPreviewBoards and RunService:IsStudio() then
+		for _, id in Config.Match.PreviewBoards or {} do
+			table.insert(list, id)
+		end
+	end
+	return list
+end
+
 -- What each board in the picker is called on screen (its DisplayName, e.g. "Sunny Loop").
 function WaitingRoom.boardNames()
 	local names = {}
 	local folder = script.Parent:FindFirstChild("Board") and script.Parent.Board:FindFirstChild("Boards")
-	for _, id in Config.Match.Boards do
+	for _, id in WaitingRoom.boardChoices() do
 		local module = folder and folder:FindFirstChild(id)
 		local ok, data = pcall(function()
 			return module and require(module)
@@ -48,7 +60,7 @@ local function choices()
 		Mode = Config.Match.Modes,
 		Rounds = Config.Match.BoardRoundChoices,
 		Difficulty = Config.Match.BotDifficultyOrder,
-		Board = Config.Match.Boards,
+		Board = WaitingRoom.boardChoices(),
 	}
 end
 

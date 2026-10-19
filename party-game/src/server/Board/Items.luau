@@ -144,7 +144,7 @@ return {
 		Description = "Open or close the Sunny Loop shortcut from anywhere",
 		Price = 4,
 		Weight = 2,
-		Boards = { "Classic" },
+		Boards = { "Classic", "SunnyLoopV2" },
 		Use = function(match, seat)
 			if #(match.Board.Gates or {}) == 0 then
 				return nil, "this board has no gates"
