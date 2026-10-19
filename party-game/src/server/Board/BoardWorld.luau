@@ -295,18 +295,21 @@ function BoardWorld:setFestivalLighting(active)
   self.SavedLighting={ClockTime=lighting.ClockTime,Ambient=lighting.Ambient,OutdoorAmbient=lighting.OutdoorAmbient,Brightness=lighting.Brightness}
   if self.LightingPreset then
    for key,value in self.LightingPreset do lighting[key]=value end
+   for _,child in self.LightingChildren or {} do child.Parent=lighting end
   else
   lighting.ClockTime=17.8;lighting.Ambient=Color3.fromRGB(145,130,180)
   lighting.OutdoorAmbient=Color3.fromRGB(155,150,190);lighting.Brightness=2
   end
  elseif not active and self.SavedLighting then
   for key,value in self.SavedLighting do lighting[key]=value end
+  for _,child in self.LightingChildren or {} do child.Parent=nil end
   self.SavedLighting=nil
  end
 end
 
 function BoardWorld:destroy()
  self:setFestivalLighting(false)
+ for _,child in self.LightingChildren or {} do child:Destroy() end
 	self.Folder:Destroy()
 end
 
