@@ -17,6 +17,7 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local FestivalScene = require(script.Parent.FestivalScene)
 local MedallionKit = require(script.Parent.MedallionKit)
 local SkyGardenScene = require(script.Parent.SkyGardenScene)
+local SkyGardenKit = require(script.Parent.SkyGardenKit)
 
 local BoardWorld = {}
 BoardWorld.__index = BoardWorld
@@ -83,7 +84,8 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 		if medallions then
 			-- Round medallion spaces + sloped sandy paths (MedallionKit); same Tops/Tiles API.
 			self.Tops[id] = position + Vector3.new(0, MedallionKit.TOP, 0)
-			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id)
+			local refined = board.Scene == "SkyGarden" and SkyGardenKit.isRefined(space.Area)
+			self.Tiles[id] = MedallionKit.space(folder, position, space.Type, spaceType, id, refined)
 			continue
 		end
 		self.Tops[id] = position + Vector3.new(0, TILE_HEIGHT, 0)
@@ -136,7 +138,10 @@ function BoardWorld.build(board, spaceTypes, origin: Vector3)
 	if medallions then
 		for _, id in board.Order do
 			for _, nextId in board.Spaces[id].Next do
-				MedallionKit.path(folder, self.Tops[id], self.Tops[nextId], ("Path%d_%d"):format(id, nextId))
+				-- A route between two refined areas (or inside one) gets that area's path material
+				local area = board.Spaces[id].Area
+				local refinedPath = board.Scene == "SkyGarden" and SkyGardenKit.isRefined(area) and SkyGardenKit.isRefined(board.Spaces[nextId].Area)
+				MedallionKit.path(folder, self.Tops[id], self.Tops[nextId], ("Path%d_%d"):format(id, nextId), if refinedPath then area else nil)
 			end
 		end
 	end
@@ -194,6 +199,23 @@ function BoardWorld:isMisplaced(position: Vector3, id: number): boolean
 	end
 	local flat = Vector3.new(position.X - top.X, 0, position.Z - top.Z)
 	return flat.Magnitude > TILE_SIZE or position.Y < top.Y - 2 or position.Y > top.Y + 20
+end
+
+-- Medallion boards: a gold ring over the space of whoever's turn it is (presentation only).
+function BoardWorld:setActiveSpace(id: number?)
+	if self.Board.Style ~= "Medallion" then
+		return
+	end
+	local top = id and self.Tops[id]
+	if not top then
+		if self.ActiveMarker then
+			self.ActiveMarker.Parent = nil
+		end
+		return
+	end
+	self.ActiveMarker = self.ActiveMarker or MedallionKit.highlight(self.Folder)
+	self.ActiveMarker.Parent = self.Folder
+	self.ActiveMarker:PivotTo(CFrame.new(top + Vector3.new(0, 0.12, 0)) * CFrame.Angles(0, 0, math.pi / 2))
 end
 
 function BoardWorld:setCollectible(id: number?, label: string)

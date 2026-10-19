@@ -25,9 +25,11 @@
 	come from BoardWorld (Tops), so this file can change freely without touching the rules.
 ]]
 
+local Kit = require(script.Parent.SkyGardenKit)
+
 local Scene = {}
 
-local GRASS = Color3.fromRGB(112, 208, 50) -- lime
+local GRASS = Color3.fromRGB(104, 176, 60) -- lime
 local GRASS_DARK = Color3.fromRGB(118, 210, 78)
 local ROCK = Color3.fromRGB(232, 156, 96) -- warm sandstone
 local ROCK_DARK = Color3.fromRGB(206, 124, 86)
@@ -36,9 +38,9 @@ local WOOD = Color3.fromRGB(236, 172, 92) -- honey
 local WOOD_DARK = Color3.fromRGB(184, 118, 64)
 local CREAM = Color3.fromRGB(255, 247, 228)
 local RED = Color3.fromRGB(255, 72, 84)
-local WATER = Color3.fromRGB(34, 214, 240) -- luminous turquoise
+local WATER = Color3.fromRGB(38, 150, 186) -- clear turquoise (not emissive)
 local GOLD = Color3.fromRGB(255, 200, 48)
-local CYAN = Color3.fromRGB(70, 236, 255)
+local CYAN = Color3.fromRGB(84, 208, 232)
 local LEAF = Color3.fromRGB(132, 222, 60)
 local FRUIT = Color3.fromRGB(255, 132, 30)
 local FRUITS = { Color3.fromRGB(255, 60, 70), FRUIT, Color3.fromRGB(255, 214, 40) }
@@ -48,26 +50,13 @@ local CORAL = Color3.fromRGB(255, 110, 100)
 
 -- Ground colour per zone (two shades each, alternated for variation)
 local ZONE_GRASS = {
-	Orchard = { Color3.fromRGB(112, 208, 50), Color3.fromRGB(92, 194, 54) },
-	Fair = { Color3.fromRGB(134, 206, 62), Color3.fromRGB(104, 196, 76) },
-	Village = { Color3.fromRGB(52, 196, 108), Color3.fromRGB(40, 182, 100) },
-	Stream = { Color3.fromRGB(80, 204, 84), Color3.fromRGB(64, 190, 88) },
+	Orchard = { Color3.fromRGB(112, 180, 62), Color3.fromRGB(98, 168, 60) },
+	Fair = { Color3.fromRGB(128, 182, 70), Color3.fromRGB(108, 172, 74) },
+	Village = { Color3.fromRGB(72, 170, 100), Color3.fromRGB(62, 158, 96) },
+	Stream = { Color3.fromRGB(94, 176, 78), Color3.fromRGB(82, 166, 80) },
 }
 local CLIFFS = { ROCK, ROCK_DARK, ROCK_PINK }
 
--- Materials whose textures darken a colour are drawn as flat plastic (clean toy look).
-local FLAT = {
-	[Enum.Material.Grass] = true,
-	[Enum.Material.Rock] = true,
-	[Enum.Material.Slate] = true,
-	[Enum.Material.Fabric] = true,
-	[Enum.Material.Sand] = true,
-	[Enum.Material.Sandstone] = true,
-	[Enum.Material.Brick] = true,
-	[Enum.Material.Cobblestone] = true,
-	[Enum.Material.Plaster] = true,
-	[Enum.Material.Wood] = true,
-}
 
 local function part(parent, name, size, cframe, color, material, shape)
 	local p = Instance.new("Part")
@@ -79,7 +68,7 @@ local function part(parent, name, size, cframe, color, material, shape)
 	p.Size = size
 	p.CFrame = cframe
 	p.Color = color
-	p.Material = if material and not FLAT[material] then material else Enum.Material.SmoothPlastic
+	p.Material = material or Enum.Material.SmoothPlastic
 	p.TopSurface = Enum.SurfaceType.Smooth
 	p.BottomSurface = Enum.SurfaceType.Smooth
 	if shape then
@@ -203,33 +192,69 @@ local function market(parent, at: Vector3, facing: Vector3)
 	local function place(name, size, offset, color, material, shape)
 		return part(model, name, size, cf * CFrame.new(offset), color, material, shape)
 	end
-	place("Floor", Vector3.new(14, 1, 11), Vector3.new(0, 0.5, 0), WOOD, Enum.Material.WoodPlanks)
-	place("Back", Vector3.new(14, 9, 1), Vector3.new(0, 5.5, 5), CREAM)
-	place("SideL", Vector3.new(1, 9, 10), Vector3.new(-6.5, 5.5, 0.5), CREAM)
-	place("SideR", Vector3.new(1, 9, 10), Vector3.new(6.5, 5.5, 0.5), CREAM)
-	place("BeamL", Vector3.new(1.2, 9.5, 1.2), Vector3.new(-6.5, 5.5, -4.6), RED)
-	place("BeamR", Vector3.new(1.2, 9.5, 1.2), Vector3.new(6.5, 5.5, -4.6), RED)
-	place("Roof", Vector3.new(16, 1, 13), Vector3.new(0, 10.6, 0.4), RED)
-	place("RoofTrim", Vector3.new(16.4, 0.5, 13.4), Vector3.new(0, 10, 0.4), CREAM)
-	-- Red-and-white striped awning (six stripes)
+	local timber = Color3.fromRGB(150, 98, 60)
+	local timberLight = Color3.fromRGB(182, 128, 80)
+	local plaster = Color3.fromRGB(244, 232, 210)
+	local roofRed = Color3.fromRGB(196, 58, 54)
+	local roofDark = Color3.fromRGB(156, 44, 44)
+	-- Foundation: stone plinth with two front steps
+	place("Plinth", Vector3.new(15, 1.4, 12), Vector3.new(0, 0.7, 0.3), Kit.Colors.StoneLight, Enum.Material.Cobblestone)
+	place("Step1", Vector3.new(6, 0.5, 1.4), Vector3.new(0, 0.25, -6.6), Kit.Colors.Stone, Enum.Material.Cobblestone)
+	place("Floor", Vector3.new(14, 0.4, 11), Vector3.new(0, 1.6, 0.3), timberLight, Enum.Material.WoodPlanks)
+	-- Walls: plaster panels framed by timber (posts, sill, top beam)
+	place("Back", Vector3.new(13.6, 8, 0.8), Vector3.new(0, 5.8, 5.4), plaster, Enum.Material.Plaster)
+	place("SideL", Vector3.new(0.8, 8, 10), Vector3.new(-6.6, 5.8, 0.8), plaster, Enum.Material.Plaster)
+	place("SideR", Vector3.new(0.8, 8, 10), Vector3.new(6.6, 5.8, 0.8), plaster, Enum.Material.Plaster)
+	for _, x in { -6.8, -2.3, 2.3, 6.8 } do
+		place("Post", Vector3.new(1, 8.6, 1), Vector3.new(x, 6, -4.6), timber, Enum.Material.Wood)
+		place("BackPost", Vector3.new(1, 8.6, 1), Vector3.new(x, 6, 5.6), timber, Enum.Material.Wood)
+	end
+	place("TopBeam", Vector3.new(15, 1, 1.1), Vector3.new(0, 10, -4.6), timber, Enum.Material.Wood)
+	place("SideBeamL", Vector3.new(1.1, 1, 11), Vector3.new(-6.8, 10, 0.5), timber, Enum.Material.Wood)
+	place("SideBeamR", Vector3.new(1.1, 1, 11), Vector3.new(6.8, 10, 0.5), timber, Enum.Material.Wood)
+	for _, x in { -4.5, 4.5 } do -- diagonal braces under the front beam
+		place("Brace", Vector3.new(0.5, 3, 0.5), Vector3.new(x + (if x < 0 then -1.2 else 1.2), 8.6, -4.6), timber, Enum.Material.Wood).CFrame = cf * CFrame.new(x + (if x < 0 then -1.2 else 1.2), 8.7, -4.6) * CFrame.Angles(0, 0, if x < 0 then -0.75 else 0.75)
+	end
+	-- Window in the side wall with a frame and shutters
+	place("WindowFrame", Vector3.new(0.4, 3, 3.4), Vector3.new(-7.05, 6.4, 1.5), timber, Enum.Material.Wood)
+	place("WindowGlass", Vector3.new(0.3, 2.2, 2.6), Vector3.new(-7.2, 6.4, 1.5), Color3.fromRGB(150, 196, 214), Enum.Material.Glass)
+	place("ShutterA", Vector3.new(0.3, 2.8, 1.2), Vector3.new(-7.25, 6.4, -0.3), Color3.fromRGB(94, 150, 92), Enum.Material.Wood)
+	place("ShutterB", Vector3.new(0.3, 2.8, 1.2), Vector3.new(-7.25, 6.4, 3.3), Color3.fromRGB(94, 150, 92), Enum.Material.Wood)
+	-- Roof: thick gable with three rows of overlapping shingle courses and a ridge
+	for side = -1, 1, 2 do
+		local slope = cf * CFrame.new(0, 12.2, side * 3.2 + 0.4) * CFrame.Angles(side * -0.5, 0, 0)
+		part(model, "RoofDeck", Vector3.new(16.4, 0.7, 7.6), slope, roofDark, Enum.Material.Wood)
+		for row = 0, 2 do
+			local course = slope * CFrame.new(0, 0.45, side * (-2.4 + row * 2.4))
+			part(model, "Shingles" .. row, Vector3.new(16.2, 0.35, 2.7), course * CFrame.Angles(side * 0.08, 0, 0), if row % 2 == 0 then roofRed else Color3.fromRGB(214, 74, 64), Enum.Material.Slate)
+		end
+	end
+	place("Ridge", Vector3.new(16.8, 0.9, 1.1), Vector3.new(0, 14.1, 0.4), timber, Enum.Material.Wood)
+	-- Red-and-white awning on brackets, with a scalloped front edge
 	for i = 0, 5 do
-		local stripe = place("Awning" .. i, Vector3.new(2.67, 0.4, 5), Vector3.zero, if i % 2 == 0 then RED else CREAM)
-		stripe.CFrame = cf * CFrame.new(-6.67 + i * 2.67, 8.4, -6.6) * CFrame.Angles(math.rad(-22), 0, 0)
+		local stripe = place("Awning" .. i, Vector3.new(2.67, 0.3, 4.4), Vector3.zero, if i % 2 == 0 then RED else CREAM, Enum.Material.Fabric)
+		stripe.CFrame = cf * CFrame.new(-6.67 + i * 2.67, 9.0, -6.9) * CFrame.Angles(math.rad(-24), 0, 0)
+		local scallop = place("Scallop" .. i, Vector3.new(2.2, 0.8, 0.2), Vector3.zero, if i % 2 == 0 then RED else CREAM, Enum.Material.Fabric, Enum.PartType.Wedge)
+		scallop.CFrame = cf * CFrame.new(-6.67 + i * 2.67, 7.75, -8.9) * CFrame.Angles(math.pi, 0, 0)
 	end
-	place("Counter", Vector3.new(11, 3, 2), Vector3.new(0, 2.5, -3.6), WOOD)
+	-- Counter with produce crates
+	place("Counter", Vector3.new(11, 2.6, 1.8), Vector3.new(0, 3.1, -3.7), timberLight, Enum.Material.WoodPlanks)
+	place("CounterTop", Vector3.new(11.6, 0.3, 2.3), Vector3.new(0, 4.55, -3.7), timber, Enum.Material.Wood)
 	for i, colour in FRUITS do
-		place("Crate" .. i, Vector3.new(2.6, 1.6, 2.2), Vector3.new(-4.4 + (i - 1) * 4.4, 4.8, -3.6), WOOD_DARK, Enum.Material.WoodPlanks)
-		place("Fruit" .. i, Vector3.new(2.2, 0.8, 1.8), Vector3.new(-4.4 + (i - 1) * 4.4, 5.8, -3.6), colour)
+		place("Crate" .. i, Vector3.new(2.6, 1.4, 1.9), Vector3.new(-4 + (i - 1) * 4, 5.4, -3.7), timberLight, Enum.Material.WoodPlanks)
+		place("Fruit" .. i, Vector3.new(2.2, 0.7, 1.5), Vector3.new(-4 + (i - 1) * 4, 6.3, -3.7), colour, Enum.Material.SmoothPlastic)
 	end
-	-- Giant apple on the roof: the shop reads from across the board
-	local apple = place("BigApple", Vector3.one * 5, Vector3.new(0, 13.6, 0.4), RED, nil, Enum.PartType.Ball)
-	place("AppleLeaf", Vector3.new(0.4, 1.6, 2.6), Vector3.new(0.8, 16.4, 0.4), LEAF)
-	place("AppleStem", Vector3.new(0.4, 1.4, 0.4), Vector3.new(0, 16.3, 0.4), WOOD_DARK)
-	sparkles(apple, Color3.fromRGB(255, 240, 160), 2, 0.8)
-	local s = sign(model, "ORCHARD MARKET", cf * CFrame.new(0, 11.8, -6.6), Vector3.new(11, 2.4, 0.4), GOLD)
+	-- Hanging sign on chains under the awning + the giant apple on the ridge (shop silhouette)
+	local s = sign(model, "ORCHARD MARKET", cf * CFrame.new(0, 11.2, -5.3), Vector3.new(10, 2.2, 0.4), GOLD)
 	s.Name = "MarketSign"
-	lamp(model, (cf * CFrame.new(-8.5, 0, -5.5)).Position)
-	lamp(model, (cf * CFrame.new(8.5, 0, -5.5)).Position)
+	local apple = place("BigApple", Vector3.new(4.6, 4.2, 4.6), Vector3.new(0, 16.5, 0.4), RED, nil, Enum.PartType.Ball)
+	place("AppleLeaf", Vector3.new(0.3, 1.4, 2.4), Vector3.new(0.8, 19.1, 0.4), LEAF, Enum.Material.Grass)
+	place("AppleStem", Vector3.new(0.4, 1.2, 0.4), Vector3.new(0, 18.9, 0.4), timber, Enum.Material.Wood)
+	sparkles(apple, Color3.fromRGB(255, 230, 150), 1.5, 0.7)
+	-- Barrels and baskets at the door (medium forms that frame the entrance)
+	place("Barrel", Vector3.new(2.4, 2.6, 2.4), Vector3.new(-8.6, 2.7, -5.4), timberLight, Enum.Material.Wood, Enum.PartType.Cylinder).CFrame = cf * CFrame.new(-8.6, 2.7, -5.4) * CFrame.Angles(0, 0, math.pi / 2)
+	place("BarrelApples", Vector3.new(1.9, 0.6, 1.9), Vector3.new(-8.6, 4.1, -5.4), RED, nil, Enum.PartType.Ball)
+	lamp(model, (cf * CFrame.new(8.6, 1.4, -5.6)).Position)
 	return model
 end
 
@@ -530,20 +555,38 @@ end
 local function waterwheelMill(parent, at: Vector3, wheelSide: Vector3)
 	local model = group(parent, "WaterwheelMill")
 	local cf = CFrame.lookAt(at, Vector3.new(wheelSide.X, at.Y, wheelSide.Z))
-	part(model, "Base", Vector3.new(12, 3, 10), cf * CFrame.new(0, 1.5, 0), ROCK_PINK)
-	part(model, "Walls", Vector3.new(11, 7, 9), cf * CFrame.new(0, 6.5, 0), CREAM)
+	-- Stone foundation with a plinth course, framed plaster walls, thick shingled roof
+	part(model, "Base", Vector3.new(12, 3, 10), cf * CFrame.new(0, 1.5, 0), Kit.Colors.StoneRose, Enum.Material.Cobblestone)
+	part(model, "Plinth", Vector3.new(12.6, 0.6, 10.6), cf * CFrame.new(0, 3.1, 0), Kit.Colors.StoneLight, Enum.Material.Slate)
+	part(model, "Walls", Vector3.new(11, 7, 9), cf * CFrame.new(0, 6.5, 0), Color3.fromRGB(244, 232, 210), Enum.Material.Plaster)
+	local timber = Color3.fromRGB(176, 120, 72)
 	for x = -1, 1, 2 do
-		part(model, "Timber", Vector3.new(0.8, 7, 9.2), cf * CFrame.new(x * 5.3, 6.5, 0), WOOD)
+		part(model, "Timber", Vector3.new(0.8, 7, 9.2), cf * CFrame.new(x * 5.3, 6.5, 0), timber, Enum.Material.Wood)
+		part(model, "Brace", Vector3.new(0.5, 6.4, 0.5), cf * CFrame.new(x * 2.6, 6.5, 4.6) * CFrame.Angles(0, 0, x * 0.55), timber, Enum.Material.Wood)
 	end
+	part(model, "Beam", Vector3.new(11.6, 0.7, 9.4), cf * CFrame.new(0, 10, 0), timber, Enum.Material.Wood)
+	local roofBlue = Color3.fromRGB(58, 112, 186)
 	for side = -1, 1, 2 do
-		part(model, "Roof", Vector3.new(12.5, 4.5, 5.2), cf * CFrame.new(0, 12.2, side * 2.4) * CFrame.Angles(0, if side < 0 then 0 else math.pi, 0), ROOF_BLUE, nil, Enum.PartType.Wedge)
+		local slope = cf * CFrame.new(0, 12.1, side * 2.5) * CFrame.Angles(side * -0.62, 0, 0)
+		part(model, "RoofDeck", Vector3.new(13, 0.7, 6.2), slope, Color3.fromRGB(44, 82, 140), Enum.Material.Wood)
+		for row = 0, 2 do
+			part(model, "Shingles" .. row, Vector3.new(12.8, 0.3, 2.2), slope * CFrame.new(0, 0.42, side * (-1.9 + row * 1.9)) * CFrame.Angles(side * 0.08, 0, 0), if row % 2 == 0 then roofBlue else Color3.fromRGB(72, 128, 200), Enum.Material.Slate)
+		end
 	end
-	part(model, "Chimney", Vector3.new(1.6, 5, 1.6), cf * CFrame.new(-3.5, 13, 1.5), ROCK_PINK)
+	part(model, "Ridge", Vector3.new(13.4, 0.8, 1), cf * CFrame.new(0, 14.2, 0), timber, Enum.Material.Wood)
+	part(model, "Chimney", Vector3.new(1.6, 5, 1.6), cf * CFrame.new(-3.5, 13, 1.5), Kit.Colors.StoneRose, Enum.Material.Brick)
+	part(model, "ChimneyCap", Vector3.new(2.1, 0.4, 2.1), cf * CFrame.new(-3.5, 15.6, 1.5), Kit.Colors.StoneLight, Enum.Material.Slate)
 	for x = -1, 1, 2 do
-		local win = part(model, "Window", Vector3.new(1.6, 1.8, 0.3), cf * CFrame.new(x * 3, 7, 4.6), Color3.fromRGB(255, 226, 130), Enum.Material.Neon)
+		part(model, "WindowFrame", Vector3.new(2.2, 2.4, 0.3), cf * CFrame.new(x * 3, 7, 4.62), timber, Enum.Material.Wood)
+		local win = part(model, "Window", Vector3.new(1.6, 1.8, 0.3), cf * CFrame.new(x * 3, 7, 4.72), Color3.fromRGB(255, 220, 140), Enum.Material.Neon)
 		win.CastShadow = false
-		part(model, "Box", Vector3.new(2.2, 0.6, 0.7), cf * CFrame.new(x * 3, 5.8, 4.9), if x < 0 then CORAL else Color3.fromRGB(255, 220, 60))
+		part(model, "Box", Vector3.new(2.2, 0.6, 0.7), cf * CFrame.new(x * 3, 5.6, 4.95), Color3.fromRGB(150, 98, 60), Enum.Material.Wood)
+		for f = -1, 1 do
+			part(model, "Bloom", Vector3.new(0.6, 0.4, 0.5), cf * CFrame.new(x * 3 + f * 0.65, 6.05, 4.95), if (f + x) % 2 == 0 then CORAL else Color3.fromRGB(250, 214, 70)).CastShadow = false
+		end
 	end
+	part(model, "DoorFrame", Vector3.new(2.8, 3.8, 0.3), cf * CFrame.new(0, 5, -4.62), timber, Enum.Material.Wood)
+	part(model, "Door", Vector3.new(2, 3.2, 0.3), cf * CFrame.new(0, 4.8, -4.72), Color3.fromRGB(120, 78, 48), Enum.Material.WoodPlanks)
 	-- Wheel on the stream side (front = -Z of cf, toward wheelSide); turns on the client
 	local hub = cf * CFrame.new(0, 5, -6.2)
 	local wheel = group(model, "Wheel")
@@ -607,7 +650,9 @@ local function sundialPavilion(parent, at: Vector3)
 	local model = group(parent, "SundialPavilion")
 	column(model, "Base", 30, at.Y - 2, at.Y + 1, at, STONE, Enum.Material.Marble)
 	column(model, "BaseTrim", 30.6, at.Y + 0.6, at.Y + 1.2, at, CYAN)
-	column(model, "Dais", 22, at.Y + 1, at.Y + 3.4, at, Color3.fromRGB(255, 252, 244), Enum.Material.Marble)
+	column(model, "Dais", 22, at.Y + 1, at.Y + 3.4, at, Color3.fromRGB(240, 232, 216), Enum.Material.Marble)
+	column(model, "DaisStep", 25, at.Y + 1, at.Y + 2.2, at, Kit.Colors.StoneLight, Enum.Material.Slate)
+	column(model, "Mosaic", 18.4, at.Y + 3.35, at.Y + 3.5, at, Color3.fromRGB(70, 150, 190), Enum.Material.Slate)
 	local face = column(model, "Face", 16, at.Y + 3.4, at.Y + 4.2, at, GOLD, Enum.Material.Metal)
 	column(model, "FaceInner", 10, at.Y + 4.2, at.Y + 4.4, at, Color3.fromRGB(255, 232, 120))
 	for i = 0, 11 do
@@ -730,11 +775,12 @@ end
 
 local function waterfall(parent, top: Vector3, width: number, drop: number, facing: Vector3)
 	local cf = CFrame.lookAt(top, top + facing)
-	local fall = part(parent, "Waterfall", Vector3.new(width, drop, 1.2), cf * CFrame.new(0, -drop / 2, -0.8), Color3.fromRGB(120, 230, 255), Enum.Material.Glass)
-	fall.Transparency = 0.1
+	local fall = part(parent, "Waterfall", Vector3.new(width, drop, 1.2), cf * CFrame.new(0, -drop / 2, -0.8), Color3.fromRGB(110, 196, 222), Enum.Material.Glass)
+	fall.Transparency = 0.2
 	fall.CastShadow = false
 	local foam = part(parent, "Foam", Vector3.new(width + 1, 1, 2), cf * CFrame.new(0, 0, -0.6), Color3.fromRGB(240, 252, 255))
 	foam.CastShadow = false
+	Kit.flow(fall, width, drop) -- streaks scrolling down the sheet
 	local mist = Instance.new("ParticleEmitter")
 	mist.Rate = 5
 	mist.Lifetime = NumberRange.new(1.5, 2.5)
@@ -769,16 +815,16 @@ function Scene.build(world)
 	-- Warm high sun, bright warm fill (no crushed shadows), soft shadows; colours come from the
 	-- materials, so the grade stays mild.
 	world.LightingPreset = {
-		ClockTime = 13.4,
-		Brightness = 2.1,
-		Ambient = Color3.fromRGB(118, 112, 124),
-		OutdoorAmbient = Color3.fromRGB(138, 138, 150),
-		ColorShift_Top = Color3.fromRGB(255, 238, 205),
-		ColorShift_Bottom = Color3.fromRGB(150, 210, 255),
-		EnvironmentDiffuseScale = 0.25,
-		EnvironmentSpecularScale = 0.2,
-		ExposureCompensation = -0.1,
-		ShadowSoftness = 0.35,
+		ClockTime = 14.6, -- sun a little lower than noon: longer, readable shadows
+		Brightness = 2.4,
+		Ambient = Color3.fromRGB(96, 92, 108),
+		OutdoorAmbient = Color3.fromRGB(116, 118, 132),
+		ColorShift_Top = Color3.fromRGB(255, 232, 196),
+		ColorShift_Bottom = Color3.fromRGB(120, 170, 220),
+		EnvironmentDiffuseScale = 0.3,
+		EnvironmentSpecularScale = 0.25,
+		ExposureCompensation = -0.2,
+		ShadowSoftness = 0.2,
 	}
 	-- Rich cyan-blue sky, gentle depth, no grey haze
 	local atmosphere = Instance.new("Atmosphere")
@@ -791,18 +837,18 @@ function Scene.build(world)
 	atmosphere.Haze = 0.2
 	local grade = Instance.new("ColorCorrectionEffect")
 	grade.Name = "SkyGardenGrade"
-	grade.Saturation = 0.12
-	grade.Contrast = 0.08
+	grade.Saturation = 0.04
+	grade.Contrast = 0.1
 	grade.Brightness = 0.02
 	grade.TintColor = Color3.fromRGB(255, 251, 244)
 	local bloom = Instance.new("BloomEffect")
 	bloom.Name = "SkyGardenBloom"
-	bloom.Intensity = 0.25
-	bloom.Size = 16
-	bloom.Threshold = 2
+	bloom.Intensity = 0.15
+	bloom.Size = 14
+	bloom.Threshold = 2.4
 	local rays = Instance.new("SunRaysEffect")
 	rays.Name = "SkyGardenSunRays"
-	rays.Intensity = 0.04
+	rays.Intensity = 0.02
 	rays.Spread = 0.6
 	world.LightingChildren = { atmosphere, grade, bloom, rays }
 
@@ -822,7 +868,7 @@ function Scene.build(world)
 	for _, s in spaces do
 		for _, n in board.Spaces[s.Id].Next do
 			local t = byId[n]
-			table.insert(segments, { A = flat(s.Pos), B = flat(t.Pos), HA = s.H, HB = t.H, Bridge = s.Bridge or t.Bridge })
+			table.insert(segments, { A = flat(s.Pos), B = flat(t.Pos), HA = s.H, HB = t.H, Bridge = s.Bridge or t.Bridge, Refined = Kit.isRefined(s.Area) and Kit.isRefined(t.Area) })
 		end
 	end
 	local function pathDistance(p: Vector2, includeBridge: boolean?): (number, any)
@@ -977,10 +1023,19 @@ function Scene.build(world)
 			local zone = nearestSpace(p)
 			local shades = ZONE_GRASS[zone and zone.Area or "Stream"] or ZONE_GRASS.Stream
 			-- Water bed is pale sand, so the transparent water reads luminous turquoise
-			local g = column(island, "Ground", STEP + 3.5, top - 1, top, centre, if wet then Color3.fromRGB(255, 232, 176) else shades[(ix + iz) % 2 + 1])
+			local refined = Kit.isRefined(zone and zone.Area)
+			local g = column(island, "Ground", STEP + 3.5, top - 1, top, centre, if wet then Color3.fromRGB(150, 196, 190) else shades[(ix + iz) % 2 + 1], if wet then Enum.Material.Sand else Enum.Material.Grass)
 			g.CastShadow = false
 			local bottom = if edge then islandY - rng:NextNumber(14, 26) else islandY - 7
-			column(island, "Cliff", STEP + (if edge then 2.5 else 3), bottom, top - 1, centre, CLIFFS[(ix * 7 + iz * 3) % 3 + 1])
+			if edge and refined then
+				-- layered cliff: banded strata with a mossy ledge, then a faceted hanging rock
+				Kit.strata(island, centre, STEP + 2.5, bottom, top - 1, rng)
+				local lip = column(island, "Lip", STEP + 4.2, top - 1.4, top - 0.5, centre, shades[1]:Lerp(Color3.fromRGB(70, 140, 60), 0.3), Enum.Material.Grass)
+				lip.CastShadow = false
+				Kit.part(island, "Hang", Vector3.new(STEP * 0.75, rng:NextNumber(8, 18), STEP * 0.75), CFrame.new(centre.X, bottom - 6, centre.Z) * CFrame.Angles(0, rng:NextNumber(0, 6.28), rng:NextNumber(-0.2, 0.2)), CLIFFS[rng:NextInteger(1, 3)], Enum.Material.Slate, Enum.PartType.Wedge)
+				continue
+			end
+			column(island, "Cliff", STEP + (if edge then 2.5 else 3), bottom, top - 1, centre, CLIFFS[(ix * 7 + iz * 3) % 3 + 1], if refined then Enum.Material.Slate else nil)
 			if edge then
 				-- grass lip over the cliff edge, then a hanging rock under the rim
 				local lip = column(island, "Lip", STEP + 4.2, top - 1.6, top - 0.6, centre, shades[1]:Lerp(Color3.fromRGB(60, 190, 80), 0.25))
@@ -1014,8 +1069,13 @@ function Scene.build(world)
 	-- Water ---------------------------------------------------------------------------------------
 	local water = group(scene, "Water")
 	local poolPart = column(water, "Pool", poolR * 2 + 2, islandY - 1.2, islandY - 0.25, pool, WATER, Enum.Material.Glass)
-	poolPart.Transparency = 0.2
+	poolPart.Transparency = 0.32
+	poolPart.Reflectance = 0.08
 	poolPart.CastShadow = false
+	-- Depth: a darker deep bowl under the middle, a lighter shelf near the shore, broken foam
+	column(water, "Deep", poolR * 1.3, islandY - 1.9, islandY - 1.35, pool, Color3.fromRGB(22, 104, 146), Enum.Material.Sand).CastShadow = false
+	column(water, "Shelf", poolR * 2 - 6, islandY - 1.7, islandY - 1.45, pool, Color3.fromRGB(96, 180, 186), Enum.Material.Sand).CastShadow = false
+	Kit.shoreFoam(water, pool, poolR - 0.5, islandY - 0.2, rng)
 	for _, c in channels do
 		local a, b = Vector3.new(c[1].X, islandY - 0.3, c[1].Y), Vector3.new(c[2].X, islandY - 0.3, c[2].Y)
 		local w = part(water, "Channel", Vector3.new(11, 0.9, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), WATER, Enum.Material.Glass)
@@ -1035,6 +1095,15 @@ function Scene.build(world)
 		local brook = part(water, "Brook", Vector3.new(5, 0.5, 10), CFrame.lookAt(Vector3.new(p.X, islandY + 0.05, p.Z) + out * 5, Vector3.new(p.X, islandY + 0.05, p.Z) + out * 10), WATER, Enum.Material.Glass)
 		brook.Transparency = 0.2
 		brook.CastShadow = false
+		local nearest = nearestSpace(flat(p))
+		if Kit.isRefined(nearest and nearest.Area) then
+			-- refined spring: stone rim, reeds and a rock cluster on the bank
+			Kit.shoreFoam(water, p, 4.3, islandY + 0.2, rng)
+			local side = Vector3.new(-out.Z, 0, out.X)
+			Kit.reeds(water, Vector3.new(p.X, islandY, p.Z) + side * 5.4, rng)
+			Kit.reeds(water, Vector3.new(p.X, islandY, p.Z) - side * 5.2 - out * 1.5, rng)
+			Kit.rockCluster(water, Vector3.new(p.X, islandY, p.Z) - out * 5.6, rng, 0.9)
+		end
 	end
 
 	-- Lily pads and stepping rocks in the pool
@@ -1100,6 +1169,12 @@ function Scene.build(world)
 	local dressing = group(scene, "PathDressing")
 	local islandCentre = flat(pool)
 	for i, g in segments do
+		if g.Refined and not g.Bridge and math.abs(g.HA - g.HB) < 1.5 then
+			-- refined path: kerbs, seams, and an engraved sun on every third run
+			local dir = (g.B - g.A).Unit
+			local a2, b2 = g.A + dir * 4.85, g.B - dir * 4.85
+			Kit.pathEdge(dressing, Vector3.new(a2.X, g.HA + 1.1, a2.Y), Vector3.new(b2.X, g.HB + 1.1, b2.Y), 4.5, i % 3 == 0)
+		end
 		if g.Bridge or math.abs(g.HA - g.HB) > 0.5 then
 			continue
 		end
@@ -1151,6 +1226,32 @@ function Scene.build(world)
 			local grove = math.noise(p.X / 34, p.Y / 34, 0.37) > -0.05
 			local front = inFrontOfPath(p)
 			local low = front or isReserved(p, 9) or not grove
+			if Kit.isRefined(area) then
+				-- Refined kit, composed: groves of 2-4 designed trees, a few deliberate flower beds,
+				-- rock clusters, and empty meadow as resting space. Denser next to landmarks.
+				local nearLandmark = isReserved(p, 16)
+				local variant = if area == "Fair" then "Fair" elseif area == "Village" or area == "Stream" then "Riverside" else "Orchard"
+				if low then
+					if roll < (if nearLandmark then 0.3 else 0.14) then
+						Kit.flowerBed(life, pos, rng, flowers, if rng:NextNumber() < 0.5 then "Long" else "Round")
+					elseif roll < 0.24 then
+						Kit.bush(life, pos, rng)
+					elseif roll < 0.3 and not front then
+						Kit.rockCluster(life, pos, rng, 0.8)
+					elseif area == "Orchard" and roll < 0.34 and not front then
+						crate(life, pos, rng)
+					end -- else: open meadow
+				elseif roll < 0.55 then
+					Kit.tree(life, pos, variant, rng, rng:NextNumber(0.85, 1.15))
+				elseif roll < 0.62 then
+					Kit.bush(life, pos, rng)
+				elseif roll < 0.6 then
+					Kit.rockCluster(life, pos, rng)
+				elseif roll < 0.68 and area == "Orchard" then
+					crate(life, pos, rng)
+				end
+				continue
+			end
 			if low then
 				if roll < 0.45 then
 					flowerBed(life, pos, rng, flowers)

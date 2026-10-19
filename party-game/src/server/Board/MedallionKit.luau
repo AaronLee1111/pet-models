@@ -77,20 +77,65 @@ local function decor(p)
 	return p
 end
 
-function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number)
+-- Path materials per zone: one construction language, different stone/wood per area.
+local ZONE_PATH = {
+	Orchard = { Color = Color3.fromRGB(232, 206, 158), Material = Enum.Material.Cobblestone },
+	Village = { Color = Color3.fromRGB(214, 170, 112), Material = Enum.Material.WoodPlanks },
+	Fair = { Color = Color3.fromRGB(232, 196, 178), Material = Enum.Material.Pavement },
+	Stream = { Color = Color3.fromRGB(226, 214, 184), Material = Enum.Material.Slate },
+}
+MedallionKit.ZonePath = ZONE_PATH
+
+--[[
+	Refined medallion (refined areas): warm sandstone base that belongs to the path, a layered
+	rim (dark gold band + cream bevel), an inset field in the type colour, a lighter secondary
+	symbol in the type's shape (colour-blind cue), and the glyph on top. Same footprint, same
+	walkable top and collision as the plain one.
+]]
+local SAND = Color3.fromRGB(226, 196, 150)
+local BEVEL = Color3.fromRGB(246, 230, 196)
+local GOLD_BAND = Color3.fromRGB(196, 146, 56)
+
+local function refinedSpace(model, position: Vector3, look, colour: Color3)
+	local d = MedallionKit.DIAMETER
+	decor(disc(model, "RimBand", d + 0.9, 0.75, position + Vector3.new(0, 0.38, 0), GOLD_BAND, Enum.Material.Metal))
+	decor(disc(model, "RimFoot", d + 1.5, 0.35, position + Vector3.new(0, 0.12, 0), Color3.fromRGB(176, 138, 96), Enum.Material.Cobblestone))
+	decor(disc(model, "Bevel", d - 0.2, 0.16, position + Vector3.new(0, 1.04, 0), BEVEL, Enum.Material.Marble))
+	decor(disc(model, "Recess", 8.2, 0.08, position + Vector3.new(0, 1.12, 0), colour:Lerp(Color3.new(0, 0, 0), 0.35), Enum.Material.SmoothPlastic))
+	decor(disc(model, "Field", 7.5, 0.1, position + Vector3.new(0, 1.15, 0), colour, Enum.Material.SmoothPlastic))
+	local symbol = colour:Lerp(Color3.new(1, 1, 1), 0.38)
+	local y = position + Vector3.new(0, 1.21, 0)
+	if look.Shape == "Diamond" then
+		decor(part({ Name = "Symbol", Size = Vector3.new(4.4, 0.05, 4.4), CFrame = CFrame.new(y) * CFrame.Angles(0, math.rad(45), 0), Color = symbol, Parent = model }))
+	elseif look.Shape == "Square" then
+		decor(part({ Name = "Symbol", Size = Vector3.new(4.8, 0.05, 4.8), CFrame = CFrame.new(y), Color = symbol, Parent = model }))
+	elseif look.Shape == "Ring" then
+		decor(disc(model, "Symbol", 6.2, 0.05, y, symbol))
+		decor(disc(model, "SymbolHole", 4.6, 0.06, y + Vector3.new(0, 0.01, 0), colour))
+	elseif look.Shape == "Circle" then
+		decor(disc(model, "Symbol", 5, 0.05, y, symbol))
+	else -- Dot (neutral)
+		decor(disc(model, "Symbol", 2.6, 0.05, y, BEVEL))
+	end
+end
+
+function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string, spaceType, id: number, refined: boolean?)
 	local look = LOOK[typeKey] or LOOK.Neutral
 	local model = Instance.new("Model")
 	model.Name = "Space" .. id
 	local d = MedallionKit.DIAMETER
 	-- Base (walkable; the only collidable piece) + gold rim
-	local base = disc(model, "Base", d, 1.0, position + Vector3.new(0, 0.5, 0), CERAMIC, Enum.Material.SmoothPlastic)
+	local base = disc(model, "Base", d, 1.0, position + Vector3.new(0, 0.5, 0), if refined then SAND else CERAMIC, if refined then Enum.Material.Sandstone else Enum.Material.SmoothPlastic)
 	base:SetAttribute("SpaceId", id)
 	base:SetAttribute("SpaceType", typeKey)
+	local colour = look.Color or spaceType.Color
+	local inlayY = position + Vector3.new(0, 1.05, 0)
+	if refined then
+		refinedSpace(model, position, look, colour)
+	else
 	decor(disc(model, "Rim", d + 0.8, 0.7, position + Vector3.new(0, 0.35, 0), RIM, Enum.Material.SmoothPlastic))
 
 	-- Inlay shape in the type colour, just proud of the base top
-	local inlayY = position + Vector3.new(0, 1.05, 0)
-	local colour = look.Color or spaceType.Color
 	if look.Shape == "Circle" then
 		decor(disc(model, "Inlay", 7.4, 0.2, inlayY, colour))
 	elseif look.Shape == "Dot" then
@@ -115,6 +160,7 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 			Parent = model,
 		}))
 	end
+	end
 
 	-- Icon / glyph, readable from the turn camera and the MAP
 	if look.Glyph ~= "" then
@@ -122,7 +168,7 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 			Name = "Icon",
 			Size = Vector3.new(6, 0.05, 6),
 			-- Turned so the glyph reads upright from the board camera (which looks north).
-			CFrame = CFrame.new(position + Vector3.new(0, 1.2, 0)) * CFrame.Angles(0, math.rad(-90), 0),
+			CFrame = CFrame.new(position + Vector3.new(0, if refined then 1.25 else 1.2, 0)) * CFrame.Angles(0, math.rad(-90), 0),
 			Transparency = 1,
 			Parent = model,
 		}))
@@ -154,7 +200,7 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 end
 
 -- Path segment from one medallion's edge to the next, sloping with the height change.
-function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, name: string)
+function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, name: string, area: string?)
 	local flat = Vector3.new(toTop.X - fromTop.X, 0, toTop.Z - fromTop.Z)
 	local direction = flat.Unit
 	local radius = MedallionKit.DIAMETER / 2 - 0.4
@@ -168,12 +214,12 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		Name = name,
 		Size = Vector3.new(MedallionKit.PATH_WIDTH, 0.5, length),
 		CFrame = CFrame.lookAt((a + b) / 2, b),
-		Color = PATH,
-		Material = Enum.Material.SmoothPlastic,
+		Color = if area and ZONE_PATH[area] then ZONE_PATH[area].Color else PATH,
+		Material = if area and ZONE_PATH[area] then ZONE_PATH[area].Material else Enum.Material.SmoothPlastic,
 		Parent = parent,
 	})
 	-- A warm edging strip under the path so it separates cleanly from the grass
-	if math.abs(b.Y - a.Y) < 1.5 then
+	if math.abs(b.Y - a.Y) < 1.5 and not area then
 		local edge = part({
 			Name = name .. "_Edge",
 			Size = Vector3.new(MedallionKit.PATH_WIDTH + 1.2, 0.4, length),
@@ -206,8 +252,8 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 				Name = name .. "_Step" .. i,
 				Size = Vector3.new(MedallionKit.PATH_WIDTH, height, depth + 0.05),
 				CFrame = CFrame.lookAt(Vector3.new(centre.X, low + height / 2, centre.Z), Vector3.new(b.X, low + height / 2, b.Z)),
-				Color = if i % 2 == 0 then STEP_COLOUR else PATH,
-				Material = Enum.Material.SmoothPlastic,
+				Color = if area then (if i % 2 == 0 then Color3.fromRGB(214, 186, 140) else Color3.fromRGB(230, 206, 164)) elseif i % 2 == 0 then STEP_COLOUR else PATH,
+				Material = if area then Enum.Material.Cobblestone else Enum.Material.SmoothPlastic,
 				Parent = parent,
 			})
 			step.CanQuery = false
@@ -215,6 +261,20 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		end
 	end
 	return slope
+end
+
+-- Active-space marker: a soft gold ring hovering just above a medallion, separate from the
+-- medallion's own material (moved by BoardWorld:setActiveSpace).
+function MedallionKit.highlight(parent: Instance)
+	local model = Instance.new("Model")
+	model.Name = "ActiveSpace"
+	local ring = decor(disc(model, "Ring", MedallionKit.DIAMETER + 1.6, 0.25, Vector3.zero, Color3.fromRGB(255, 214, 120), Enum.Material.Neon))
+	ring.Transparency = 0.6
+	local hole = decor(disc(model, "Hole", MedallionKit.DIAMETER + 0.4, 0.3, Vector3.zero, Color3.new(1, 1, 1)))
+	hole.Transparency = 1
+	model.PrimaryPart = ring
+	model.Parent = parent
+	return model
 end
 
 return MedallionKit

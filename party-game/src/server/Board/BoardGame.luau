@@ -184,6 +184,7 @@ local function publish()
 	current.World:setBridgeState(match:bridgeState())
 	current.World:setTraps(match.Traps)
 	current.World:setGates(match.Board.Gates, match.GateOpen)
+	current.World:setActiveSpace(current.Turn and current.Turn.SpaceId)
 	current.StateMessage = stateMessage()
 	MinigameManager.broadcast(current.StateMessage)
 end

@@ -13,6 +13,9 @@
         "PartyClient": { "$path": "src/client" }
       }
     },
+    "Lighting": {
+      "$properties": { "Technology": "ShadowMap", "GlobalShadows": true }
+    },
     "Workspace": {
       "$properties": { "FilteringEnabled": true },
       "PartyLobby": {
