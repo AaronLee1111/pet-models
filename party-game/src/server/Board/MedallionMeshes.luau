@@ -1,8 +1,6 @@
 -- Blender-authored geometry; imported templates share the same mesh content IDs.
 local Kit = {}
 local templates = script.Parent:WaitForChild("MedallionAssets")
-local content = game:GetService("ContentProvider")
-local ready = {}
 local slice = { [5] = true, [6] = true, [7] = true, [8] = true, [30] = true }
 Kit.Mode = "Slice"
 function Kit.enabled(id)
@@ -11,17 +9,8 @@ end
 local function template(kind)
 	local name = "SunnyLoop_Space_" .. kind .. "_v1"
 	local mesh = templates:FindFirstChild(name)
-	if not mesh or not mesh:IsA("MeshPart") then return nil end
-	if ready[name] == nil then
-		local loaded = true
-		local ok = pcall(function()
-			content:PreloadAsync({ mesh }, function(_, status)
-				if status ~= Enum.AssetFetchStatus.Success then loaded = false end
-			end)
-		end)
-		ready[name] = ok and loaded
-	end
-	return if ready[name] then mesh else nil
+	-- No ContentProvider:PreloadAsync here: on a running server it never returns, which froze the match start.
+	return if mesh and mesh:IsA("MeshPart") then mesh else nil
 end
 function Kit.build(parent, position, typeKey, shape, colour)
 	local symbolKey = if typeKey == "Gift" then "Reward" else typeKey

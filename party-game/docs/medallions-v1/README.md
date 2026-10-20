@@ -29,7 +29,7 @@ Ring symbols are recessed by 0.34 studs into the exposed bed area. Other symbols
 
 ## Integration
 
-`MedallionMeshes.Mode = "Slice"` gates IDs 5 (fork), 6 (Gain), 7 (Shop), 8 (Lose), 30 (Event). Other spaces remain available for comparison. The call site explicitly requires board.Name `SunnyLoopV2`; other boards retain their previous presentation. `Gift` aliases `Reward`. Numeric values remain native text. Existing active/destination/route presentation code is retained. Assets preload before hiding the existing collider's visual; absent/failed templates return to existing visuals without a partial mesh assembly. Each clone reuses its variant's content ID.
+`MedallionMeshes.Mode = "Slice"` gates IDs 5 (fork), 6 (Gain), 7 (Shop), 8 (Lose), 30 (Event). Other spaces remain available for comparison. The call site explicitly requires board.Name `SunnyLoopV2`; other boards retain their previous presentation. `Gift` aliases `Reward`. Numeric values remain native text. Existing active/destination/route presentation code is retained. No server-side preload (PreloadAsync never returns on a running server and froze match start); absent templates return to existing visuals without a partial mesh assembly. Each clone reuses its variant's content ID.
 
 ## Validation evidence
 
