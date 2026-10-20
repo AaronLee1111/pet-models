@@ -1774,11 +1774,9 @@ local function takeTurn(seat)
 		then ("%s rolled %s = %d"):format(seat.Participant.Name, table.concat(dice, " + "), roll)
 		else ("%s rolled a %d"):format(seat.Participant.Name, roll)
 	publish()
-	-- Thrown-dice boards give the die time to fly and land before the first hop; bots get the
-	-- short version. Other boards keep the old beat.
-	task.wait(if match.Board.Presentation == "Diorama"
-		then (if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
-		else 0.8)
+	-- Every board throws a physical die: give it time to fly and land before the first hop;
+	-- bots get the short version.
+	task.wait(if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
 
 	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
 		current.Remaining = remaining
@@ -17090,7 +17088,7 @@ spectatorBar = SpectatorBar.new(screen, function(direction)
 	spectatorBar:show(CameraController.getTargetName())
 end)
 Controls.setActionBar(ActionBar.new(screen))
-local boardView = BoardView.new(screen, sendInput)
+local boardView = BoardView.new(screen, sendInput, player:WaitForChild("PlayerGui"))
 local lobbyPanel = LobbyPanel.new(screen, sendInput)
 local shopScreen = ShopScreen.new(screen, sendInput)
 lobbyPanel.OnShop = function()
@@ -17125,24 +17123,14 @@ local HUD_STRIPS = {
 	"ProgressBar",
 	"SpectatorBar",
 	"Lobby",
-	"BoardHeader",
-	"BoardStandings",
-	"BoardRoll",
-	"BoardPrompt",
-	"BoardItems",
-	"BoardMap",
-	"BoardMapPanel",
+	"BoardPrompt", -- the other board panels are placed by BoardView:layout()
 	"WaitingRoom",
 	"CosmeticShop",
 }
 local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
-local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75, BoardMap = 0.85, BoardMapPanel = 0.75 }
+local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75 }
 local hudBasePositions = {}
--- Board strips pinned to the top edge: however small the phone scale makes their offset, they
--- stay below Roblox's top bar (PartyUI ignores the inset, so the bar is part of our space).
-local CLEAR_TOP_BAR = { BoardHeader = true, BoardStandings = true, BoardMapPanel = true }
-local TOP_BAR_GAP = 6
 
 local function fitHudToScreen()
 	local camera = workspace.CurrentCamera
@@ -17159,11 +17147,7 @@ local function fitHudToScreen()
 			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
 			uiScale.Scale = scale
 			strip:SetAttribute("HudScale", scale) -- Theme.pop animates back to this, not to 1
-			local y = base.Y.Offset * scale
-			if CLEAR_TOP_BAR[name] and base.Y.Scale == 0 then
-				y = math.max(y, GuiService:GetGuiInset().Y + TOP_BAR_GAP)
-			end
-			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, y)
+			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
 		end
 	end
 end
@@ -18494,7 +18478,7 @@ function Onboarding.decide(context)
 				Target = { Kind = "Roll" },
 				Title = pressText(mode, "SPACE", "A"),
 				Note = "Roll to decide turn order.",
-				Sides = { "Left", "Above" },
+				Sides = { "Right", "Below" },
 			}
 		end
 		if board.Roll then
@@ -18507,7 +18491,7 @@ function Onboarding.decide(context)
 					Target = { Kind = "Item", Slot = 1 },
 					Title = InputHint.verb(mode) .. " HERE TO USE IT",
 					Note = ("%s: %s. %s"):format(item.Name or "Item", string.gsub(item.Description or "", "%.$", ""), orRoll(mode)),
-					Sides = { "Left", "Above" },
+					Sides = { "Right", "Below" },
 				}
 			end
 			if not done(context, "RolledBoardTurn") then
@@ -18517,7 +18501,7 @@ function Onboarding.decide(context)
 					Target = { Kind = "Roll" },
 					Title = pressText(mode, "SPACE", "A"),
 					Note = "Roll to move.",
-					Sides = { "Left", "Above" },
+					Sides = { "Right", "Below" },
 				}
 			end
 		end
@@ -18596,7 +18580,7 @@ function Onboarding:noteInput(payload)
 			self.LocalDone.RolledForOrder = true
 		else
 			self.LocalDone.RolledBoardTurn = true
-			if self.Deps.Board.ItemBar.Visible then
+			if self.Deps.Board.ItemsOffered then
 				self.LocalDone.SawItem = true -- rolled without using the item
 			end
 		end
@@ -18654,7 +18638,7 @@ function Onboarding:context()
 		context.Board = {
 			OrderRoll = board.RollButton.Visible and state.Stage == "OrderRoll",
 			Roll = board.RollButton.Visible and state.Stage == "Roll",
-			Items = if board.ItemBar.Visible and seat then seat.Items else {},
+			Items = if board.ItemsOffered and seat then seat.Items else {},
 			Coins = seat and seat.Coins,
 			Prompt = if prompt
 				then { Kind = prompt.Kind, Price = prompt.Price, Routes = prompt.Routes, Count = #(prompt.Options or {}) }
@@ -18691,10 +18675,11 @@ function Onboarding:resolve(target): GuiObject?
 		return deps.Board.RollButton
 	elseif target.Kind == "Item" then
 		for _, child in deps.Board.ItemBar:GetChildren() do
-			if child:IsA("GuiButton") and child.LayoutOrder == target.Slot then
+			if child:IsA("GuiButton") and child.LayoutOrder == target.Slot and deps.Board.ItemBar.Visible then
 				return child
 			end
 		end
+		return deps.Board.ItemsButton -- item list closed: point at ITEMS first
 	elseif target.Kind == "Option" then
 		for _, child in deps.Board.PromptButtons:GetChildren() do
 			if child:IsA("GuiButton") and child.LayoutOrder == target.Index then
@@ -19078,10 +19063,143 @@ return ActionBar
           </Item>
           <Item class="ModuleScript" referent="95">
             <Properties>
+              <string name="Name">ActivePlayerPortrait</string>
+              <string name="Source"><![CDATA[--[[
+	ActivePlayerPortrait
+	The active participant's real avatar (clothes, body colours, accessories) in a ViewportFrame,
+	lower-left, facing inward toward the board. Big during the turn-start banner, normal while
+	they choose, gone while they move.
+
+	  local portrait = ActivePlayerPortrait.new(screen)
+	  portrait:show(character, "Big" | "Normal")
+	  portrait:hide()
+	  portrait.Root                        position it from BoardView:layout()
+
+	  ActivePlayerPortrait.mount(viewport, character, framing) -> Model?
+	      copies a character into any ViewportFrame ("Head" for standings chips, "Body" here)
+]]
+
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local ActivePlayerPortrait = {}
+ActivePlayerPortrait.__index = ActivePlayerPortrait
+
+ActivePlayerPortrait.NORMAL = Vector2.new(230, 290) -- design px (BoardView scales them)
+ActivePlayerPortrait.BIG = Vector2.new(360, 450)
+local TURN_IN = math.rad(28) -- yaw so the avatar faces right, toward the menu and board
+
+-- Copies `character` into `viewport` (a fresh WorldModel, so layered clothing and accessories
+-- render) and aims a camera at it. Returns the copy, or nil when there's nothing to copy yet.
+function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, framing: string): Model?
+	for _, child in viewport:GetChildren() do
+		if child:IsA("WorldModel") or child:IsA("Camera") then -- keep the frame's UIScale / corner
+			child:Destroy()
+		end
+	end
+	if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") then
+		return nil
+	end
+	local archivable = character.Archivable
+	character.Archivable = true
+	local ok, copy = pcall(character.Clone, character)
+	character.Archivable = archivable
+	if not ok or not copy then
+		return nil
+	end
+	for _, d in copy:GetDescendants() do
+		if d:IsA("LuaSourceContainer") or d:IsA("Sound") or d:IsA("BillboardGui") or d:IsA("ForceField") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.Anchored = true
+		end
+	end
+	local humanoid = copy:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+	copy:PivotTo(CFrame.Angles(0, TURN_IN, 0))
+	local world = make("WorldModel", { Parent = viewport })
+	copy.Parent = world
+	local camera = make("Camera", { FieldOfView = 30, Parent = viewport })
+	viewport.CurrentCamera = camera
+	-- Frame from the bounding box: works for any rig, including non-humanoid avatar shapes.
+	local box, size = copy:GetBoundingBox()
+	local top = box.Position.Y + size.Y / 2
+	if framing == "Head" then
+		local target = Vector3.new(0, top - 1.3, 0)
+		camera.CFrame = CFrame.lookAt(target + Vector3.new(0, 0.2, -6), target)
+	else
+		local target = Vector3.new(0, box.Position.Y, 0)
+		camera.CFrame = CFrame.lookAt(target + Vector3.new(0, 0.6, -(size.Y * 2.1 + 2)), target)
+	end
+	return copy
+end
+
+function ActivePlayerPortrait.new(screen: ScreenGui)
+	local self = setmetatable({ Character = nil, Model = nil, Mode = nil }, ActivePlayerPortrait)
+	self.Root = make("ViewportFrame", {
+		Name = "ActivePlayerPortrait",
+		AnchorPoint = Vector2.new(0, 1),
+		Size = UDim2.fromOffset(ActivePlayerPortrait.NORMAL.X, ActivePlayerPortrait.NORMAL.Y),
+		BackgroundTransparency = 1,
+		Ambient = Color3.fromRGB(200, 200, 200),
+		LightColor = Color3.fromRGB(255, 244, 220),
+		LightDirection = Vector3.new(-1, -1, -1),
+		Visible = false,
+		Parent = screen,
+	})
+	self.Scale = make("UIScale", { Parent = self.Root })
+	-- Gentle idle: a slow bob and sway (the copy is anchored; no animator needed).
+	RunService.RenderStepped:Connect(function()
+		if self.Root.Visible and self.Model and self.Model.Parent then
+			local t = os.clock()
+			self.Model:PivotTo(CFrame.new(0, math.sin(t * 2.2) * 0.06, 0) * CFrame.Angles(0, TURN_IN + math.sin(t * 0.9) * 0.1, 0))
+		end
+	end)
+	return self
+end
+
+function ActivePlayerPortrait:show(character: Model?, mode: string)
+	if character ~= self.Character or not (self.Model and self.Model.Parent) then
+		self.Character = character
+		self.Model = ActivePlayerPortrait.mount(self.Root, character, "Body")
+	end
+	if not self.Model then
+		self:hide()
+		return
+	end
+	local size = if mode == "Big" then ActivePlayerPortrait.BIG else ActivePlayerPortrait.NORMAL
+	local goal = UDim2.fromOffset(size.X, size.Y)
+	if not self.Root.Visible then
+		self.Root.Size = goal
+		self.Root.Visible = true
+		self.Root.ImageTransparency = 1
+		TweenService:Create(self.Root, TweenInfo.new(0.2), { ImageTransparency = 0 }):Play()
+	elseif mode ~= self.Mode then
+		TweenService:Create(self.Root, TweenInfo.new(0.25, Enum.EasingStyle.Quad), { Size = goal }):Play()
+	end
+	self.Mode = mode
+end
+
+function ActivePlayerPortrait:hide()
+	self.Root.Visible = false
+	self.Mode = nil
+end
+
+return ActivePlayerPortrait
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="96">
+            <Properties>
               <string name="Name">BoardDice</string>
               <string name="Source"><![CDATA[--[[
 	BoardDice
-	The thrown-dice moment on boards with Presentation = "Diorama" (Sunny Loop v2). Purely
+	The thrown-dice moment on every board (DicePrompt's hovering die is the same die). Purely
 	local presentation: the server has already decided the number (state.DiceFaces); this only
 	shows it.
 
@@ -19116,6 +19234,8 @@ local SIZE = 3.4
 local FLIGHT = 0.75 -- seconds in the air (full version)
 local FLIGHT_SHORT = 0.5
 local MIN_TUMBLE = 0.6 -- the local throw never settles sooner than this, even on a fast server
+-- The throw starts where DicePrompt's die hovers (kept in sync with DicePrompt.HOVER).
+local HOVER = Vector3.new(0, if game:GetService("UserInputService").TouchEnabled then 5.5 else 8.4, 0)
 
 -- Number n is printed on FACES[n].Face; FACES[n].Up is the rotation that turns that face to
 -- point up (+Y). Opposite faces add up to 7, like a real die.
@@ -19202,6 +19322,8 @@ local function makeDie(): Part
 	return die
 end
 
+BoardDice.makeDie = makeDie -- DicePrompt's hovering die is the same die
+
 function BoardDice.new()
 	return setmetatable({ Throw = nil }, BoardDice)
 end
@@ -19274,7 +19396,7 @@ function BoardDice:throw(character: Model?, count: number, faces: { number }?, s
 	local still = reducedMotion()
 	for i = 1, math.max(1, count) do
 		local die = makeDie()
-		local from = root.Position + Vector3.new(0, 3.4, 0)
+		local from = root.Position + HOVER -- where DicePrompt's die hovers
 		local to = landingSpot(root, i, count)
 		die.CFrame = CFrame.new(from)
 		die.Parent = camera
@@ -19398,31 +19520,42 @@ return BoardDice
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
 	BoardView
-	Everything the client shows during the board phase. Functional placeholder UI; the
-	visual pass (style guide) comes later.
+	Everything the client shows during the board phase, in the board-turn format from the
+	style guide (UI & Visual Style.md):
 
-	  header      top centre, under Roblox's top bar: round, whose turn, dice / moves left
-	  standings   left side: every seat's collectibles and coins, current turn highlighted
-	  roll        big button bottom right, only on your turn (Space / ButtonA too)
-	  prompt      bottom centre: fork / buy / shop choices sent to you by the server
-	  camera      follows whoever's turn it is
+	  1. Turn start: "Aaron, start!" banner (TurnStartBanner) across the upper area, the active
+	     avatar large lower-left (ActivePlayerPortrait), the close turn camera on their piece.
+	  2. Active turn: four-player standings across the top (PlayerStandingsStrip), the
+	     ROLL / ITEMS / MAP menu on the left (TurnMenu, your turn only), the avatar lower-left,
+	     "Round 2 / 5 · Turn 3 / 4" at the bottom (TurnProgress), and with ROLL picked a
+	     physical die above your character (DicePrompt). Rolling throws it (BoardDice).
+	  3. Prompts (fork / shop / Crown) stay the bottom-centre card; MAP is the whole-board view.
 
-	Only renders server state; every decision is validated on the server.
+	Only renders server state; every decision is validated on the server. Instance names the
+	tests and the onboarding pointer use: BoardRoll (ROLL row), BoardItems (item list),
+	BoardMap (MAP row), BoardHeader (progress pill), BoardStandings (strip), BoardPrompt.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
 local BoardDice = require(script.Parent.BoardDice)
+local DicePrompt = require(script.Parent.DicePrompt)
+local PlayerStandingsStrip = require(script.Parent.PlayerStandingsStrip)
 local Theme = require(script.Parent.Theme)
+local TurnMenu = require(script.Parent.TurnMenu)
+local TurnProgress = require(script.Parent.TurnProgress)
+local TurnStartBanner = require(script.Parent.TurnStartBanner)
 local make = Theme.make
 
 local BoardView = {}
@@ -19450,115 +19583,52 @@ local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
 
--- Phones get a compact standings column (shorter, see-through rows with icon stats) so it
--- covers less of the board; desktop keeps the roomier rows.
 local TOUCH = UserInputService.TouchEnabled
-local ROW_HEIGHT = if TOUCH then 44 else 54
-local ROW_GAP = if TOUCH then 4 else 6
-local STANDINGS_WIDTH = if TOUCH then 200 else 230
 local NAME_LENGTH = 14 -- longer names end in "…" in prompts, toasts and the MAP
-local HEADER_NAME_LENGTH = 10 -- the header line is shorter still
+local HEADER_NAME_LENGTH = 10 -- the status line is shorter still
 local MAP_TEXT_SIZE = if TOUCH then 17 else 20
-
--- A key that changes whenever the item list does (so buttons are only rebuilt then).
-local function itemKeyOf(items): string
-	local ids = {}
-	for _, item in items do
-		table.insert(ids, item.Id)
-	end
-	return table.concat(ids, ",")
-end
+-- Roblox's own UI on desktop: the legacy chat window (top-left, ~30% wide, ~25% tall) and the
+-- player list (top-right). The standings and the menu stay out of both.
+local CHAT_WIDTH, CHAT_HEIGHT, PLAYER_LIST_WIDTH = 0.3, 0.25, 262
 
 -- send(payload) fires the input remote.
-function BoardView.new(screen: ScreenGui, send: (any) -> ())
-	local self = setmetatable({ Send = send, Visible = false }, BoardView)
+function BoardView.new(screen: ScreenGui, send: (any) -> (), playerGui: PlayerGui?)
+	local self = setmetatable({ Send = send, Visible = false, PanelsHidden = false }, BoardView)
 
-	-- Header
-	self.Header = make("Frame", {
-		Name = "BoardHeader",
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 64), -- below Roblox's top bar
-		Size = UDim2.fromOffset(460, 70),
-		BackgroundColor3 = Theme.Colors.Card,
-		BackgroundTransparency = 0.1,
-		Visible = false,
-		Parent = screen,
-	}, { Theme.corner(18), Theme.stroke(Theme.Colors.Accent, 3) })
-	self.Title = Theme.label({
-		Position = UDim2.fromScale(0.03, 0.05),
-		Size = UDim2.fromScale(0.94, 0.5),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Accent,
-		Parent = self.Header,
-	}, 30)
-	self.Subtitle = Theme.label({
-		Position = UDim2.fromScale(0.03, 0.55),
-		Size = UDim2.fromScale(0.94, 0.4),
-		Parent = self.Header,
-	}, 22)
+	self.Progress = TurnProgress.new(screen)
+	self.Header = self.Progress.Root
+	self.Title = self.Progress.Title
+	self.Subtitle = self.Progress.Subtitle
 
-	-- Standings (left side, below the top-left Roblox buttons)
-	self.Standings = make("Frame", {
-		Name = "BoardStandings",
-		Position = UDim2.new(0, 12, 0, 150),
-		Size = UDim2.fromOffset(STANDINGS_WIDTH, 4 * ROW_HEIGHT + 3 * ROW_GAP),
-		BackgroundTransparency = 1,
-		Visible = false,
-		Parent = screen,
-	}, { make("UIListLayout", { Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder }) })
-	self.Rows = {}
+	self.Strip = PlayerStandingsStrip.new(screen)
+	self.Standings = self.Strip.Root
 
-	-- Roll button
-	self.RollButton = make("TextButton", {
-		Name = "BoardRoll",
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -24, 1, -24),
-		Size = UDim2.fromOffset(150, 150),
-		BackgroundColor3 = Theme.Colors.Good,
-		Font = Theme.TitleFont,
-		Text = "",
-		AutoButtonColor = true,
-		Visible = false,
-		Parent = screen,
-	}, { Theme.corner(75), Theme.stroke(Color3.new(1, 1, 1), 4) })
-	self.RollLabel = Theme.label({
-		-- Kept inside the circle: the corners of a full-width box sit outside it.
-		AnchorPoint = Vector2.new(0.5, 0),
-		Size = UDim2.fromScale(0.76, 0.5),
-		Position = UDim2.fromScale(0.5, 0.16),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Overlay,
-		Text = "ROLL!",
-		Parent = self.RollButton,
-	}, 44)
-	self.RollClock = Theme.label({
-		Size = UDim2.fromScale(1, 0.22),
-		Position = UDim2.fromScale(0, 0.68),
-		TextColor3 = Theme.Colors.Overlay,
-		Parent = self.RollButton,
-	}, 22)
-	self.RollButton.Activated:Connect(function()
+	self.Banner = TurnStartBanner.new(screen)
+	self.Portrait = ActivePlayerPortrait.new(screen)
+
+	self.Menu = TurnMenu.new(screen, {
+		Roll = function()
+			self:roll()
+		end,
+		Map = function()
+			self:toggleMap()
+		end,
+		UseItem = function(slot)
+			self.Send({ Kind = "UseItem", Slot = slot })
+		end,
+		Changed = function()
+			self:refresh()
+		end,
+	})
+	self.RollButton = self.Menu.Rows.Roll.Button
+	self.MapButton = self.Menu.Rows.Map.Button
+	self.ItemsButton = self.Menu.Rows.Items.Button
+	self.ItemBar = self.Menu.ItemPanel
+	self.ItemsOffered = false
+
+	self.DicePrompt = DicePrompt.new(playerGui or Players.LocalPlayer:WaitForChild("PlayerGui"), function()
 		self:roll()
 	end)
-
-	-- Item buttons (above the roll button, your turn only, before rolling)
-	self.ItemBar = make("Frame", {
-		Name = "BoardItems",
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -24, 1, -186),
-		Size = UDim2.fromOffset(520, 84),
-		BackgroundTransparency = 1,
-		Visible = false,
-		Parent = screen,
-	}, {
-		make("UIListLayout", {
-			FillDirection = Enum.FillDirection.Horizontal,
-			HorizontalAlignment = Enum.HorizontalAlignment.Right,
-			Padding = UDim.new(0, 8),
-			SortOrder = Enum.SortOrder.LayoutOrder,
-		}),
-	})
-	self.ItemKey = nil
 
 	-- Prompt (bottom centre)
 	self.Prompt = make("Frame", {
@@ -19593,39 +19663,19 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.PromptEndsAt = nil
 
 	-- MAP: inspect the whole board, the Crown, gates, traps and everyone's items
-	self.MapButton = make("TextButton", {
-		Name = "BoardMap",
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 24, 1, -24),
-		Size = UDim2.fromOffset(130, 56),
-		BackgroundColor3 = Theme.Colors.Card,
-		Font = Theme.TitleFont,
-		TextScaled = true,
-		TextColor3 = Theme.Colors.Accent,
-		Text = "MAP",
-		Visible = false,
-		Parent = screen,
-	}, { Theme.corner(14), Theme.stroke(Theme.Colors.Accent, 2), Theme.padding(8) })
-	self.MapButton.Activated:Connect(function()
-		self:toggleMap()
-	end)
-	self.MapPanel = make("ScrollingFrame", {
+	self.MapPanel = Theme.glass(make("ScrollingFrame", {
 		Name = "BoardMapPanel",
-		Position = UDim2.new(0, 12, 0, 150),
 		Size = UDim2.fromOffset(330, 260),
-		BackgroundColor3 = Theme.Colors.Card,
-		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 6,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(),
 		Visible = false,
 		Parent = screen,
-	}, {
-		Theme.corner(14),
-		Theme.padding(10),
-		make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
-	})
+	}), 14)
+	Theme.padding(10).Parent = self.MapPanel
+	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = self.MapPanel })
+	self.MapScale = make("UIScale", { Parent = self.MapPanel })
 	self.MapOpen = false
 
 	self.State = nil
@@ -19633,7 +19683,68 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.Focus = nil
 	self.Zoom = 1
 	self.Dice = BoardDice.new()
+
+	Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+		self:layout()
+	end)
+	self:layout()
 	return self
+end
+
+-- Places every panel from the viewport size, Roblox's top bar and its chat / player list.
+-- Design sizes are for a 720 px tall screen; phones scale down, never below a 44 px tap row.
+function BoardView:layout()
+	local viewport = Workspace.CurrentCamera.ViewportSize
+	local w, h = viewport.X, viewport.Y
+	local top = GuiService:GetGuiInset().Y
+	local s = math.clamp(h / 720, 0.55, 1)
+
+	-- Standings: centred in the free strip of the top edge (between the chat window and the
+	-- player list on desktop). Chips are designed 220 px wide; a narrow gap scales the whole
+	-- strip down (text included) rather than squeezing names, never below 0.6.
+	local left = if TOUCH then 12 else math.max(12, w * CHAT_WIDTH + 8)
+	local right = if TOUCH then w - 12 else w - PLAYER_LIST_WIDTH
+	local design = 4 * 220 + 3 * PlayerStandingsStrip.GAP
+	local stripScale = math.clamp(math.min(s, (right - left) / design), 0.6, 1)
+	local chipWidth = math.clamp(((right - left) / stripScale - 3 * PlayerStandingsStrip.GAP) / 4, 150, 240)
+	self.Strip.Scale.Scale = stripScale
+	self.Strip:setChipWidth(chipWidth)
+	local stripTop = top + 6
+	self.Standings.Position = UDim2.fromOffset((left + right) / 2, stripTop)
+	local stripBottom = stripTop + (PlayerStandingsStrip.CHIP_HEIGHT + 14) * stripScale
+
+	-- Banner: the upper gameplay area, never under the top bar.
+	self.Banner.Root.Position = UDim2.fromOffset(0, top + math.max(8, h * 0.06))
+	self.Banner.Root.Size = UDim2.new(1, 0, 0, TurnStartBanner.HEIGHT * s)
+	self.Banner.Scale.Scale = s
+
+	-- Menu: left edge, below the standings (and, on desktop, below the chat window).
+	local menuScale = math.max(s, 0.55)
+	local menuTop = if TOUCH then stripBottom + 6 else math.max(stripBottom + 10, top + h * CHAT_HEIGHT + 12)
+	self.Menu.Scale.Scale = menuScale
+	self.Menu.Root:SetAttribute("HudScale", menuScale) -- Theme.pop animates back to this
+	self.Menu.Root.Position = UDim2.fromOffset(30 * menuScale + 8, menuTop)
+	local menuBottom = menuTop + (3 * TurnMenu.ROW.Y + 2 * TurnMenu.GAP) * menuScale
+
+	-- MAP panel under the CLOSE row.
+	local mapScale = math.max(s, 0.75)
+	self.MapScale.Scale = mapScale
+	self.MapPanel.Position = UDim2.fromOffset(12, menuTop + (TurnMenu.ROW.Y + TurnMenu.GAP) * menuScale)
+	self.MapPanel.Size = UDim2.fromOffset(330, math.min(260, (h - 12 - (menuTop + (TurnMenu.ROW.Y + TurnMenu.GAP) * menuScale)) / mapScale))
+
+	-- Avatar: lower-left, the big (turn-start) version at most ~42% of the screen height; the
+	-- normal one only when it fits under the menu.
+	local portraitScale = math.min(s, h * 0.42 / ActivePlayerPortrait.BIG.Y)
+	self.Portrait.Scale.Scale = portraitScale
+	self.Portrait.Root.Position = UDim2.fromOffset(10, h - 6)
+	self.PortraitFits = h - 6 - menuBottom >= ActivePlayerPortrait.NORMAL.Y * portraitScale * 0.75
+
+	-- Progress: bottom centre, lifted above the prompt card while one is up.
+	local progressScale = math.max(s, 0.6)
+	self.Progress.Scale.Scale = progressScale
+	local promptScale = self.Prompt:GetAttribute("HudScale") or 1
+	local bottom = if self.Prompt.Visible then h - (20 + 150) * promptScale - 8 else h - 10
+	self.Header.Position = UDim2.fromOffset(w / 2, bottom)
 end
 
 -- Layout / state ------------------------------------------------------------------------------
@@ -19651,33 +19762,6 @@ function BoardView:setLayout(message)
 	end
 	self.Centre = if count > 0 then sum / count else Vector3.zero
 end
-
-local function seatLine(seat, plural: string): string
-	return ("%d %s  ·  %d coins"):format(
-		seat.Collectibles,
-		if seat.Collectibles == 1 then string.sub(plural, 1, -2) else plural,
-		seat.Coins
-	)
-end
-
--- Phone standings line: the same facts with icons so it fits a narrow row at a readable size
--- (the MAP still spells everything out).
-local function compactSeatLine(seat): string
-	if seat.OrderRolls and #seat.OrderRolls > 0 then
-		return "Rolled " .. table.concat(seat.OrderRolls, ", ")
-	end
-	-- (🪙 and 🎒 don't render clearly in Roblox's emoji font; 👑 and 💰 do.)
-	local items = #(seat.Items or {})
-	local line = ("%d👑 · %d💰 · %d item%s"):format(seat.Collectibles, seat.Coins, items, if items == 1 then "" else "s")
-	if seat.Shield then
-		line ..= "  🛡"
-	end
-	if seat.Underdog then
-		line ..= "  underdog"
-	end
-	return line
-end
-
 
 local function seatById(state, id)
 	for _, seat in (state and state.Seats) or {} do
@@ -19698,7 +19782,7 @@ function BoardView:setState(message)
 		return
 	end
 	-- Thrown dice: everyone sees the active piece throw; the roller's own throw already started.
-	if self:isDiorama() and message.Stage == "Moving" and message.RollId and message.DiceFaces then
+	if message.Stage == "Moving" and message.RollId and message.DiceFaces then
 		local seat = seatById(message, message.TurnId)
 		self.Dice:reveal(seat and seat.Character, message.DiceFaces, message.RollId, seat ~= nil and seat.IsBot)
 	end
@@ -19706,170 +19790,177 @@ function BoardView:setState(message)
 		self:refreshMap()
 	end
 
-	-- Header
+	-- A new turn: the "start!" banner first, then the turn controls.
+	if message.Stage == "Roll" and message.TurnId then
+		local key = ("%s:%s"):format(tostring(message.Round), message.TurnId)
+		if key ~= self.IntroKey then
+			self.IntroKey = key
+			self:playIntro(seatById(message, message.TurnId))
+		end
+	end
+
+	-- Progress pill: round and turn, and one short status line.
 	local myTurn = message.TurnId == myId
-	local who = if myTurn then "Your" else (message.TurnName and (Theme.shortWords(message.TurnName, HEADER_NAME_LENGTH) .. "'s") or nil)
+	local turnSeat = seatById(message, message.TurnId)
 	self.Title.Text = ("%s %d / %d%s"):format(
 		if message.Frenzy then "FINAL FRENZY · Round" else "Round",
 		message.Round or 0,
 		message.Rounds or 0,
-		if who then "  ·  " .. who .. " turn" else ""
+		if turnSeat then ("  ·  Turn %d / %d"):format(turnSeat.Order, #message.Seats) else ""
 	)
 	local sub = message.Text or ""
 	if message.Stage == "OrderRoll" then
 		self.Title.Text = ("Round %d / %d  ·  Turn order"):format(message.Round or 0, message.Rounds or 0)
-		sub = if message.OrderPending and message.OrderPending[myId] then "Tap ROLL! Highest roll goes first" else (message.Text or "")
+		sub = if message.OrderPending and message.OrderPending[myId] then "Roll! Highest roll goes first" else (message.Text or "")
 	elseif message.Stage == "Moving" and message.Remaining then
 		sub = ("Rolled %d  ·  %d move%s left"):format(message.Roll or 0, message.Remaining, if message.Remaining == 1 then "" else "s")
 	elseif message.Stage == "Roll" and myTurn then
-		sub = if (message.Dice or 1) > 1
-			then ("Tap ROLL to roll %d dice!"):format(message.Dice)
-			else "Use an item, or tap ROLL to roll the die!"
+		sub = if (message.Dice or 1) > 1 then ("Your turn  ·  rolling %d dice"):format(message.Dice) else "Your turn"
 	end
-	if message.Bridge and message.Stage ~= "RotationWarning" and message.Stage ~= "Rotating" then sub ..= " · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
+	if message.Bridge and message.Stage ~= "RotationWarning" and message.Stage ~= "Rotating" then
+		sub ..= " · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment
+	end
 	if message.Bridge and message.Stage == "Roll" then
-  for _,seat in message.Seats do
-   local dock=seat.Zone and message.Bridge.Docks[seat.Zone]
-   if seat.Id==message.TurnId and dock and not dock.Open then sub="Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
-  end
- end
- self.Subtitle.Text = Theme.shortWords(sub, HEADER_NAME_LENGTH + 2)
-
-	-- Standings rows (turn order)
-	for _, row in self.Rows do
-		row:Destroy()
-	end
-	self.Rows = {}
-	for _, seat in message.Seats do
-		local isTurn = seat.Id == message.TurnId
-		local isMe = seat.Id == myId
-		local row = make("Frame", {
-			LayoutOrder = seat.Order,
-			Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
-			BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Card,
-			BackgroundTransparency = if TOUCH then 0.25 else 0.1,
-			Parent = self.Standings,
-		}, { Theme.corner(12) })
-		if isTurn then
-			Theme.stroke(Theme.Colors.Accent, 3).Parent = row
-		end
-		-- Fixed size, cut with "…": a long name never shrinks the text or pushes "(bot)" out.
-		local name = if isMe then "YOU" else seat.Name
-		make("TextLabel", {
-			Position = UDim2.fromOffset(10, if TOUCH then 3 else 4),
-			Size = UDim2.new(1, -20, 0, if TOUCH then 22 else 26),
-			BackgroundTransparency = 1,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextTruncate = Enum.TextTruncate.AtEnd,
-			Font = Theme.TitleFont,
-			TextSize = 22,
-			TextColor3 = Theme.Colors.Text,
-			Text = (if isTurn then "▶ " else "") .. (if seat.IsBot and TOUCH then "🤖 " else "") .. name .. (if seat.IsBot and not TOUCH then " (bot)" else ""),
-			Parent = row,
-		})
-		local line = seatLine(seat, message.CollectiblePlural or "Crowns")
-		if seat.OrderRolls and #seat.OrderRolls > 0 then
-			line = "Rolled " .. table.concat(seat.OrderRolls, ", then ")
-		else
-			line ..= ("  ·  %d item%s"):format(#(seat.Items or {}), if #(seat.Items or {}) == 1 then "" else "s")
-			if seat.Shield then
-				line ..= "  ·  shield"
-			end
-			if seat.Underdog then
-				line ..= "  ·  underdog"
+		for _, seat in message.Seats do
+			local dock = seat.Zone and message.Bridge.Docks[seat.Zone]
+			if seat.Id == message.TurnId and dock and not dock.Open then
+				sub = "Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment
 			end
 		end
-		if TOUCH then
-			make("TextLabel", {
-				Position = UDim2.fromOffset(8, 24),
-				Size = UDim2.new(1, -16, 0, 18),
-				BackgroundTransparency = 1,
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextTruncate = Enum.TextTruncate.AtEnd,
-				Font = Theme.BodyFont,
-				TextSize = 19,
-				TextColor3 = Theme.Colors.Accent,
-				Text = compactSeatLine(seat),
-				Parent = row,
-			})
-		else
-			Theme.label({
-				Position = UDim2.fromOffset(10, 30),
-				Size = UDim2.new(1, -20, 0, 20),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextColor3 = Theme.Colors.Accent,
-				Text = line,
-				Parent = row,
-			}, 18)
-		end
-		table.insert(self.Rows, row)
 	end
+	self.Subtitle.Text = Theme.shortWords(sub, HEADER_NAME_LENGTH + 2)
 
-	-- Item buttons: your turn, before rolling, no item used yet.
-	local mySeat
-	for _, seat in message.Seats do
-		if seat.Id == myId then
-			mySeat = seat
-		end
+	self.Strip:render(message, myId)
+	self:refresh()
+end
+
+-- Turn-start handoff: banner + big avatar; the controls appear when the banner leaves.
+function BoardView:playIntro(seat)
+	if not seat then
+		return
 	end
+	local name = if seat.Id == myId then Players.LocalPlayer.DisplayName else seat.Name
+	self.IntroActive = true
+	self.IntroSeat = seat
+	self.Menu:closeItems()
+	self.Menu:select("Roll")
+	self.Banner:play(Theme.shortWords(name, 12) .. ", start!", seat.IsBot, function()
+		self.IntroActive = false
+		self:refresh()
+	end)
+	self:refresh()
+end
+
+-- What's on screen right now, from the latest state and the local flags (intro, MAP, items).
+function BoardView:refresh()
+	local state = self.State
+	if not (self.Visible and state) then
+		return
+	end
+	local panels = not self.PanelsHidden
+	local intro = self.IntroActive and panels
+	local myTurn = state.TurnId == myId
+	local stage = state.Stage
+	local mySeat = seatById(state, myId)
 	local items = mySeat and mySeat.Items or {}
-	local showItems = myTurn and message.Stage == "Roll" and not message.ItemUsed and #items > 0
-	local itemKey = if showItems then itemKeyOf(items) else nil
-	if itemKey ~= self.ItemKey then
-		self.ItemKey = itemKey
-		for _, child in self.ItemBar:GetChildren() do
-			if child:IsA("GuiButton") then
-				child:Destroy()
-			end
-		end
-		for slot, item in items do
-			local button = make("TextButton", {
-				LayoutOrder = slot,
-				Size = UDim2.fromOffset(160, 84), -- >= 44pt tall after the phone HUD scale (0.55)
-				BackgroundColor3 = Theme.Colors.Cool,
-				Font = Theme.BodyFont,
-				TextScaled = true,
-				TextColor3 = Theme.Colors.Overlay,
-				Text = item.Name,
-				Parent = self.ItemBar,
-			}, { Theme.corner(14), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 10 }) })
-			button.Activated:Connect(function()
-				self.ItemBar.Visible = false
-				self.Send({ Kind = "UseItem", Slot = slot })
-			end)
-		end
-	end
-	self.ItemBar.Visible = showItems
+	local canRoll = (myTurn and stage == "Roll")
+		or (stage == "OrderRoll" and state.OrderPending ~= nil and state.OrderPending[myId] == true)
+	local prompting = self.Prompt.Visible
 
-	-- Roll button: on your turn (or when rolling for turn order), while waiting for the roll.
-	local canRoll = (myTurn and message.Stage == "Roll")
-		or (message.Stage == "OrderRoll" and message.OrderPending ~= nil and message.OrderPending[myId] == true)
-	if canRoll and not self.RollButton.Visible then
-		Theme.pop(self.RollButton)
+	self.Standings.Visible = panels and not intro
+	self.Header.Visible = panels and not intro
+
+	-- Menu: your roll (turn or turn order), or the MAP's CLOSE row.
+	local itemsUsable = myTurn and stage == "Roll" and not state.ItemUsed and #items > 0
+	local menuShown = panels and not intro and not prompting and (canRoll or self.MapOpen)
+	self.ItemsOffered = menuShown and canRoll and itemsUsable
+	self.Menu:setItems(items)
+	self.Menu:setRows({
+		Roll = { Visible = canRoll and not self.MapOpen },
+		Items = {
+			Visible = canRoll and not self.MapOpen,
+			Enabled = itemsUsable,
+			Reason = if stage == "OrderRoll" then "Items unlock on your turn"
+				elseif state.ItemUsed then "One item per turn"
+				else "No items yet",
+			Note = if #items > 0 then ("%d held"):format(#items) else "",
+		},
+		Map = {
+			Visible = true,
+			Label = if self.MapOpen then "CLOSE" else "MAP",
+			Note = if self.MapOpen then "Back to the turn" else "Whole board",
+		},
+	})
+	if not itemsUsable then
+		self.Menu:closeItems()
+	end
+	if menuShown and not self.Menu.Root.Visible then
+		self.Menu.Root.Visible = true
+		self.Menu:select(if self.MapOpen then "Map" else "Roll")
+		self.Menu:bind()
+		Theme.pop(self.Menu.Root)
+	elseif not menuShown and self.Menu.Root.Visible then
+		self.Menu.Root.Visible = false
+		self.Menu:closeItems()
+		self.Menu:unbind()
+	end
+	self.RollButton.Visible = menuShown and canRoll and not self.MapOpen
+
+	-- Space rolls while ROLL is the picked row (Enter / gamepad A activate any row).
+	local rollKey = self.RollButton.Visible and self.Menu.Selected == "Roll" and not self.Menu.ItemsOpen
+	if rollKey and not self.RollBound then
 		ContextActionService:BindAction(ROLL_ACTION, function(_, inputState)
 			if inputState == Enum.UserInputState.Begin then
 				self:roll()
 			end
 			return Enum.ContextActionResult.Sink
-		end, false, Enum.KeyCode.Space, Enum.KeyCode.ButtonA)
-	elseif not canRoll then
+		end, false, Enum.KeyCode.Space)
+	elseif not rollKey and self.RollBound then
 		ContextActionService:UnbindAction(ROLL_ACTION)
 	end
-	self.RollButton.Visible = canRoll
+	self.RollBound = rollKey
+
+	-- Avatar: big during the banner, normal on your own turn, gone while moving or on the MAP.
+	local turnSeat = seatById(state, state.TurnId)
+	if intro and self.IntroSeat then
+		self.Portrait:show(self.IntroSeat.Character, "Big")
+	elseif panels and myTurn and stage == "Roll" and not self.MapOpen and self.PortraitFits then
+		self.Portrait:show(turnSeat and turnSeat.Character, "Normal")
+	else
+		self.Portrait:hide()
+	end
+
+	-- The physical die above your character while ROLL is picked.
+	if rollKey and myTurn and stage == "Roll" and not prompting then
+		local hint = if UserInputService.GamepadEnabled and UserInputService:GetLastInputType().Name:find("Gamepad")
+			then "Press A to roll"
+			elseif TOUCH then "Tap the die"
+			else "Press Space or click the die"
+		self.DicePrompt:show(Players.LocalPlayer.Character, hint)
+	else
+		self.DicePrompt:hide()
+	end
+	self:layout()
 end
 
 function BoardView:roll()
-	if self.RollButton.Visible then
-		self.RollButton.Visible = false
-		ContextActionService:UnbindAction(ROLL_ACTION)
-		local state = self.State
-		-- Your own turn on a diorama board: the throw starts on the press, the number lands
-		-- when the server's roll arrives. (Turn-order rolls stay instant.)
-		if self:isDiorama() and state and state.Stage == "Roll" and state.TurnId == myId then
-			self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
-		end
-		self.Send({ Kind = "Roll" })
+	if not self.RollButton.Visible then
+		return
 	end
+	self.RollButton.Visible = false
+	self.DicePrompt:hide()
+	if self.RollBound then
+		ContextActionService:UnbindAction(ROLL_ACTION)
+		self.RollBound = false
+	end
+	local state = self.State
+	-- Your own turn: the throw starts on the press, the number lands when the server's roll
+	-- arrives. (Turn-order rolls stay instant.)
+	if state and state.Stage == "Roll" and state.TurnId == myId then
+		self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
+		self.Portrait:hide()
+	end
+	self.Send({ Kind = "Roll" })
 end
 
 -- Map ---------------------------------------------------------------------------------------------
@@ -19962,12 +20053,14 @@ function BoardView:toggleMap(open: boolean?)
 	end
 	self.MapOpen = open and self.Visible
 	self.MapPanel.Visible = self.MapOpen
-	self.Standings.Visible = self.Visible and not self.MapOpen and self.Header.Visible
-	self.MapButton.Text = if self.MapOpen then "CLOSE" else "MAP"
 	self.Focus = nil
 	if self.MapOpen then
+		self.Menu:select("Map")
 		self:refreshMap()
+	else
+		self.Menu:select("Roll")
 	end
+	self:refresh()
 end
 
 -- Prompt ------------------------------------------------------------------------------------------
@@ -19983,6 +20076,7 @@ function BoardView:showPrompt(message)
 	self.PromptMessage = message -- Kind / Routes / Price: read by the first-action guidance
 	if not message.PromptId then
 		self.Prompt.Visible = false
+		self:refresh()
 		return
 	end
 	self.PromptText.Text = Theme.shortWords(message.Prompt, NAME_LENGTH)
@@ -20007,11 +20101,13 @@ function BoardView:showPrompt(message)
 				self.Send({ Kind = "Choice", PromptId = message.PromptId, Index = index })
 				self.PromptId = nil
 				self.Prompt.Visible = false
+				self:refresh()
 			end
 		end)
 	end
 	self.Prompt.Visible = true
 	Theme.pop(self.Prompt)
+	self:refresh()
 end
 
 -- Visibility + camera -----------------------------------------------------------------------------
@@ -20084,13 +20180,12 @@ local function turnFocus(self): Vector3?
 end
 
 function BoardView:show()
+	self.PanelsHidden = false
 	if self.Visible then
+		self:refresh()
 		return
 	end
 	self.Visible = true
-	self.Header.Visible = true
-	self.Standings.Visible = true
-	self.MapButton.Visible = true
 	ContextActionService:BindAction(MAP_ACTION, function(_, inputState)
 		if inputState == Enum.UserInputState.Begin then
 			self:toggleMap()
@@ -20155,21 +20250,32 @@ function BoardView:show()
 	end
 end
 
+-- Everything off: banner, standings, menu, avatar, die prompt, progress, prompt card, MAP.
+local function clearPanels(self)
+	self.Banner:stop()
+	self.IntroActive = false
+	self.Header.Visible = false
+	self.Standings.Visible = false
+	self:toggleMap(false)
+	self.Menu.Root.Visible = false
+	self.Menu:closeItems()
+	self.Menu:unbind()
+	self.RollButton.Visible = false
+	self.ItemsOffered = false
+	self.Portrait:hide()
+	self.DicePrompt:hide()
+	self.Prompt.Visible = false
+	ContextActionService:UnbindAction(ROLL_ACTION)
+	self.RollBound = false
+end
+
 function BoardView:hide()
 	if not self.Visible then
 		return
 	end
+	clearPanels(self)
 	self.Visible = false
-	self.Header.Visible = false
-	self.Standings.Visible = false
-	self.MapButton.Visible = false
-	self:toggleMap(false)
 	ContextActionService:UnbindAction(MAP_ACTION)
-	self.RollButton.Visible = false
-	self.ItemBar.Visible = false
-	self.ItemKey = nil
-	self.Prompt.Visible = false
-	ContextActionService:UnbindAction(ROLL_ACTION)
 	self.Dice:clear()
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
 	local camera = Workspace.CurrentCamera
@@ -20181,24 +20287,19 @@ function BoardView:hide()
 	end
 end
 
--- Keeps the board camera but hides the header, standings, roll and prompt (final standings card).
+-- Keeps the board camera but hides every panel (final standings card).
 function BoardView:hidePanels()
-	self.Header.Visible = false
-	self.Standings.Visible = false
-	self.MapButton.Visible = false
-	self:toggleMap(false)
+	self.PanelsHidden = true
+	clearPanels(self)
 	ContextActionService:UnbindAction(MAP_ACTION)
-	self.RollButton.Visible = false
-	self.ItemBar.Visible = false
-	self.ItemKey = nil
-	self.Prompt.Visible = false
-	ContextActionService:UnbindAction(ROLL_ACTION)
 end
 
--- Per frame: countdown on the roll button.
+-- Per frame: the roll countdown on the ROLL row.
 function BoardView:update()
+	local row = self.Menu.Rows.Roll
 	if self.RollButton.Visible and self.State and self.State.RollEndsAt then
-		self.RollClock.Text = ("%ds"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))
+		row.BaseNote = ("%ds left"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))
+		row.Note.Text = row.BaseNote
 	end
 end
 
@@ -20206,7 +20307,126 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
+            <Properties>
+              <string name="Name">DicePrompt</string>
+              <string name="Source"><![CDATA[--[[
+	DicePrompt
+	While ROLL is selected on your turn: a physical die hovers and turns above your character,
+	with a short instruction ("Press Space or click the die" / "Tap the die" / "Press A").
+	Clicking or tapping the die rolls. The throw itself is BoardDice (the server picks the number).
+
+	  local prompt = DicePrompt.new(playerGui, onActivate)
+	  prompt:show(character, hint)
+	  prompt:hide()
+]]
+
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local BoardDice = require(script.Parent.BoardDice)
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local DicePrompt = {}
+DicePrompt.__index = DicePrompt
+
+-- Above the head and the YOU tag; the throw starts here. Phones sit lower so the die stays
+-- below the standings strip in the close camera.
+DicePrompt.HOVER = Vector3.new(0, if game:GetService("UserInputService").TouchEnabled then 5.5 else 8.4, 0)
+local HOVER = DicePrompt.HOVER
+
+function DicePrompt.new(playerGui: PlayerGui, onActivate: () -> ())
+	local self = setmetatable({ Root = nil }, DicePrompt)
+	-- In PlayerGui (not the Workspace) so the billboard button receives clicks and taps. The
+	-- click target is sized in studs (plus a margin), so it covers the die at any distance.
+	self.Gui = make("BillboardGui", {
+		Name = "DicePrompt",
+		Size = UDim2.new(4.6, 24, 4.6, 24), -- studs + 24 px: never under a 44 px tap target
+		Active = true, -- a BillboardGui only passes clicks and taps to its button when Active
+		LightInfluence = 0,
+		Enabled = false,
+		ResetOnSpawn = false,
+		Parent = playerGui,
+	})
+	self.Button = make("TextButton", {
+		Name = "Die",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		Parent = self.Gui,
+	})
+	-- Desktop: above the die. Phone: beside it, smaller (above would sit under the standings).
+	local touch = game:GetService("UserInputService").TouchEnabled
+	self.HintGui = make("BillboardGui", {
+		Name = "DicePromptHint",
+		Size = if touch then UDim2.fromOffset(150, 34) else UDim2.fromOffset(280, 52),
+		-- SizeOffset Y 0.5: the hint's bottom edge sits at the offset point, just over the die.
+		SizeOffset = if touch then Vector2.new(0.85, 0) else Vector2.new(0, 0.5),
+		StudsOffsetWorldSpace = if touch then Vector3.zero else Vector3.new(0, 2.2, 0),
+		LightInfluence = 0,
+		Enabled = false,
+		ResetOnSpawn = false,
+		Parent = playerGui,
+	})
+	self.Hint = Theme.glass(make("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		Font = Theme.TitleFont,
+		TextSize = if touch then 15 else 24,
+		TextWrapped = true,
+		TextColor3 = Theme.Glass.Cream,
+		Parent = self.HintGui,
+	}), 16)
+	self.Button.Activated:Connect(onActivate)
+	return self
+end
+
+function DicePrompt:show(character: Model?, hint: string)
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		self:hide()
+		return
+	end
+	self.Hint.Text = hint
+	if not (self.Die and self.Die.Parent) then
+		self.Die = BoardDice.makeDie()
+		self.Die.Name = "HoverDie"
+		self.Die.Parent = Workspace.CurrentCamera
+	end
+	self.Gui.Adornee = self.Die
+	self.HintGui.Adornee = self.Die
+	self.Gui.Enabled = true
+	self.HintGui.Enabled = true
+	if not self.Connection then
+		self.Connection = RunService.RenderStepped:Connect(function()
+			if not (self.Die and self.Die.Parent and root.Parent) then
+				return
+			end
+			local t = os.clock()
+			self.Die.CFrame = CFrame.new(root.Position + HOVER + Vector3.new(0, math.sin(t * 2.4) * 0.35, 0))
+				* CFrame.Angles(math.rad(20), t * 1.6, math.rad(12))
+		end)
+	end
+end
+
+function DicePrompt:hide()
+	self.Gui.Enabled = false
+	self.HintGui.Enabled = false
+	if self.Connection then
+		self.Connection:Disconnect()
+		self.Connection = nil
+	end
+	if self.Die then
+		self.Die:Destroy()
+		self.Die = nil
+	end
+end
+
+return DicePrompt
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="99">
             <Properties>
               <string name="Name">GuidePointer</string>
               <string name="Source"><![CDATA[--[[
@@ -20619,7 +20839,7 @@ return GuidePointer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -20648,9 +20868,9 @@ local TOAST_WIDTH = if TOUCH then 0.24 else 0.3
 local TOAST_MIN_WIDTH = if TOUCH then 170 else 220
 -- Phones on the board: the left column belongs to the standings and MAP, so the feed moves to
 -- the top right, under Roblox's top bar, as a narrow column of two-line toasts.
-local BOARD_TOAST_WIDTH = 210
-local BOARD_TOAST_HEIGHT = 34
-local BOARD_TOAST_TEXT_SIZE = 12
+local BOARD_TOAST_WIDTH = if TOUCH then 210 else 300
+local BOARD_TOAST_HEIGHT = if TOUCH then 34 else 46
+local BOARD_TOAST_TEXT_SIZE = if TOUCH then 12 else 17
 
 function Hud.new(screen: ScreenGui)
 	local self = setmetatable({}, Hud)
@@ -20807,10 +21027,8 @@ function Hud:clearToasts()
 	end
 end
 
--- Phone board layout for the feed (see BOARD_TOAST_*); desktop and minigames keep the
--- left-side feed.
+-- Board layout for the feed (see BOARD_TOAST_*); minigames keep the left-side feed.
 function Hud:setBoardToasts(on: boolean)
-	on = on and TOUCH
 	if on == self.BoardToasts then
 		return
 	end
@@ -20820,9 +21038,10 @@ function Hud:setBoardToasts(on: boolean)
 	local constraint = list:FindFirstChildOfClass("UISizeConstraint")
 	local layout = list:FindFirstChildOfClass("UIListLayout")
 	if on then
-		local inset = GuiService:GetGuiInset().Y
+		-- Right side, below the standings strip and Roblox's player list: the left side holds
+		-- the turn menu and the avatar.
 		list.AnchorPoint = Vector2.new(1, 0)
-		list.Position = UDim2.new(1, -10, 0, inset + 6)
+		list.Position = UDim2.new(1, -10, 0.34, 0)
 		list.Size = UDim2.fromOffset(BOARD_TOAST_WIDTH, MAX_TOASTS * (BOARD_TOAST_HEIGHT + 4))
 		constraint.MinSize = Vector2.zero
 		layout.Padding = UDim.new(0, 4)
@@ -20899,7 +21118,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">InputHint</string>
               <string name="Source"><![CDATA[--[[
@@ -20987,7 +21206,7 @@ return InputHint
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -21139,7 +21358,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="103">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -21537,7 +21756,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="102">
+          <Item class="ModuleScript" referent="104">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -21652,7 +21871,203 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="103">
+          <Item class="ModuleScript" referent="105">
+            <Properties>
+              <string name="Name">PlayerStandingsStrip</string>
+              <string name="Source"><![CDATA[--[[
+	PlayerStandingsStrip
+	Four compact chips across the top safe area, in turn order: round avatar portrait, name
+	(cut with "…", never shrunk), Crowns, coins, placement, one held-item badge. The active
+	player's chip gets the gold glow and a ▼ pointer; your own chip says YOU.
+
+	  local strip = PlayerStandingsStrip.new(screen)
+	  strip:render(state, myId)
+	  strip:setChipWidth(px)      design px; BoardView fits the row between chat and player list
+	  strip.Root                  named "BoardStandings" (tests and the HUD look for it)
+]]
+
+local Theme = require(script.Parent.Theme)
+local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
+local make = Theme.make
+
+local PlayerStandingsStrip = {}
+PlayerStandingsStrip.__index = PlayerStandingsStrip
+
+PlayerStandingsStrip.CHIP_HEIGHT = 72
+PlayerStandingsStrip.GAP = 8
+
+-- Placement by Crowns, then coins; equal players share a place.
+function PlayerStandingsStrip.placements(seats): { [string]: number }
+	local sorted = table.clone(seats)
+	table.sort(sorted, function(a, b)
+		if a.Collectibles ~= b.Collectibles then
+			return a.Collectibles > b.Collectibles
+		end
+		return a.Coins > b.Coins
+	end)
+	local places = {}
+	for index, seat in sorted do
+		local before = sorted[index - 1]
+		local same = before and before.Collectibles == seat.Collectibles and before.Coins == seat.Coins
+		places[seat.Id] = if same then places[before.Id] else index
+	end
+	return places
+end
+
+function PlayerStandingsStrip.new(screen: ScreenGui)
+	local self = setmetatable({ Chips = {}, ChipWidth = 230 }, PlayerStandingsStrip)
+	self.Root = make("Frame", {
+		Name = "BoardStandings",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Size = UDim2.fromOffset(4 * 230 + 3 * PlayerStandingsStrip.GAP, PlayerStandingsStrip.CHIP_HEIGHT + 14),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			Padding = UDim.new(0, PlayerStandingsStrip.GAP),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	self.Scale = make("UIScale", { Parent = self.Root })
+	return self
+end
+
+function PlayerStandingsStrip:setChipWidth(width: number)
+	self.ChipWidth = width
+	self.Root.Size = UDim2.fromOffset(4 * width + 3 * PlayerStandingsStrip.GAP, PlayerStandingsStrip.CHIP_HEIGHT + 14)
+	for _, chip in self.Chips do
+		chip.Frame.Size = UDim2.fromOffset(width, PlayerStandingsStrip.CHIP_HEIGHT)
+	end
+end
+
+-- Portrait on the left with its place ("1st") and held-item badges on it, so the name and
+-- the Crown / coin line get the whole right side even on a narrow chip.
+local function newChip(self, id: string)
+	local h = PlayerStandingsStrip.CHIP_HEIGHT
+	local frame = Theme.glass(make("Frame", {
+		Name = "Chip",
+		Size = UDim2.fromOffset(self.ChipWidth, h),
+		Parent = self.Root,
+	}), 18)
+	local chip = { Frame = frame, Id = id }
+	chip.Stroke = frame:FindFirstChildOfClass("UIStroke")
+	chip.Portrait = make("ViewportFrame", {
+		Position = UDim2.fromOffset(6, 4),
+		Size = UDim2.fromOffset(h - 12, h - 12),
+		BackgroundColor3 = Theme.Glass.Deep,
+		BackgroundTransparency = 0.2,
+		Ambient = Color3.fromRGB(210, 210, 210),
+		LightColor = Color3.fromRGB(255, 244, 220),
+		Parent = frame,
+	}, { Theme.corner(999), Theme.stroke(Theme.Glass.Gold, 2) })
+	chip.Name = make("TextLabel", {
+		Position = UDim2.fromOffset(h + 6, 6),
+		Size = UDim2.new(1, -(h + 10), 0, 28),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 22,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Theme.Glass.Cream,
+		Parent = frame,
+	})
+	chip.Stats = make("TextLabel", {
+		Position = UDim2.fromOffset(h + 6, 38),
+		Size = UDim2.new(1, -(h + 10), 0, 26),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 20,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Theme.Glass.Gold,
+		Parent = frame,
+	})
+	-- Place: a small pill across the bottom of the portrait
+	chip.Place = make("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0, h / 2, 1, -1),
+		Size = UDim2.fromOffset(40, 20),
+		BackgroundColor3 = Theme.Glass.Deep,
+		Font = Theme.TitleFont,
+		TextSize = 16,
+		TextColor3 = Theme.Glass.Cream,
+		Parent = frame,
+	}, { Theme.corner(10), Theme.stroke(Theme.Glass.Gold, 1) })
+	-- Held item: a small badge on the portrait's top-right
+	chip.Item = make("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromOffset(h - 14, 0),
+		Size = UDim2.fromOffset(26, 22),
+		BackgroundColor3 = Theme.Glass.Deep,
+		Font = Theme.TitleFont,
+		TextSize = 14,
+		TextColor3 = Theme.Glass.Cream,
+		Visible = false,
+		Parent = frame,
+	}, { Theme.corner(8), Theme.stroke(Theme.Glass.Gold, 1) })
+	-- Active pointer under the chip
+	chip.Pointer = make("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 1, -2),
+		Size = UDim2.fromOffset(24, 16),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 18,
+		TextColor3 = Theme.Glass.Gold,
+		Text = "▼",
+		Visible = false,
+		Parent = frame,
+	})
+	self.Chips[id] = chip
+	return chip
+end
+
+function PlayerStandingsStrip:render(state, myId: string)
+	local places = PlayerStandingsStrip.placements(state.Seats)
+	local seen = {}
+	for _, seat in state.Seats do
+		seen[seat.Id] = true
+		local chip = self.Chips[seat.Id] or newChip(self, seat.Id)
+		local isTurn = seat.Id == state.TurnId
+		local isMe = seat.Id == myId
+		chip.Frame.LayoutOrder = seat.Order
+		chip.Name.Text = if isMe then "YOU" else seat.Name
+		chip.Stats.Text = if seat.OrderRolls and #seat.OrderRolls > 0
+			then "Rolled " .. table.concat(seat.OrderRolls, ", ")
+			else ("👑%d  💰%d"):format(seat.Collectibles, seat.Coins)
+		chip.Place.Text = Theme.ordinal(places[seat.Id] or 4)
+		chip.Place.TextColor3 = Theme.PlacementColors[places[seat.Id] or 4] or Theme.Glass.Cream
+		chip.Place.Visible = not (seat.OrderRolls and #seat.OrderRolls > 0)
+		local items = seat.Items or {}
+		chip.Item.Visible = #items > 0
+		chip.Item.Text = if #items > 0 then Theme.itemGlyph(items[1].Id) .. (if #items > 1 then "+" .. (#items - 1) else "") else ""
+		chip.Item.Size = UDim2.fromOffset(if #items > 1 then 38 else 26, 22)
+		-- Active player: thick gold edge, warmer fill and the pointer; you: a cream inner edge.
+		chip.Stroke.Thickness = if isTurn then 4 else if isMe then 2.5 else 1.5
+		chip.Stroke.Color = if isTurn then Theme.Glass.Gold elseif isMe then Theme.Glass.Cream else Theme.Glass.Gold
+		chip.Frame.BackgroundColor3 = if isTurn then Color3.fromRGB(40, 120, 104) else Theme.Glass.Fill
+		chip.Pointer.Visible = isTurn
+		if chip.Character ~= seat.Character then
+			chip.Character = seat.Character
+			ActivePlayerPortrait.mount(chip.Portrait, seat.Character, "Head")
+		end
+	end
+	for id, chip in self.Chips do
+		if not seen[id] then
+			chip.Frame:Destroy()
+			self.Chips[id] = nil
+		end
+	end
+end
+
+return PlayerStandingsStrip
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="106">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -21789,7 +22204,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="104">
+          <Item class="ModuleScript" referent="107">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -21908,7 +22323,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="105">
+          <Item class="ModuleScript" referent="108">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -22322,7 +22737,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="106">
+          <Item class="ModuleScript" referent="109">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -22411,7 +22826,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="107">
+          <Item class="ModuleScript" referent="110">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -22582,7 +22997,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="108">
+          <Item class="ModuleScript" referent="111">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -22608,6 +23023,61 @@ Theme.Colors = {
 	Muted = Color3.fromRGB(200, 190, 230),
 	Good = Color3.fromRGB(120, 255, 140),
 }
+
+-- Board-turn HUD: sea-green translucent glass with warm-gold edges and cream text
+-- (approved reference: docs/references/ui/board-turn-ui-v1.png).
+Theme.Glass = {
+	Fill = Color3.fromRGB(26, 92, 84),
+	Deep = Color3.fromRGB(12, 54, 50),
+	Transparency = 0.18,
+	Gold = Color3.fromRGB(240, 198, 96),
+	Cream = Color3.fromRGB(255, 248, 228),
+	Disabled = Color3.fromRGB(150, 170, 165),
+}
+
+-- Glass panel finish: corner, gold edge and a soft top-to-bottom gradient.
+function Theme.glass(frame: GuiObject, radius: number?, edge: number?)
+	frame.BackgroundColor3 = Theme.Glass.Fill
+	frame.BackgroundTransparency = Theme.Glass.Transparency
+	Theme.corner(radius or 16).Parent = frame
+	local stroke = Theme.stroke(Theme.Glass.Gold, edge or 2)
+	stroke.Transparency = 0.15
+	stroke.Parent = frame
+	Theme.make("UIGradient", {
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(170, 200, 195)),
+		Parent = frame,
+	})
+	return frame
+end
+
+-- One small original glyph per board item (standings badge, ITEMS menu).
+local ITEM_GLYPHS = {
+	DoubleDice = "2×",
+	TripleDice = "3×",
+	LuckyDie = "★",
+	CoinShield = "🛡",
+	SwapTicket = "⇄",
+	WarpToken = "➶",
+	Pickpocket = "✋",
+	CrownHeist = "👑",
+	GateKey = "🔑",
+	Snare = "⚠",
+	MoonDial = "☾",
+}
+function Theme.itemGlyph(id: string?): string
+	return ITEM_GLYPHS[id or ""] or "✦"
+end
+
+-- A short, quiet UI tick (Roblox's built-in slider sound: no uploaded asset needed).
+function Theme.tick(volume: number?)
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxasset://sounds/volume_slider.ogg"
+	sound.Volume = volume or 0.25
+	sound.Parent = game:GetService("SoundService")
+	game:GetService("SoundService"):PlayLocalSound(sound)
+	game:GetService("Debris"):AddItem(sound, 2)
+end
 
 Theme.TeamColors = {
 	[1] = Color3.fromRGB(255, 90, 90),
@@ -22720,7 +23190,639 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="109">
+          <Item class="ModuleScript" referent="112">
+            <Properties>
+              <string name="Name">TurnMenu</string>
+              <string name="Source"><![CDATA[--[[
+	TurnMenu
+	The left vertical turn menu: ROLL / ITEMS / MAP, and the item list that opens beside it.
+	ROLL is selected by default; the selected row gets the gold arrow, glow and a small pulse.
+	A disabled row stays visible, dimmed, and says why when you pick it.
+
+	Input: tap / click a row (a second tap on the selected row activates it); arrow keys, W/S or
+	the D-pad move; Enter or gamepad A activates; Backspace or B goes back from the item list.
+
+	  local menu = TurnMenu.new(screen, {
+	      Roll = fn(), Map = fn(), UseItem = fn(slot), Changed = fn(key) })
+	  menu:setRows({ Roll = { Visible, Enabled, Reason }, Items = {...}, Map = {..., Label} })
+	  menu:select(key)            "Roll" | "Items" | "Map"
+	  menu:openItems(items) / menu:closeItems()
+	  menu:bind() / menu:unbind() keyboard + gamepad while the menu is up
+	  menu.Root, menu.Rows.Roll.Button ("BoardRoll"), menu.Rows.Map.Button ("BoardMap"),
+	  menu.ItemPanel ("BoardItems": item buttons have LayoutOrder = slot)
+]]
+
+local ContextActionService = game:GetService("ContextActionService")
+local TweenService = game:GetService("TweenService")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local TurnMenu = {}
+TurnMenu.__index = TurnMenu
+
+TurnMenu.ROW = Vector2.new(240, 84) -- design px; 84 * 0.55 (smallest phone scale) = 46 px tall
+TurnMenu.GAP = 8
+TurnMenu.ITEM_ROW = Vector2.new(380, 84)
+local ORDER = { "Roll", "Items", "Map" }
+local NAV_ACTION = "PartyTurnMenuNav"
+local CREAM, GOLD, DEEP = Theme.Glass.Cream, Theme.Glass.Gold, Theme.Glass.Deep
+
+-- Original icons drawn from frames (crisp at any size) ------------------------------------------
+
+local function dieIcon(parent)
+	local face = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.62, 0.62),
+		Rotation = -10,
+		BackgroundColor3 = CREAM,
+		Parent = parent,
+	}, { Theme.corner(8), Theme.stroke(GOLD, 2) })
+	for _, p in { { 0.25, 0.25 }, { 0.75, 0.25 }, { 0.5, 0.5 }, { 0.25, 0.75 }, { 0.75, 0.75 } } do
+		make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(p[1], p[2]),
+			Size = UDim2.fromScale(0.2, 0.2),
+			BackgroundColor3 = DEEP,
+			Parent = face,
+		}, { Theme.corner(99) })
+	end
+end
+
+local function cardIcon(parent)
+	for i, rotation in { -14, 8 } do
+		local card = make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.44 + (i - 1) * 0.12, 0.5),
+			Size = UDim2.fromScale(0.42, 0.6),
+			Rotation = rotation,
+			BackgroundColor3 = if i == 2 then CREAM else Color3.fromRGB(120, 200, 180),
+			Parent = parent,
+		}, { Theme.corner(6), Theme.stroke(GOLD, 2) })
+		if i == 2 then
+			make("TextLabel", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 1,
+				Font = Theme.TitleFont,
+				TextScaled = true,
+				TextColor3 = GOLD,
+				Text = "★",
+				Parent = card,
+			})
+		end
+	end
+end
+
+local function mapIcon(parent)
+	for i = 1, 3 do
+		make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.3 + (i - 1) * 0.2, 0.5),
+			Size = UDim2.fromScale(0.22, 0.6),
+			Rotation = if i == 2 then 8 else -8,
+			BackgroundColor3 = if i == 2 then Color3.fromRGB(150, 215, 190) else CREAM,
+			BorderSizePixel = 0,
+			Parent = parent,
+		}, { Theme.stroke(GOLD, 1.5) })
+	end
+	make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.56, 0.42),
+		Size = UDim2.fromScale(0.16, 0.16),
+		BackgroundColor3 = Color3.fromRGB(230, 80, 80),
+		Parent = parent,
+	}, { Theme.corner(99) })
+end
+
+local ICONS = { Roll = dieIcon, Items = cardIcon, Map = mapIcon }
+local LABELS = { Roll = "ROLL", Items = "ITEMS", Map = "MAP" }
+local NAMES = { Roll = "BoardRoll", Items = "BoardItemsButton", Map = "BoardMap" }
+
+local function newRow(parent, key: string, order: number, size: Vector2, onClick)
+	local button = Theme.glass(make("TextButton", {
+		Name = NAMES[key] or key,
+		LayoutOrder = order,
+		Size = UDim2.fromOffset(size.X, size.Y),
+		AutoButtonColor = false,
+		Text = "",
+		Parent = parent,
+	}), 20)
+	local iconHolder = make("Frame", {
+		Position = UDim2.fromOffset(10, 10),
+		Size = UDim2.fromOffset(size.Y - 20, size.Y - 20),
+		BackgroundColor3 = DEEP,
+		BackgroundTransparency = 0.3,
+		Parent = button,
+	}, { Theme.corner(99) })
+	local label = make("TextLabel", {
+		Position = UDim2.fromOffset(size.Y, 8),
+		Size = UDim2.new(1, -size.Y - 8, 0, 40),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 34,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = CREAM,
+		Parent = button,
+	})
+	local note = make("TextLabel", {
+		Position = UDim2.fromOffset(size.Y, 48),
+		Size = UDim2.new(1, -size.Y - 8, 0, 26),
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextSize = 18,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = GOLD,
+		Parent = button,
+	})
+	local arrow = make("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(0, -2, 0.5, 0),
+		Size = UDim2.fromOffset(26, 40),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 34,
+		TextColor3 = GOLD,
+		Text = "▶",
+		Visible = false,
+		Parent = button,
+	}, { make("UIStroke", { Color = DEEP, Thickness = 2 }) })
+	local row = {
+		Key = key,
+		Button = button,
+		Icon = iconHolder,
+		Label = label,
+		Note = note,
+		Arrow = arrow,
+		Stroke = button:FindFirstChildOfClass("UIStroke"),
+		Scale = make("UIScale", { Parent = button }),
+		Enabled = true,
+		Reason = nil,
+	}
+	button.Activated:Connect(function()
+		onClick(row)
+	end)
+	return row
+end
+
+function TurnMenu.new(screen: ScreenGui, handlers)
+	local self = setmetatable({ Handlers = handlers, Rows = {}, Selected = "Roll", ItemRows = {}, ItemsOpen = false }, TurnMenu)
+	self.Root = make("Frame", {
+		Name = "TurnMenu",
+		Size = UDim2.fromOffset(TurnMenu.ROW.X, 3 * TurnMenu.ROW.Y + 2 * TurnMenu.GAP),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	})
+	self.Scale = make("UIScale", { Parent = self.Root })
+	local rows = make("Frame", {
+		Name = "Rows",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Parent = self.Root,
+	}, { make("UIListLayout", { Padding = UDim.new(0, TurnMenu.GAP), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	for order, key in ORDER do
+		local row = newRow(rows, key, order, TurnMenu.ROW, function(row)
+			if self.Selected == row.Key or not row.Enabled then
+				self:activate(row.Key)
+			else
+				self:select(row.Key)
+			end
+		end)
+		row.Label.Text = LABELS[key]
+		ICONS[key](row.Icon)
+		self.Rows[key] = row
+	end
+
+	-- Item list: opens to the right of the menu, same glass, with Back at the bottom.
+	self.ItemPanel = make("Frame", {
+		Name = "BoardItems",
+		Position = UDim2.new(1, 34, 0, 0),
+		Size = UDim2.fromOffset(TurnMenu.ITEM_ROW.X, TurnMenu.ITEM_ROW.Y),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = self.Root,
+	}, { make("UIListLayout", { Padding = UDim.new(0, TurnMenu.GAP), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	self:select("Roll")
+	return self
+end
+
+-- spec[key] = { Visible = bool, Enabled = bool, Reason = string?, Note = string?, Label = string? }
+function TurnMenu:setRows(spec)
+	for key, row in self.Rows do
+		local s = spec[key] or {}
+		row.Button.Visible = s.Visible ~= false
+		row.Enabled = s.Enabled ~= false
+		row.Reason = s.Reason
+		row.Label.Text = s.Label or LABELS[key]
+		row.Label.TextColor3 = if row.Enabled then CREAM else Theme.Glass.Disabled
+		row.Button.BackgroundTransparency = if row.Enabled then Theme.Glass.Transparency else 0.45
+		row.Icon.BackgroundTransparency = if row.Enabled then 0.3 else 0.6
+		row.BaseNote = s.Note or ""
+		row.Note.Text = row.BaseNote
+		row.Note.TextColor3 = GOLD
+	end
+	if not (self.Rows[self.Selected] and self.Rows[self.Selected].Button.Visible) then
+		for _, key in ORDER do
+			if self.Rows[key].Button.Visible then
+				self:select(key)
+				break
+			end
+		end
+	end
+	self:refreshSelection()
+end
+
+function TurnMenu:refreshSelection()
+	for key, row in self.Rows do
+		local selected = key == self.Selected and not self.ItemsOpen
+		local lit = key == self.Selected -- ITEMS stays lit while its list is open
+		row.Arrow.Visible = selected
+		row.Stroke.Thickness = if lit then 4 else 2
+		row.Button.BackgroundColor3 = if lit then Color3.fromRGB(44, 128, 112) else Theme.Glass.Fill
+		-- A disabled row explains itself while it's picked.
+		row.Note.Text = if selected and not row.Enabled and row.Reason then row.Reason else row.BaseNote or ""
+		row.Note.TextColor3 = if selected and not row.Enabled then Color3.fromRGB(255, 190, 170) else GOLD
+	end
+	for _, item in self.ItemRows do
+		local selected = self.ItemsOpen and item.Key == self.ItemSelected
+		item.Arrow.Visible = selected
+		item.Stroke.Thickness = if selected then 4 else 2
+		item.Button.BackgroundColor3 = if selected then Color3.fromRGB(44, 128, 112) else Theme.Glass.Fill
+	end
+end
+
+local function pulse(row)
+	row.Scale.Scale = 0.94
+	TweenService:Create(row.Scale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+end
+
+function TurnMenu:select(key: string)
+	if self.Selected ~= key then
+		Theme.tick(0.2)
+	end
+	self.Selected = key
+	self:refreshSelection()
+	local row = self.Rows[key]
+	if row then
+		pulse(row)
+	end
+	if self.Handlers.Changed then
+		self.Handlers.Changed(key)
+	end
+end
+
+function TurnMenu:activate(key: string)
+	local row = self.Rows[key]
+	if not row or not row.Button.Visible then
+		return
+	end
+	if self.Selected ~= key then
+		self:select(key)
+	end
+	if not row.Enabled then
+		-- Say why, with a small shake.
+		self:refreshSelection()
+		local x = row.Button.Position
+		TweenService:Create(row.Button, TweenInfo.new(0.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 3, true), { Position = x + UDim2.fromOffset(6, 0) }):Play()
+		return
+	end
+	pulse(row)
+	if key == "Roll" and self.Handlers.Roll then
+		self.Handlers.Roll()
+	elseif key == "Items" then
+		self:openItems(self.Items or {})
+	elseif key == "Map" and self.Handlers.Map then
+		self.Handlers.Map()
+	end
+end
+
+function TurnMenu:setItems(items)
+	local ids = {}
+	for _, item in items do
+		table.insert(ids, item.Id)
+	end
+	local key = table.concat(ids, ",")
+	self.Items = items
+	if self.ItemsOpen and key ~= self.ItemsKey then
+		self:openItems(items)
+	end
+	self.ItemsKey = key
+end
+
+function TurnMenu:openItems(items)
+	self.Items = items
+	for _, item in self.ItemRows do
+		item.Button:Destroy()
+	end
+	self.ItemRows = {}
+	local list = {}
+	for slot, item in items do
+		table.insert(list, { Key = slot, Item = item })
+	end
+	table.insert(list, { Key = "Back" })
+	for index, entry in list do
+		local row = newRow(self.ItemPanel, if entry.Item then "Item" .. entry.Key else "Back", if entry.Item then entry.Key else 99, TurnMenu.ITEM_ROW, function(row)
+			if self.ItemSelected == entry.Key then
+				self:activateItem(entry.Key)
+			else
+				self.ItemSelected = entry.Key
+				Theme.tick(0.2)
+				self:refreshSelection()
+			end
+		end)
+		row.Key = entry.Key
+		if entry.Item then
+			row.Label.Text = entry.Item.Name
+			row.Label.TextSize = 28
+			row.Note.Text = entry.Item.Description or ""
+			make("TextLabel", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 1,
+				Font = Theme.TitleFont,
+				TextScaled = true,
+				TextColor3 = CREAM,
+				Text = Theme.itemGlyph(entry.Item.Id),
+				Parent = row.Icon,
+			}, { Theme.padding(8) })
+		else
+			row.Label.Text = "Back"
+			row.Note.Text = "Roll without an item"
+			make("TextLabel", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 1,
+				Font = Theme.TitleFont,
+				TextScaled = true,
+				TextColor3 = CREAM,
+				Text = "◀",
+				Parent = row.Icon,
+			}, { Theme.padding(12) })
+		end
+		row.Index = index
+		table.insert(self.ItemRows, row)
+	end
+	self.ItemsOpen = true
+	self.ItemSelected = list[1].Key
+	self.ItemPanel.Visible = true
+	Theme.pop(self.ItemPanel)
+	self:refreshSelection()
+end
+
+function TurnMenu:closeItems()
+	if not self.ItemsOpen then
+		return
+	end
+	self.ItemsOpen = false
+	self.ItemPanel.Visible = false
+	self.Selected = "Roll"
+	self:refreshSelection()
+	if self.Handlers.Changed then
+		self.Handlers.Changed("Roll")
+	end
+end
+
+function TurnMenu:activateItem(key)
+	if key == "Back" then
+		self:closeItems()
+	elseif type(key) == "number" and self.Handlers.UseItem then
+		self.Handlers.UseItem(key)
+		self:closeItems()
+	end
+end
+
+local function step(self, direction: number)
+	if self.ItemsOpen then
+		local index = 1
+		for i, row in self.ItemRows do
+			if row.Key == self.ItemSelected then
+				index = i
+			end
+		end
+		index = math.clamp(index + direction, 1, #self.ItemRows)
+		self.ItemSelected = self.ItemRows[index].Key
+		Theme.tick(0.2)
+		self:refreshSelection()
+		return
+	end
+	local visible = {}
+	for _, key in ORDER do
+		if self.Rows[key].Button.Visible then
+			table.insert(visible, key)
+		end
+	end
+	local index = table.find(visible, self.Selected) or 1
+	local nextKey = visible[math.clamp(index + direction, 1, #visible)]
+	if nextKey then
+		self:select(nextKey)
+	end
+end
+
+function TurnMenu:bind()
+	ContextActionService:BindAction(NAV_ACTION, function(_, state, input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		local key = input.KeyCode
+		if key == Enum.KeyCode.Up or key == Enum.KeyCode.W or key == Enum.KeyCode.DPadUp then
+			step(self, -1)
+		elseif key == Enum.KeyCode.Down or key == Enum.KeyCode.S or key == Enum.KeyCode.DPadDown then
+			step(self, 1)
+		elseif key == Enum.KeyCode.Return or key == Enum.KeyCode.ButtonA then
+			if self.ItemsOpen then
+				self:activateItem(self.ItemSelected)
+			else
+				self:activate(self.Selected)
+			end
+		elseif key == Enum.KeyCode.Backspace or key == Enum.KeyCode.ButtonB then
+			self:closeItems()
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.W, Enum.KeyCode.S, Enum.KeyCode.DPadUp, Enum.KeyCode.DPadDown, Enum.KeyCode.Return, Enum.KeyCode.ButtonA, Enum.KeyCode.Backspace, Enum.KeyCode.ButtonB)
+end
+
+function TurnMenu:unbind()
+	ContextActionService:UnbindAction(NAV_ACTION)
+end
+
+return TurnMenu
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="113">
+            <Properties>
+              <string name="Name">TurnProgress</string>
+              <string name="Source"><![CDATA[--[[
+	TurnProgress
+	Small secondary pill, bottom centre: "Round 2 / 5 · Turn 3 / 4", with one short status line
+	under it ("Rolled 4 · 3 moves left", "Pip is deciding", bridge state).
+
+	  local progress = TurnProgress.new(screen)
+	  progress.Title.Text, progress.Subtitle.Text
+	  progress.Root                 named "BoardHeader" (tests and the HUD look for it)
+]]
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local TurnProgress = {}
+TurnProgress.__index = TurnProgress
+
+TurnProgress.SIZE = Vector2.new(520, 64) -- design px
+
+function TurnProgress.new(screen: ScreenGui)
+	local self = setmetatable({}, TurnProgress)
+	self.Root = Theme.glass(make("Frame", {
+		Name = "BoardHeader",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Size = UDim2.fromOffset(TurnProgress.SIZE.X, TurnProgress.SIZE.Y),
+		Visible = false,
+		Parent = screen,
+	}), 20)
+	self.Title = make("TextLabel", {
+		Position = UDim2.fromOffset(12, 5),
+		Size = UDim2.new(1, -24, 0, 28),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 24,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Theme.Glass.Cream,
+		Parent = self.Root,
+	})
+	self.Subtitle = make("TextLabel", {
+		Position = UDim2.fromOffset(12, 34),
+		Size = UDim2.new(1, -24, 0, 24),
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextSize = 18,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Theme.Glass.Gold,
+		Parent = self.Root,
+	})
+	self.Scale = make("UIScale", { Parent = self.Root })
+	return self
+end
+
+return TurnProgress
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="114">
+            <Properties>
+              <string name="Name">TurnStartBanner</string>
+              <string name="Source"><![CDATA[--[[
+	TurnStartBanner
+	"Aaron, start!": a wide translucent glass band across the upper gameplay area at the start
+	of every turn. Slides in, holds, slides out; the board stays visible through it.
+
+	  local banner = TurnStartBanner.new(screen)
+	  banner:play(text, short, onDone)    short = bot version
+	  banner.Root                         BoardView sets its top (below Roblox's top bar)
+
+	Timing: in 0.2 s, hold 0.85 s, out 0.2 s (bots: 0.15 / 0.5 / 0.15).
+]]
+
+local TweenService = game:GetService("TweenService")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local TurnStartBanner = {}
+TurnStartBanner.__index = TurnStartBanner
+
+TurnStartBanner.HEIGHT = 110 -- design px
+
+function TurnStartBanner.new(screen: ScreenGui)
+	local self = setmetatable({ Playing = 0 }, TurnStartBanner)
+	self.Root = make("Frame", {
+		Name = "TurnStartBanner",
+		Size = UDim2.new(1, 0, 0, TurnStartBanner.HEIGHT),
+		BackgroundColor3 = Theme.Glass.Deep,
+		BackgroundTransparency = 0.3,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Visible = false,
+		Parent = screen,
+	}, {
+		make("UIGradient", {
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.6),
+				NumberSequenceKeypoint.new(0.2, 0),
+				NumberSequenceKeypoint.new(0.8, 0),
+				NumberSequenceKeypoint.new(1, 0.6),
+			}),
+		}),
+	})
+	-- Thin gold rules above and below
+	for _, y in { 0, 1 } do
+		make("Frame", {
+			AnchorPoint = Vector2.new(0, y),
+			Position = UDim2.fromScale(0, y),
+			Size = UDim2.new(1, 0, 0, 3),
+			BackgroundColor3 = Theme.Glass.Gold,
+			BorderSizePixel = 0,
+			Parent = self.Root,
+		})
+	end
+	self.Label = make("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.new(1, -40, 0, 70),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 72,
+		TextColor3 = Theme.Glass.Cream,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = self.Root,
+	}, { make("UIStroke", { Color = Theme.Glass.Deep, Thickness = 3 }) })
+	self.Scale = make("UIScale", { Parent = self.Label })
+	return self
+end
+
+function TurnStartBanner:play(text: string, short: boolean?, onDone: (() -> ())?)
+	self.Playing += 1
+	local token = self.Playing
+	local inTime, hold, outTime = 0.2, 0.85, 0.2
+	if short then
+		inTime, hold, outTime = 0.15, 0.5, 0.15
+	end
+	self.Label.Text = text
+	self.Label.Position = UDim2.fromScale(-0.3, 0.5)
+	self.Root.BackgroundTransparency = 1
+	self.Root.Visible = true
+	Theme.tick(0.3)
+	TweenService:Create(self.Root, TweenInfo.new(inTime), { BackgroundTransparency = 0.3 }):Play()
+	TweenService:Create(self.Label, TweenInfo.new(inTime + 0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Position = UDim2.fromScale(0.5, 0.5) }):Play()
+	task.delay(inTime + hold, function()
+		if self.Playing ~= token then
+			return
+		end
+		TweenService:Create(self.Root, TweenInfo.new(outTime), { BackgroundTransparency = 1 }):Play()
+		TweenService:Create(self.Label, TweenInfo.new(outTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.fromScale(1.3, 0.5) }):Play()
+		task.delay(outTime, function()
+			if self.Playing ~= token then
+				return
+			end
+			self.Root.Visible = false
+			if onDone then
+				onDone()
+			end
+		end)
+	end)
+end
+
+function TurnStartBanner:stop()
+	self.Playing += 1
+	self.Root.Visible = false
+end
+
+return TurnStartBanner
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="115">
             <Properties>
               <string name="Name">VoteScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -22893,7 +23995,7 @@ return VoteScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="110">
+          <Item class="ModuleScript" referent="116">
             <Properties>
               <string name="Name">YouMarker</string>
               <string name="Source"><![CDATA[--[[
@@ -23067,18 +24169,18 @@ return YouMarker
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="111">
+  <Item class="Workspace" referent="117">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="112">
+    <Item class="Model" referent="118">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="113">
+      <Item class="Part" referent="119">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -23098,7 +24200,7 @@ return YouMarker
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="114">
+      <Item class="SpawnLocation" referent="120">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
