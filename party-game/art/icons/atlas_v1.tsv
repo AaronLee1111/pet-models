@@ -1,0 +1,55 @@
+# Production utility atlas v1 (approved selection, 2026-10-20). Paths are relative to the pack root.
+# atlas	semantic	pack	source (dark panel)	source (light panel, "-" = same cell tinted dark)	tint	min px	screen / note
+utility	Arrow	board-game-icons	PNG/Double (128px)/arrow_right.png	-	yes	24	Next; Back and Previous use the same cell rotated 180
+utility	Close	ui-pack	Vector/Grey/icon_cross.svg	-	yes	24	MAP CLOSE, shop CLOSE (SVG rendered, flattened to white for tinting)
+utility	Check	ui-pack	Vector/Grey/icon_checkmark.svg	-	yes	24	shop confirm, wear (SVG rendered, flattened to white)
+utility	Route	board-game-icons	PNG/Double (128px)/arrow_cross.png	-	yes	24	fork prompt, MAP routes
+utility	Gate	board-game-icons	PNG/Double (128px)/structure_gate.png	-	yes	24	MAP gates, toll prompt
+utility	Locked	board-game-icons	PNG/Double (128px)/lock_closed.png	-	yes	20	closed gate / exit, locked cosmetics
+utility	Timer	board-game-icons	PNG/Double (128px)/hourglass.png	-	yes	20	vote countdown, roll countdown
+utility	Placement	board-game-icons	PNG/Double (128px)/award.png	-	yes	24	results, final standings (tint per place)
+utility	Select	ui-pack	Vector/Extra/icon_play_light.svg	-	yes	20	selected menu row (SVG rendered)
+utility	Finish	board-game-icons	PNG/Double (128px)/flag_triangle.png	-	yes	20	race progress bar finish
+utility	Items	board-game-icons	PNG/Double (128px)/pouch.png	-	yes	36	turn menu ITEMS row
+utility	Pointer	input-prompts	Touch/Double/touch_finger_one.png	-	yes	40	onboarding hand (rotated per side)
+utility	Tap	input-prompts	Touch/Double/touch_tap.png	-	yes	24	"Tap the die", touch instructions
+utility	Move	input-prompts	Generic/Double/generic_stick.png	-	yes	24	instruction card: Move
+utility	NoMove	input-prompts	Flairs/Double/flair_disabled.png	-	no	24	drawn over Move: "can't walk this round"
+keyboard	KeySpace	input-prompts	Keyboard & Mouse/Double/keyboard_space.png	Keyboard & Mouse/Double/keyboard_space_outline.png	no	24	roll, Ice/Kernel actions
+keyboard	KeyEnter	input-prompts	Keyboard & Mouse/Double/keyboard_enter.png	Keyboard & Mouse/Double/keyboard_enter_outline.png	no	24	turn menu activate
+keyboard	KeyBackspace	input-prompts	Keyboard & Mouse/Double/keyboard_backspace.png	Keyboard & Mouse/Double/keyboard_backspace_outline.png	no	24	item list back
+keyboard	KeyM	input-prompts	Keyboard & Mouse/Double/keyboard_m.png	Keyboard & Mouse/Double/keyboard_m_outline.png	no	24	MAP
+keyboard	KeyE	input-prompts	Keyboard & Mouse/Double/keyboard_e.png	Keyboard & Mouse/Double/keyboard_e_outline.png	no	24	spectate next / actions
+keyboard	KeyQ	input-prompts	Keyboard & Mouse/Double/keyboard_q.png	Keyboard & Mouse/Double/keyboard_q_outline.png	no	24	spectate previous
+keyboard	KeyB	input-prompts	Keyboard & Mouse/Double/keyboard_b.png	Keyboard & Mouse/Double/keyboard_b_outline.png	no	24	shop toggle
+keyboard	KeyW	input-prompts	Keyboard & Mouse/Double/keyboard_w.png	Keyboard & Mouse/Double/keyboard_w_outline.png	no	24	menu up, minigames
+keyboard	KeyA	input-prompts	Keyboard & Mouse/Double/keyboard_a.png	Keyboard & Mouse/Double/keyboard_a_outline.png	no	24	left actions
+keyboard	KeyS	input-prompts	Keyboard & Mouse/Double/keyboard_s.png	Keyboard & Mouse/Double/keyboard_s_outline.png	no	24	menu down
+keyboard	KeyD	input-prompts	Keyboard & Mouse/Double/keyboard_d.png	Keyboard & Mouse/Double/keyboard_d_outline.png	no	24	right actions
+keyboard	KeyLeft	input-prompts	Keyboard & Mouse/Double/keyboard_arrow_left.png	Keyboard & Mouse/Double/keyboard_arrow_left_outline.png	no	24	left actions
+keyboard	KeyRight	input-prompts	Keyboard & Mouse/Double/keyboard_arrow_right.png	Keyboard & Mouse/Double/keyboard_arrow_right_outline.png	no	24	right actions
+keyboard	KeyUp	input-prompts	Keyboard & Mouse/Double/keyboard_arrow_up.png	Keyboard & Mouse/Double/keyboard_arrow_up_outline.png	no	24	menu up
+keyboard	KeyDown	input-prompts	Keyboard & Mouse/Double/keyboard_arrow_down.png	Keyboard & Mouse/Double/keyboard_arrow_down_outline.png	no	24	menu down
+gamepad	XboxA	input-prompts	Xbox Series/Double/xbox_button_color_a.png	-	no	24	coloured: same cell on light panels
+gamepad	XboxB	input-prompts	Xbox Series/Double/xbox_button_color_b.png	-	no	24	coloured
+gamepad	XboxX	input-prompts	Xbox Series/Double/xbox_button_color_x.png	-	no	24	coloured
+gamepad	XboxY	input-prompts	Xbox Series/Double/xbox_button_color_y.png	-	no	24	coloured
+gamepad	XboxLB	input-prompts	Xbox Series/Double/xbox_lb.png	Xbox Series/Double/xbox_lb_outline.png	no	24	spectate previous
+gamepad	XboxRB	input-prompts	Xbox Series/Double/xbox_rb.png	Xbox Series/Double/xbox_rb_outline.png	no	24	spectate next
+gamepad	XboxView	input-prompts	Xbox Series/Double/xbox_button_view.png	Xbox Series/Double/xbox_button_view_outline.png	no	24	shop toggle (ButtonSelect)
+gamepad	XboxUp	input-prompts	Xbox Series/Double/xbox_dpad_up.png	Xbox Series/Double/xbox_dpad_up_outline.png	no	24	menu up
+gamepad	XboxDown	input-prompts	Xbox Series/Double/xbox_dpad_down.png	Xbox Series/Double/xbox_dpad_down_outline.png	no	24	menu down
+gamepad	XboxLeft	input-prompts	Xbox Series/Double/xbox_dpad_left.png	Xbox Series/Double/xbox_dpad_left_outline.png	no	24	left actions
+gamepad	XboxRight	input-prompts	Xbox Series/Double/xbox_dpad_right.png	Xbox Series/Double/xbox_dpad_right_outline.png	no	24	right actions
+gamepad	PSCross	input-prompts	PlayStation Series/Double/playstation_button_color_cross.png	-	no	24	coloured (needs real-hardware detection check)
+gamepad	PSCircle	input-prompts	PlayStation Series/Double/playstation_button_color_circle.png	-	no	24	coloured
+gamepad	PSSquare	input-prompts	PlayStation Series/Double/playstation_button_color_square.png	-	no	24	coloured
+gamepad	PSTriangle	input-prompts	PlayStation Series/Double/playstation_button_color_triangle.png	-	no	24	coloured
+gamepad	PSL1	input-prompts	PlayStation Series/Double/playstation_trigger_l1.png	PlayStation Series/Double/playstation_trigger_l1_outline.png	no	24	spectate previous
+gamepad	PSR1	input-prompts	PlayStation Series/Double/playstation_trigger_r1.png	PlayStation Series/Double/playstation_trigger_r1_outline.png	no	24	spectate next
+gamepad	PSCreate	input-prompts	PlayStation Series/Double/playstation5_button_create.png	PlayStation Series/Double/playstation5_button_create_outline.png	no	24	shop toggle (ButtonSelect)
+gamepad	PSUp	input-prompts	PlayStation Series/Double/playstation_dpad_up.png	PlayStation Series/Double/playstation_dpad_up_outline.png	no	24	menu up
+gamepad	PSDown	input-prompts	PlayStation Series/Double/playstation_dpad_down.png	PlayStation Series/Double/playstation_dpad_down_outline.png	no	24	menu down
+gamepad	PSLeft	input-prompts	PlayStation Series/Double/playstation_dpad_left.png	PlayStation Series/Double/playstation_dpad_left_outline.png	no	24	left actions
+gamepad	PSRight	input-prompts	PlayStation Series/Double/playstation_dpad_right.png	PlayStation Series/Double/playstation_dpad_right_outline.png	no	24	right actions
+gamepad	GamepadAction	input-prompts	Generic/Double/generic_button_circle_fill.png	Generic/Double/generic_button_circle_outline.png	no	24	neutral fallback; the button letter stays native text on top

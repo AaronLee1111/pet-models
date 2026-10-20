@@ -1,0 +1,1135 @@
+{
+ "Cell": 128,
+ "Files": {
+  "utility": "ui_utility_v1.png",
+  "keyboard": "ui_keyboard_v1.png",
+  "gamepad": "ui_gamepad_v1.png"
+ },
+ "Icons": {
+  "Arrow": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "Next; Back and Previous use the same cell rotated 180",
+   "Offset": [
+    0,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 0
+  },
+  "Close": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "MAP CLOSE, shop CLOSE (SVG rendered, flattened to white for tinting)",
+   "Offset": [
+    128,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 1
+  },
+  "Check": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "shop confirm, wear (SVG rendered, flattened to white)",
+   "Offset": [
+    256,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 2
+  },
+  "Route": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "fork prompt, MAP routes",
+   "Offset": [
+    384,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 3
+  },
+  "Gate": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "MAP gates, toll prompt",
+   "Offset": [
+    512,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 4
+  },
+  "Locked": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 20,
+   "Note": "closed gate / exit, locked cosmetics",
+   "Offset": [
+    640,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 5
+  },
+  "Timer": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 20,
+   "Note": "vote countdown, roll countdown",
+   "Offset": [
+    768,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 6
+  },
+  "Placement": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "results, final standings (tint per place)",
+   "Offset": [
+    896,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 7
+  },
+  "Select": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 20,
+   "Note": "selected menu row (SVG rendered)",
+   "Offset": [
+    0,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 8
+  },
+  "Finish": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 20,
+   "Note": "race progress bar finish",
+   "Offset": [
+    128,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 9
+  },
+  "Items": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 36,
+   "Note": "turn menu ITEMS row",
+   "Offset": [
+    256,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 10
+  },
+  "Pointer": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 40,
+   "Note": "onboarding hand (rotated per side)",
+   "Offset": [
+    384,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 11
+  },
+  "Tap": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "Tap the die, touch instructions",
+   "Offset": [
+    512,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 12
+  },
+  "Move": {
+   "Atlas": "utility",
+   "Tint": true,
+   "MinPx": 24,
+   "Note": "instruction card: Move",
+   "Offset": [
+    640,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 13
+  },
+  "NoMove": {
+   "Atlas": "utility",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "drawn over Move: \"can't walk this round\"",
+   "Offset": [
+    768,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 14
+  },
+  "KeySpace": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "roll, Ice/Kernel actions",
+   "Offset": [
+    0,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 0,
+   "Light": {
+    "Offset": [
+     128,
+     0
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 1
+   }
+  },
+  "KeyEnter": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "turn menu activate",
+   "Offset": [
+    256,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 2,
+   "Light": {
+    "Offset": [
+     384,
+     0
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 3
+   }
+  },
+  "KeyBackspace": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "item list back",
+   "Offset": [
+    512,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 4,
+   "Light": {
+    "Offset": [
+     640,
+     0
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 5
+   }
+  },
+  "KeyM": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "MAP",
+   "Offset": [
+    768,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 6,
+   "Light": {
+    "Offset": [
+     896,
+     0
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 7
+   }
+  },
+  "KeyE": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "spectate next / actions",
+   "Offset": [
+    0,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 8,
+   "Light": {
+    "Offset": [
+     128,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 9
+   }
+  },
+  "KeyQ": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "spectate previous",
+   "Offset": [
+    256,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 10,
+   "Light": {
+    "Offset": [
+     384,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 11
+   }
+  },
+  "KeyB": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "shop toggle",
+   "Offset": [
+    512,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 12,
+   "Light": {
+    "Offset": [
+     640,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 13
+   }
+  },
+  "KeyW": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu up, minigames",
+   "Offset": [
+    768,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 14,
+   "Light": {
+    "Offset": [
+     896,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 15
+   }
+  },
+  "KeyA": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "left actions",
+   "Offset": [
+    0,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 16,
+   "Light": {
+    "Offset": [
+     128,
+     256
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 17
+   }
+  },
+  "KeyS": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu down",
+   "Offset": [
+    256,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 18,
+   "Light": {
+    "Offset": [
+     384,
+     256
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 19
+   }
+  },
+  "KeyD": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "right actions",
+   "Offset": [
+    512,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 20,
+   "Light": {
+    "Offset": [
+     640,
+     256
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 21
+   }
+  },
+  "KeyLeft": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "left actions",
+   "Offset": [
+    768,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 22,
+   "Light": {
+    "Offset": [
+     896,
+     256
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 23
+   }
+  },
+  "KeyRight": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "right actions",
+   "Offset": [
+    0,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 24,
+   "Light": {
+    "Offset": [
+     128,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 25
+   }
+  },
+  "KeyUp": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu up",
+   "Offset": [
+    256,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 26,
+   "Light": {
+    "Offset": [
+     384,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 27
+   }
+  },
+  "KeyDown": {
+   "Atlas": "keyboard",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu down",
+   "Offset": [
+    512,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 28,
+   "Light": {
+    "Offset": [
+     640,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 29
+   }
+  },
+  "XboxA": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured: same cell on light panels",
+   "Offset": [
+    0,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 0
+  },
+  "XboxB": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured",
+   "Offset": [
+    128,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 1
+  },
+  "XboxX": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured",
+   "Offset": [
+    256,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 2
+  },
+  "XboxY": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured",
+   "Offset": [
+    384,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 3
+  },
+  "XboxLB": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "spectate previous",
+   "Offset": [
+    512,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 4,
+   "Light": {
+    "Offset": [
+     640,
+     0
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 5
+   }
+  },
+  "XboxRB": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "spectate next",
+   "Offset": [
+    768,
+    0
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 6,
+   "Light": {
+    "Offset": [
+     896,
+     0
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 7
+   }
+  },
+  "XboxView": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "shop toggle (ButtonSelect)",
+   "Offset": [
+    0,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 8,
+   "Light": {
+    "Offset": [
+     128,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 9
+   }
+  },
+  "XboxUp": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu up",
+   "Offset": [
+    256,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 10,
+   "Light": {
+    "Offset": [
+     384,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 11
+   }
+  },
+  "XboxDown": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu down",
+   "Offset": [
+    512,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 12,
+   "Light": {
+    "Offset": [
+     640,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 13
+   }
+  },
+  "XboxLeft": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "left actions",
+   "Offset": [
+    768,
+    128
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 14,
+   "Light": {
+    "Offset": [
+     896,
+     128
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 15
+   }
+  },
+  "XboxRight": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "right actions",
+   "Offset": [
+    0,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 16,
+   "Light": {
+    "Offset": [
+     128,
+     256
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 17
+   }
+  },
+  "PSCross": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured (needs real-hardware detection check)",
+   "Offset": [
+    256,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 18
+  },
+  "PSCircle": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured",
+   "Offset": [
+    384,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 19
+  },
+  "PSSquare": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured",
+   "Offset": [
+    512,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 20
+  },
+  "PSTriangle": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "coloured",
+   "Offset": [
+    640,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 21
+  },
+  "PSL1": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "spectate previous",
+   "Offset": [
+    768,
+    256
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 22,
+   "Light": {
+    "Offset": [
+     896,
+     256
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 23
+   }
+  },
+  "PSR1": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "spectate next",
+   "Offset": [
+    0,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 24,
+   "Light": {
+    "Offset": [
+     128,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 25
+   }
+  },
+  "PSCreate": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "shop toggle (ButtonSelect)",
+   "Offset": [
+    256,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 26,
+   "Light": {
+    "Offset": [
+     384,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 27
+   }
+  },
+  "PSUp": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu up",
+   "Offset": [
+    512,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 28,
+   "Light": {
+    "Offset": [
+     640,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 29
+   }
+  },
+  "PSDown": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "menu down",
+   "Offset": [
+    768,
+    384
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 30,
+   "Light": {
+    "Offset": [
+     896,
+     384
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 31
+   }
+  },
+  "PSLeft": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "left actions",
+   "Offset": [
+    0,
+    512
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 32,
+   "Light": {
+    "Offset": [
+     128,
+     512
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 33
+   }
+  },
+  "PSRight": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "right actions",
+   "Offset": [
+    256,
+    512
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 34,
+   "Light": {
+    "Offset": [
+     384,
+     512
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 35
+   }
+  },
+  "GamepadAction": {
+   "Atlas": "gamepad",
+   "Tint": false,
+   "MinPx": 24,
+   "Note": "neutral fallback; the button letter stays native text on top",
+   "Offset": [
+    512,
+    512
+   ],
+   "Size": [
+    128,
+    128
+   ],
+   "Index": 36,
+   "Light": {
+    "Offset": [
+     640,
+     512
+    ],
+    "Size": [
+     128,
+     128
+    ],
+    "Index": 37
+   }
+  }
+ }
+}
