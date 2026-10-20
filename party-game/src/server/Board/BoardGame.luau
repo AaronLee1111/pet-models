@@ -696,11 +696,9 @@ local function takeTurn(seat)
 		then ("%s rolled %s = %d"):format(seat.Participant.Name, table.concat(dice, " + "), roll)
 		else ("%s rolled a %d"):format(seat.Participant.Name, roll)
 	publish()
-	-- Thrown-dice boards give the die time to fly and land before the first hop; bots get the
-	-- short version. Other boards keep the old beat.
-	task.wait(if match.Board.Presentation == "Diorama"
-		then (if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
-		else 0.8)
+	-- Every board throws a physical die: give it time to fly and land before the first hop;
+	-- bots get the short version.
+	task.wait(if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
 
 	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
 		current.Remaining = remaining
