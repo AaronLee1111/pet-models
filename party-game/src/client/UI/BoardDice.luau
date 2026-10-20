@@ -1,6 +1,6 @@
 --[[
 	BoardDice
-	The thrown-dice moment on boards with Presentation = "Diorama" (Sunny Loop v2). Purely
+	The thrown-dice moment on every board (DicePrompt's hovering die is the same die). Purely
 	local presentation: the server has already decided the number (state.DiceFaces); this only
 	shows it.
 
@@ -35,6 +35,8 @@ local SIZE = 3.4
 local FLIGHT = 0.75 -- seconds in the air (full version)
 local FLIGHT_SHORT = 0.5
 local MIN_TUMBLE = 0.6 -- the local throw never settles sooner than this, even on a fast server
+-- The throw starts where DicePrompt's die hovers (kept in sync with DicePrompt.HOVER).
+local HOVER = Vector3.new(0, if game:GetService("UserInputService").TouchEnabled then 5.5 else 8.4, 0)
 
 -- Number n is printed on FACES[n].Face; FACES[n].Up is the rotation that turns that face to
 -- point up (+Y). Opposite faces add up to 7, like a real die.
@@ -121,6 +123,8 @@ local function makeDie(): Part
 	return die
 end
 
+BoardDice.makeDie = makeDie -- DicePrompt's hovering die is the same die
+
 function BoardDice.new()
 	return setmetatable({ Throw = nil }, BoardDice)
 end
@@ -193,7 +197,7 @@ function BoardDice:throw(character: Model?, count: number, faces: { number }?, s
 	local still = reducedMotion()
 	for i = 1, math.max(1, count) do
 		local die = makeDie()
-		local from = root.Position + Vector3.new(0, 3.4, 0)
+		local from = root.Position + HOVER -- where DicePrompt's die hovers
 		local to = landingSpot(root, i, count)
 		die.CFrame = CFrame.new(from)
 		die.Parent = camera

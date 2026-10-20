@@ -22,6 +22,61 @@ Theme.Colors = {
 	Good = Color3.fromRGB(120, 255, 140),
 }
 
+-- Board-turn HUD: sea-green translucent glass with warm-gold edges and cream text
+-- (approved reference: docs/references/ui/board-turn-ui-v1.png).
+Theme.Glass = {
+	Fill = Color3.fromRGB(26, 92, 84),
+	Deep = Color3.fromRGB(12, 54, 50),
+	Transparency = 0.18,
+	Gold = Color3.fromRGB(240, 198, 96),
+	Cream = Color3.fromRGB(255, 248, 228),
+	Disabled = Color3.fromRGB(150, 170, 165),
+}
+
+-- Glass panel finish: corner, gold edge and a soft top-to-bottom gradient.
+function Theme.glass(frame: GuiObject, radius: number?, edge: number?)
+	frame.BackgroundColor3 = Theme.Glass.Fill
+	frame.BackgroundTransparency = Theme.Glass.Transparency
+	Theme.corner(radius or 16).Parent = frame
+	local stroke = Theme.stroke(Theme.Glass.Gold, edge or 2)
+	stroke.Transparency = 0.15
+	stroke.Parent = frame
+	Theme.make("UIGradient", {
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(170, 200, 195)),
+		Parent = frame,
+	})
+	return frame
+end
+
+-- One small original glyph per board item (standings badge, ITEMS menu).
+local ITEM_GLYPHS = {
+	DoubleDice = "2×",
+	TripleDice = "3×",
+	LuckyDie = "★",
+	CoinShield = "🛡",
+	SwapTicket = "⇄",
+	WarpToken = "➶",
+	Pickpocket = "✋",
+	CrownHeist = "👑",
+	GateKey = "🔑",
+	Snare = "⚠",
+	MoonDial = "☾",
+}
+function Theme.itemGlyph(id: string?): string
+	return ITEM_GLYPHS[id or ""] or "✦"
+end
+
+-- A short, quiet UI tick (Roblox's built-in slider sound: no uploaded asset needed).
+function Theme.tick(volume: number?)
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxasset://sounds/volume_slider.ogg"
+	sound.Volume = volume or 0.25
+	sound.Parent = game:GetService("SoundService")
+	game:GetService("SoundService"):PlayLocalSound(sound)
+	game:GetService("Debris"):AddItem(sound, 2)
+end
+
 Theme.TeamColors = {
 	[1] = Color3.fromRGB(255, 90, 90),
 	[2] = Color3.fromRGB(90, 160, 255),
