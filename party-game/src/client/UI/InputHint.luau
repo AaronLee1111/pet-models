@@ -9,6 +9,8 @@
 
 local UserInputService = game:GetService("UserInputService")
 
+local Icons = require(script.Parent.Icons)
+
 local InputHint = {}
 
 function InputHint.mode(): string
@@ -32,10 +34,10 @@ local KEY_NAMES = {
 	Two = "2",
 	Three = "3",
 	Four = "4",
-	Left = "←",
-	Right = "→",
-	Up = "↑",
-	Down = "↓",
+	Left = "LEFT",
+	Right = "RIGHT",
+	Up = "UP",
+	Down = "DOWN",
 	Return = "ENTER",
 	LeftShift = "SHIFT",
 }
@@ -55,6 +57,15 @@ function InputHint.keyName(name: string?): string?
 		return "D-PAD " .. string.upper(string.sub(name, 5))
 	end
 	return string.upper(name)
+end
+
+-- Atlas prompt for a KeyCode name on this device ("Space" -> KeySpace, "ButtonA" -> XboxA /
+-- PSCross / GamepadAction), or nil when the atlas has no prompt for it (callers keep the text).
+function InputHint.prompt(name: string?): string?
+	local ok, keyCode = pcall(function()
+		return (Enum.KeyCode :: any)[name]
+	end)
+	return if ok and keyCode then Icons.button(keyCode) else nil
 end
 
 -- The gamepad button a minigame action is bound to (Controls uses the same defaults).

@@ -6,6 +6,7 @@
 
 local Workspace = game:GetService("Workspace")
 
+local Icons = require(script.Parent.Icons)
 local InputHint = require(script.Parent.InputHint)
 local Theme = require(script.Parent.Theme)
 local make = Theme.make
@@ -49,12 +50,24 @@ function InstructionsCard.new(screen: ScreenGui)
 		Size = UDim2.fromScale(1, 0.28),
 		Parent = self.Root,
 	}, 26)
-	self.Controls = Theme.label({
-		Position = UDim2.fromScale(0, 0.6),
-		Size = UDim2.fromScale(1, 0.13),
-		TextColor3 = Theme.Colors.Good,
+	-- Controls: one row of [prompt icon] text items, centred (see controlParts).
+	self.Controls = make("Frame", {
+		Name = "Controls",
+		Position = UDim2.fromScale(0, 0.585),
+		Size = UDim2.fromScale(1, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, -- a long row wraps onto a second line (icons stay >= 24 px)
+		BackgroundTransparency = 1,
 		Parent = self.Root,
-	}, 24)
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 10), -- between items and between wrapped lines
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Wraps = true,
+		}),
+	})
 	self.Teams = Theme.label({
 		Position = UDim2.fromScale(0, 0.74),
 		Size = UDim2.fromScale(1, 0.12),
@@ -71,29 +84,118 @@ function InstructionsCard.new(screen: ScreenGui)
 	return self
 end
 
--- mode = InputHint.mode(): touch shows only the button labels, a keyboard shows the key,
--- a gamepad shows the controller button when the action has one.
-function InstructionsCard.controlsText(controls, mode: string): string
+-- The controls line as parts: { Icon = atlas name?, Overlay = atlas name?, Key = KeyCode name?,
+-- Letter = native text drawn on the icon?, Text = what it says }. mode = InputHint.mode(): touch shows the tap prompt
+-- and the button label only, a keyboard shows the key, a gamepad its controller button. Inputs
+-- the atlas has no prompt for keep the old "[KEY]" text.
+function InstructionsCard.controlParts(controls, mode: string)
 	local parts = {}
 	if controls.Move and controls.Jump then
-		table.insert(parts, "🕹 Move + Jump")
+		table.insert(parts, { Icon = "Move", Text = "Move + Jump" })
 	elseif controls.Move then
-		table.insert(parts, "🕹 Move (no jumping)")
+		table.insert(parts, { Icon = "Move", Text = "Move (no jumping)" })
 	else
-		table.insert(parts, "🔒 You can't walk this round")
+		table.insert(parts, { Icon = "Move", Overlay = "NoMove", Text = "You can't walk this round" })
 	end
 	for index, action in controls.Actions do
-		local input = if mode == "Mouse"
-			then InputHint.keyName(InputHint.keyFor(action))
-			elseif mode == "Gamepad" then InputHint.keyName(InputHint.gamepadFor(action, index))
+		local name = if mode == "Mouse"
+			then InputHint.keyFor(action)
+			elseif mode == "Gamepad" then InputHint.gamepadFor(action, index)
 			else nil
-		if input then
-			table.insert(parts, ("[%s] %s"):format(input, action.Label))
+		local icon = name and InputHint.prompt(name)
+		if mode == "Touch" then
+			table.insert(parts, { Icon = "Tap", Text = ("%s button"):format(action.Label) })
+		elseif icon then
+			table.insert(parts, { Icon = icon, Key = name, Letter = if icon == "GamepadAction" then InputHint.keyName(name) else nil, Text = action.Label })
+		elseif name then
+			table.insert(parts, { Text = ("[%s] %s"):format(InputHint.keyName(name), action.Label) })
 		else
-			table.insert(parts, ("👆 %s button"):format(action.Label))
+			table.insert(parts, { Text = action.Label })
 		end
 	end
-	return table.concat(parts, "    ")
+	return parts
+end
+
+-- Plain-text version of the same line (logs, tests, screen readers).
+function InstructionsCard.controlsText(controls, mode: string): string
+	local out = {}
+	for _, part in InstructionsCard.controlParts(controls, mode) do
+		table.insert(out, if part.Key then ("[%s] %s"):format(InputHint.keyName(part.Key), part.Text) else part.Text)
+	end
+	return table.concat(out, "    ")
+end
+
+-- Draws the parts into the Controls row. light = the card is a light panel (outline / dark cells).
+local function renderControls(self, parts, light: boolean)
+	for _, child in self.Controls:GetChildren() do
+		if child:IsA("GuiObject") then
+			child:Destroy()
+		end
+	end
+	local rowHeight = self.Root.AbsoluteSize.Y * 0.13 -- one line's share of the card
+	local iconSize = math.floor(math.clamp(rowHeight * 0.8, 24, 40))
+	local textSize = math.floor(math.clamp(rowHeight * 0.45, 14, 24))
+	local textColour = if light then Theme.Glass.Deep else Theme.Colors.Good
+	for order, part in parts do
+		local item = make("Frame", {
+			LayoutOrder = order,
+			Size = UDim2.fromOffset(0, iconSize),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundTransparency = 1,
+			Parent = self.Controls,
+		}, {
+			make("UIListLayout", {
+				FillDirection = Enum.FillDirection.Horizontal,
+				VerticalAlignment = Enum.VerticalAlignment.Center,
+				Padding = UDim.new(0, 6),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			}),
+			make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }),
+		})
+		local props = part.Icon and Icons.image(part.Icon, nil, light)
+		if props then
+			local icon = make("ImageLabel", {
+				Name = "Icon_" .. part.Icon,
+				LayoutOrder = 1,
+				Size = UDim2.fromOffset(iconSize, iconSize),
+				BackgroundTransparency = 1,
+				ScaleType = Enum.ScaleType.Fit,
+				Parent = item,
+			})
+			for key, value in props do
+				(icon :: any)[key] = value
+			end
+			local overlay = part.Overlay and Icons.image(part.Overlay, nil, light)
+			if overlay then
+				local layer = make("ImageLabel", { Name = "Overlay", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = icon })
+				for key, value in overlay do
+					(layer :: any)[key] = value
+				end
+			end
+			if part.Letter then
+				make("TextLabel", {
+					Size = UDim2.fromScale(1, 1),
+					BackgroundTransparency = 1,
+					Font = Theme.TitleFont,
+					TextScaled = true,
+					TextColor3 = Theme.Glass.Deep,
+					Text = part.Letter,
+					Parent = icon,
+				}, { make("UIPadding", { PaddingTop = UDim.new(0.22, 0), PaddingBottom = UDim.new(0.22, 0) }) })
+			end
+		end
+		make("TextLabel", {
+			LayoutOrder = 2,
+			Size = UDim2.fromOffset(0, iconSize),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundTransparency = 1,
+			Font = Theme.BodyFont,
+			TextSize = textSize,
+			TextColor3 = textColour,
+			Text = part.Text,
+			Parent = item,
+		})
+	end
 end
 
 local function teamsText(participants, myId: string): string
@@ -126,7 +228,9 @@ function InstructionsCard:show(minigame, participants, endsAt: number, myId: str
 	self.Title.Text = minigame.Name
 	self.Layout.Text = ("%s  •  %d seconds"):format(minigame.Layout, minigame.Duration)
 	self.Description.Text = minigame.Description
-	self.Controls.Text = InstructionsCard.controlsText(minigame.Controls, InputHint.mode())
+	local bg = self.Root.BackgroundColor3
+	local light = 0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B > 0.6
+	renderControls(self, InstructionsCard.controlParts(minigame.Controls, InputHint.mode()), light)
 	self.Teams.Text = teamsText(participants, myId)
 	self.Root.Visible = true
 	Theme.pop(self.Root)

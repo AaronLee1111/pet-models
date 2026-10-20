@@ -405,6 +405,29 @@ test("instructions: touch shows the action without keyboard hints; desktop and g
 	ok(string.find(InstructionsCard.controlsText(mashDash, "Gamepad"), "[A] MASH!", 1, true) ~= nil, "gamepad button")
 end)
 
+test("instructions: prompts come from the icon atlas; movement off draws the overlay", function()
+	local InstructionsCard = require(Client.UI.InstructionsCard)
+	local mashDash = { Move = false, Jump = false, Actions = { { Action = "Mash", Label = "MASH!", Key = "Space", Gamepad = "ButtonA" } } }
+	local desktop = InstructionsCard.controlParts(mashDash, "Mouse")
+	eq(desktop[1].Icon, "Move", "movement item")
+	eq(desktop[1].Overlay, "NoMove", "can't walk: overlay")
+	eq(desktop[2].Icon, "KeySpace", "Space key prompt")
+	local touch = InstructionsCard.controlParts(mashDash, "Touch")
+	eq(touch[2].Icon, "Tap", "touch: tap prompt")
+	local pad = InstructionsCard.controlParts(mashDash, "Gamepad")
+	ok(pad[2].Icon == "XboxA" or pad[2].Icon == "PSCross" or pad[2].Icon == "GamepadAction", "gamepad prompt: " .. tostring(pad[2].Icon))
+	local walk = InstructionsCard.controlParts({ Move = true, Jump = true, Actions = {} }, "Mouse")
+	eq(walk[1].Overlay, nil, "can walk: no overlay")
+	local unknown = InstructionsCard.controlParts({ Move = true, Jump = false, Actions = { { Label = "GO", Key = "LeftShift" } } }, "Mouse")
+	eq(unknown[2].Icon, nil, "no atlas prompt for Shift")
+	eq(unknown[2].Text, "[SHIFT] GO", "falls back to text")
+	local Icons = require(Client.UI.Icons)
+	for _, name in { "Move", "NoMove", "Tap", "KeySpace", "XboxA", "PSCross", "GamepadAction" } do
+		ok(Icons.image(name) ~= nil, "atlas has " .. name)
+	end
+	ok(Icons.image("KeySpace", nil, true).ImageRectOffset ~= Icons.image("KeySpace").ImageRectOffset, "light panel uses the outline cell")
+end)
+
 -- YOU marker --------------------------------------------------------------------------------------
 
 local YouMarker = require(Client.UI.YouMarker)
