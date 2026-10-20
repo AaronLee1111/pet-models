@@ -7,7 +7,7 @@ Writes (nothing outside art/icons):
   export/v1/ui_keyboard_v1.png  1024x512   keyboard keys: filled (dark panels) + outline (light panels)
   export/v1/ui_gamepad_v1.png   1024x640   Xbox / PlayStation / neutral prompts, untinted
   export/v1/atlas_v1.json       semantic name -> atlas, cell rect, light-panel cell, tint, min px
-  Icons.draft.luau              registry generated from the JSON (kept outside src/)
+  src/client/UI/Icons.luau      registry generated from the JSON + Icons.template.luau
   review/utility-atlas-candidate-v1.png   atlases on dark + light, every icon at its phone minimum
 
 Cells are 128 px; every icon is fitted (never enlarged) into a centred 104 px box, so padding and
@@ -138,7 +138,8 @@ def write_registry(entries):
         light = f", Light = {{ {e['Light']['Offset'][0]}, {e['Light']['Offset'][1]} }}" if "Light" in e else ""
         lines.append(f"\t{name} = {{ Atlas = \"{e['Atlas']}\", Offset = {{ {e['Offset'][0]}, {e['Offset'][1]} }}{light}, Tint = {str(e['Tint']).lower()}, MinPx = {e['MinPx']} }},")
     template = open(os.path.join(ICONS, "Icons.template.luau"), encoding="utf-8").read()
-    open(os.path.join(ICONS, "Icons.draft.luau"), "w", encoding="utf-8").write(template.replace("--@REGISTRY", "\n".join(lines)))
+    out = os.path.join(os.path.dirname(os.path.dirname(ICONS)), "src", "client", "UI", "Icons.luau")
+    open(out, "w", encoding="utf-8").write(template.replace("--@REGISTRY", "\n".join(lines)))
 
 
 def review(entries, atlases, cells):

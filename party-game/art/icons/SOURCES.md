@@ -1,6 +1,16 @@
 # Icon sources
 
-Status: **production utility atlas candidate v1 - not approved, not uploaded, not used by the game.**
+Status: **utility atlas v1 approved and uploaded 2026-10-20** (via Studio, by the project owner's approval). Used by
+`src/client/UI/Icons.luau` (generated; currently only InstructionsCard / InputHint use it).
+
+| File | Size | SHA-256 | Roblox asset |
+|---|---|---|---|
+| `export/v1/ui_utility_v1.png` | 1024x256 | `e3cbd87b5664ea33c5389f47461cfb4ec06609c4c3a102fd0671560f95531c97` | `rbxassetid://94586884960004` |
+| `export/v1/ui_keyboard_v1.png` | 1024x512 | `6e0bf537db5ea81c44b3c2541f539e7343831c5bfd6aad1e059f7b98ea22d549` | `rbxassetid://80544408802327` |
+| `export/v1/ui_gamepad_v1.png` | 1024x640 | `db494cf9e47a2bfd5da740d820330c4f4f16254d0c5d11a7785e3621647cc93e` | `rbxassetid://84422751948872` |
+
+Verified after upload in Studio: dimensions unchanged, transparent corners, opaque glyphs; cream / gold / grey tint on
+dark panels, deep tint + outline cells on light panels. PlayStation detection is **unverified on real hardware**.
 
 ## Packages (downloaded 2026-10-20; ZIPs kept outside the repo)
 
