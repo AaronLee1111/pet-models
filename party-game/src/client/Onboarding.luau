@@ -211,7 +211,7 @@ function Onboarding.decide(context)
 				Target = { Kind = "Roll" },
 				Title = pressText(mode, "SPACE", "A"),
 				Note = "Roll to decide turn order.",
-				Sides = { "Left", "Above" },
+				Sides = { "Right", "Below" },
 			}
 		end
 		if board.Roll then
@@ -224,7 +224,7 @@ function Onboarding.decide(context)
 					Target = { Kind = "Item", Slot = 1 },
 					Title = InputHint.verb(mode) .. " HERE TO USE IT",
 					Note = ("%s: %s. %s"):format(item.Name or "Item", string.gsub(item.Description or "", "%.$", ""), orRoll(mode)),
-					Sides = { "Left", "Above" },
+					Sides = { "Right", "Below" },
 				}
 			end
 			if not done(context, "RolledBoardTurn") then
@@ -234,7 +234,7 @@ function Onboarding.decide(context)
 					Target = { Kind = "Roll" },
 					Title = pressText(mode, "SPACE", "A"),
 					Note = "Roll to move.",
-					Sides = { "Left", "Above" },
+					Sides = { "Right", "Below" },
 				}
 			end
 		end
@@ -313,7 +313,7 @@ function Onboarding:noteInput(payload)
 			self.LocalDone.RolledForOrder = true
 		else
 			self.LocalDone.RolledBoardTurn = true
-			if self.Deps.Board.ItemBar.Visible then
+			if self.Deps.Board.ItemsOffered then
 				self.LocalDone.SawItem = true -- rolled without using the item
 			end
 		end
@@ -371,7 +371,7 @@ function Onboarding:context()
 		context.Board = {
 			OrderRoll = board.RollButton.Visible and state.Stage == "OrderRoll",
 			Roll = board.RollButton.Visible and state.Stage == "Roll",
-			Items = if board.ItemBar.Visible and seat then seat.Items else {},
+			Items = if board.ItemsOffered and seat then seat.Items else {},
 			Coins = seat and seat.Coins,
 			Prompt = if prompt
 				then { Kind = prompt.Kind, Price = prompt.Price, Routes = prompt.Routes, Count = #(prompt.Options or {}) }
@@ -408,10 +408,11 @@ function Onboarding:resolve(target): GuiObject?
 		return deps.Board.RollButton
 	elseif target.Kind == "Item" then
 		for _, child in deps.Board.ItemBar:GetChildren() do
-			if child:IsA("GuiButton") and child.LayoutOrder == target.Slot then
+			if child:IsA("GuiButton") and child.LayoutOrder == target.Slot and deps.Board.ItemBar.Visible then
 				return child
 			end
 		end
+		return deps.Board.ItemsButton -- item list closed: point at ITEMS first
 	elseif target.Kind == "Option" then
 		for _, child in deps.Board.PromptButtons:GetChildren() do
 			if child:IsA("GuiButton") and child.LayoutOrder == target.Index then

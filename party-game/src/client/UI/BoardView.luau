@@ -1,25 +1,36 @@
 --[[
 	BoardView
-	Everything the client shows during the board phase. Functional placeholder UI; the
-	visual pass (style guide) comes later.
+	Everything the client shows during the board phase, in the board-turn format from the
+	style guide (UI & Visual Style.md):
 
-	  header      top centre, under Roblox's top bar: round, whose turn, dice / moves left
-	  standings   left side: every seat's collectibles and coins, current turn highlighted
-	  roll        big button bottom right, only on your turn (Space / ButtonA too)
-	  prompt      bottom centre: fork / buy / shop choices sent to you by the server
-	  camera      follows whoever's turn it is
+	  1. Turn start: "Aaron, start!" banner (TurnStartBanner) across the upper area, the active
+	     avatar large lower-left (ActivePlayerPortrait), the close turn camera on their piece.
+	  2. Active turn: four-player standings across the top (PlayerStandingsStrip), the
+	     ROLL / ITEMS / MAP menu on the left (TurnMenu, your turn only), the avatar lower-left,
+	     "Round 2 / 5 · Turn 3 / 4" at the bottom (TurnProgress), and with ROLL picked a
+	     physical die above your character (DicePrompt). Rolling throws it (BoardDice).
+	  3. Prompts (fork / shop / Crown) stay the bottom-centre card; MAP is the whole-board view.
 
-	Only renders server state; every decision is validated on the server.
+	Only renders server state; every decision is validated on the server. Instance names the
+	tests and the onboarding pointer use: BoardRoll (ROLL row), BoardItems (item list),
+	BoardMap (MAP row), BoardHeader (progress pill), BoardStandings (strip), BoardPrompt.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
 local BoardDice = require(script.Parent.BoardDice)
+local DicePrompt = require(script.Parent.DicePrompt)
+local PlayerStandingsStrip = require(script.Parent.PlayerStandingsStrip)
 local Theme = require(script.Parent.Theme)
+local TurnMenu = require(script.Parent.TurnMenu)
+local TurnProgress = require(script.Parent.TurnProgress)
+local TurnStartBanner = require(script.Parent.TurnStartBanner)
 local make = Theme.make
 
 local BoardView = {}
@@ -47,115 +58,52 @@ local MAP_ACTION = "PartyBoardMap"
 
 local myId = "player_" .. Players.LocalPlayer.UserId
 
--- Phones get a compact standings column (shorter, see-through rows with icon stats) so it
--- covers less of the board; desktop keeps the roomier rows.
 local TOUCH = UserInputService.TouchEnabled
-local ROW_HEIGHT = if TOUCH then 44 else 54
-local ROW_GAP = if TOUCH then 4 else 6
-local STANDINGS_WIDTH = if TOUCH then 200 else 230
 local NAME_LENGTH = 14 -- longer names end in "…" in prompts, toasts and the MAP
-local HEADER_NAME_LENGTH = 10 -- the header line is shorter still
+local HEADER_NAME_LENGTH = 10 -- the status line is shorter still
 local MAP_TEXT_SIZE = if TOUCH then 17 else 20
-
--- A key that changes whenever the item list does (so buttons are only rebuilt then).
-local function itemKeyOf(items): string
-	local ids = {}
-	for _, item in items do
-		table.insert(ids, item.Id)
-	end
-	return table.concat(ids, ",")
-end
+-- Roblox's own UI on desktop: the legacy chat window (top-left, ~30% wide, ~25% tall) and the
+-- player list (top-right). The standings and the menu stay out of both.
+local CHAT_WIDTH, CHAT_HEIGHT, PLAYER_LIST_WIDTH = 0.3, 0.25, 262
 
 -- send(payload) fires the input remote.
-function BoardView.new(screen: ScreenGui, send: (any) -> ())
-	local self = setmetatable({ Send = send, Visible = false }, BoardView)
+function BoardView.new(screen: ScreenGui, send: (any) -> (), playerGui: PlayerGui?)
+	local self = setmetatable({ Send = send, Visible = false, PanelsHidden = false }, BoardView)
 
-	-- Header
-	self.Header = make("Frame", {
-		Name = "BoardHeader",
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 64), -- below Roblox's top bar
-		Size = UDim2.fromOffset(460, 70),
-		BackgroundColor3 = Theme.Colors.Card,
-		BackgroundTransparency = 0.1,
-		Visible = false,
-		Parent = screen,
-	}, { Theme.corner(18), Theme.stroke(Theme.Colors.Accent, 3) })
-	self.Title = Theme.label({
-		Position = UDim2.fromScale(0.03, 0.05),
-		Size = UDim2.fromScale(0.94, 0.5),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Accent,
-		Parent = self.Header,
-	}, 30)
-	self.Subtitle = Theme.label({
-		Position = UDim2.fromScale(0.03, 0.55),
-		Size = UDim2.fromScale(0.94, 0.4),
-		Parent = self.Header,
-	}, 22)
+	self.Progress = TurnProgress.new(screen)
+	self.Header = self.Progress.Root
+	self.Title = self.Progress.Title
+	self.Subtitle = self.Progress.Subtitle
 
-	-- Standings (left side, below the top-left Roblox buttons)
-	self.Standings = make("Frame", {
-		Name = "BoardStandings",
-		Position = UDim2.new(0, 12, 0, 150),
-		Size = UDim2.fromOffset(STANDINGS_WIDTH, 4 * ROW_HEIGHT + 3 * ROW_GAP),
-		BackgroundTransparency = 1,
-		Visible = false,
-		Parent = screen,
-	}, { make("UIListLayout", { Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder }) })
-	self.Rows = {}
+	self.Strip = PlayerStandingsStrip.new(screen)
+	self.Standings = self.Strip.Root
 
-	-- Roll button
-	self.RollButton = make("TextButton", {
-		Name = "BoardRoll",
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -24, 1, -24),
-		Size = UDim2.fromOffset(150, 150),
-		BackgroundColor3 = Theme.Colors.Good,
-		Font = Theme.TitleFont,
-		Text = "",
-		AutoButtonColor = true,
-		Visible = false,
-		Parent = screen,
-	}, { Theme.corner(75), Theme.stroke(Color3.new(1, 1, 1), 4) })
-	self.RollLabel = Theme.label({
-		-- Kept inside the circle: the corners of a full-width box sit outside it.
-		AnchorPoint = Vector2.new(0.5, 0),
-		Size = UDim2.fromScale(0.76, 0.5),
-		Position = UDim2.fromScale(0.5, 0.16),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Overlay,
-		Text = "ROLL!",
-		Parent = self.RollButton,
-	}, 44)
-	self.RollClock = Theme.label({
-		Size = UDim2.fromScale(1, 0.22),
-		Position = UDim2.fromScale(0, 0.68),
-		TextColor3 = Theme.Colors.Overlay,
-		Parent = self.RollButton,
-	}, 22)
-	self.RollButton.Activated:Connect(function()
+	self.Banner = TurnStartBanner.new(screen)
+	self.Portrait = ActivePlayerPortrait.new(screen)
+
+	self.Menu = TurnMenu.new(screen, {
+		Roll = function()
+			self:roll()
+		end,
+		Map = function()
+			self:toggleMap()
+		end,
+		UseItem = function(slot)
+			self.Send({ Kind = "UseItem", Slot = slot })
+		end,
+		Changed = function()
+			self:refresh()
+		end,
+	})
+	self.RollButton = self.Menu.Rows.Roll.Button
+	self.MapButton = self.Menu.Rows.Map.Button
+	self.ItemsButton = self.Menu.Rows.Items.Button
+	self.ItemBar = self.Menu.ItemPanel
+	self.ItemsOffered = false
+
+	self.DicePrompt = DicePrompt.new(playerGui or Players.LocalPlayer:WaitForChild("PlayerGui"), function()
 		self:roll()
 	end)
-
-	-- Item buttons (above the roll button, your turn only, before rolling)
-	self.ItemBar = make("Frame", {
-		Name = "BoardItems",
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -24, 1, -186),
-		Size = UDim2.fromOffset(520, 84),
-		BackgroundTransparency = 1,
-		Visible = false,
-		Parent = screen,
-	}, {
-		make("UIListLayout", {
-			FillDirection = Enum.FillDirection.Horizontal,
-			HorizontalAlignment = Enum.HorizontalAlignment.Right,
-			Padding = UDim.new(0, 8),
-			SortOrder = Enum.SortOrder.LayoutOrder,
-		}),
-	})
-	self.ItemKey = nil
 
 	-- Prompt (bottom centre)
 	self.Prompt = make("Frame", {
@@ -190,39 +138,19 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.PromptEndsAt = nil
 
 	-- MAP: inspect the whole board, the Crown, gates, traps and everyone's items
-	self.MapButton = make("TextButton", {
-		Name = "BoardMap",
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 24, 1, -24),
-		Size = UDim2.fromOffset(130, 56),
-		BackgroundColor3 = Theme.Colors.Card,
-		Font = Theme.TitleFont,
-		TextScaled = true,
-		TextColor3 = Theme.Colors.Accent,
-		Text = "MAP",
-		Visible = false,
-		Parent = screen,
-	}, { Theme.corner(14), Theme.stroke(Theme.Colors.Accent, 2), Theme.padding(8) })
-	self.MapButton.Activated:Connect(function()
-		self:toggleMap()
-	end)
-	self.MapPanel = make("ScrollingFrame", {
+	self.MapPanel = Theme.glass(make("ScrollingFrame", {
 		Name = "BoardMapPanel",
-		Position = UDim2.new(0, 12, 0, 150),
 		Size = UDim2.fromOffset(330, 260),
-		BackgroundColor3 = Theme.Colors.Card,
-		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 6,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(),
 		Visible = false,
 		Parent = screen,
-	}, {
-		Theme.corner(14),
-		Theme.padding(10),
-		make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
-	})
+	}), 14)
+	Theme.padding(10).Parent = self.MapPanel
+	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = self.MapPanel })
+	self.MapScale = make("UIScale", { Parent = self.MapPanel })
 	self.MapOpen = false
 
 	self.State = nil
@@ -230,7 +158,68 @@ function BoardView.new(screen: ScreenGui, send: (any) -> ())
 	self.Focus = nil
 	self.Zoom = 1
 	self.Dice = BoardDice.new()
+
+	Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+		self:layout()
+	end)
+	self:layout()
 	return self
+end
+
+-- Places every panel from the viewport size, Roblox's top bar and its chat / player list.
+-- Design sizes are for a 720 px tall screen; phones scale down, never below a 44 px tap row.
+function BoardView:layout()
+	local viewport = Workspace.CurrentCamera.ViewportSize
+	local w, h = viewport.X, viewport.Y
+	local top = GuiService:GetGuiInset().Y
+	local s = math.clamp(h / 720, 0.55, 1)
+
+	-- Standings: centred in the free strip of the top edge (between the chat window and the
+	-- player list on desktop). Chips are designed 220 px wide; a narrow gap scales the whole
+	-- strip down (text included) rather than squeezing names, never below 0.6.
+	local left = if TOUCH then 12 else math.max(12, w * CHAT_WIDTH + 8)
+	local right = if TOUCH then w - 12 else w - PLAYER_LIST_WIDTH
+	local design = 4 * 220 + 3 * PlayerStandingsStrip.GAP
+	local stripScale = math.clamp(math.min(s, (right - left) / design), 0.6, 1)
+	local chipWidth = math.clamp(((right - left) / stripScale - 3 * PlayerStandingsStrip.GAP) / 4, 150, 240)
+	self.Strip.Scale.Scale = stripScale
+	self.Strip:setChipWidth(chipWidth)
+	local stripTop = top + 6
+	self.Standings.Position = UDim2.fromOffset((left + right) / 2, stripTop)
+	local stripBottom = stripTop + (PlayerStandingsStrip.CHIP_HEIGHT + 14) * stripScale
+
+	-- Banner: the upper gameplay area, never under the top bar.
+	self.Banner.Root.Position = UDim2.fromOffset(0, top + math.max(8, h * 0.06))
+	self.Banner.Root.Size = UDim2.new(1, 0, 0, TurnStartBanner.HEIGHT * s)
+	self.Banner.Scale.Scale = s
+
+	-- Menu: left edge, below the standings (and, on desktop, below the chat window).
+	local menuScale = math.max(s, 0.55)
+	local menuTop = if TOUCH then stripBottom + 6 else math.max(stripBottom + 10, top + h * CHAT_HEIGHT + 12)
+	self.Menu.Scale.Scale = menuScale
+	self.Menu.Root:SetAttribute("HudScale", menuScale) -- Theme.pop animates back to this
+	self.Menu.Root.Position = UDim2.fromOffset(30 * menuScale + 8, menuTop)
+	local menuBottom = menuTop + (3 * TurnMenu.ROW.Y + 2 * TurnMenu.GAP) * menuScale
+
+	-- MAP panel under the CLOSE row.
+	local mapScale = math.max(s, 0.75)
+	self.MapScale.Scale = mapScale
+	self.MapPanel.Position = UDim2.fromOffset(12, menuTop + (TurnMenu.ROW.Y + TurnMenu.GAP) * menuScale)
+	self.MapPanel.Size = UDim2.fromOffset(330, math.min(260, (h - 12 - (menuTop + (TurnMenu.ROW.Y + TurnMenu.GAP) * menuScale)) / mapScale))
+
+	-- Avatar: lower-left, the big (turn-start) version at most ~42% of the screen height; the
+	-- normal one only when it fits under the menu.
+	local portraitScale = math.min(s, h * 0.42 / ActivePlayerPortrait.BIG.Y)
+	self.Portrait.Scale.Scale = portraitScale
+	self.Portrait.Root.Position = UDim2.fromOffset(10, h - 6)
+	self.PortraitFits = h - 6 - menuBottom >= ActivePlayerPortrait.NORMAL.Y * portraitScale * 0.75
+
+	-- Progress: bottom centre, lifted above the prompt card while one is up.
+	local progressScale = math.max(s, 0.6)
+	self.Progress.Scale.Scale = progressScale
+	local promptScale = self.Prompt:GetAttribute("HudScale") or 1
+	local bottom = if self.Prompt.Visible then h - (20 + 150) * promptScale - 8 else h - 10
+	self.Header.Position = UDim2.fromOffset(w / 2, bottom)
 end
 
 -- Layout / state ------------------------------------------------------------------------------
@@ -248,33 +237,6 @@ function BoardView:setLayout(message)
 	end
 	self.Centre = if count > 0 then sum / count else Vector3.zero
 end
-
-local function seatLine(seat, plural: string): string
-	return ("%d %s  ·  %d coins"):format(
-		seat.Collectibles,
-		if seat.Collectibles == 1 then string.sub(plural, 1, -2) else plural,
-		seat.Coins
-	)
-end
-
--- Phone standings line: the same facts with icons so it fits a narrow row at a readable size
--- (the MAP still spells everything out).
-local function compactSeatLine(seat): string
-	if seat.OrderRolls and #seat.OrderRolls > 0 then
-		return "Rolled " .. table.concat(seat.OrderRolls, ", ")
-	end
-	-- (🪙 and 🎒 don't render clearly in Roblox's emoji font; 👑 and 💰 do.)
-	local items = #(seat.Items or {})
-	local line = ("%d👑 · %d💰 · %d item%s"):format(seat.Collectibles, seat.Coins, items, if items == 1 then "" else "s")
-	if seat.Shield then
-		line ..= "  🛡"
-	end
-	if seat.Underdog then
-		line ..= "  underdog"
-	end
-	return line
-end
-
 
 local function seatById(state, id)
 	for _, seat in (state and state.Seats) or {} do
@@ -295,7 +257,7 @@ function BoardView:setState(message)
 		return
 	end
 	-- Thrown dice: everyone sees the active piece throw; the roller's own throw already started.
-	if self:isDiorama() and message.Stage == "Moving" and message.RollId and message.DiceFaces then
+	if message.Stage == "Moving" and message.RollId and message.DiceFaces then
 		local seat = seatById(message, message.TurnId)
 		self.Dice:reveal(seat and seat.Character, message.DiceFaces, message.RollId, seat ~= nil and seat.IsBot)
 	end
@@ -303,170 +265,177 @@ function BoardView:setState(message)
 		self:refreshMap()
 	end
 
-	-- Header
+	-- A new turn: the "start!" banner first, then the turn controls.
+	if message.Stage == "Roll" and message.TurnId then
+		local key = ("%s:%s"):format(tostring(message.Round), message.TurnId)
+		if key ~= self.IntroKey then
+			self.IntroKey = key
+			self:playIntro(seatById(message, message.TurnId))
+		end
+	end
+
+	-- Progress pill: round and turn, and one short status line.
 	local myTurn = message.TurnId == myId
-	local who = if myTurn then "Your" else (message.TurnName and (Theme.shortWords(message.TurnName, HEADER_NAME_LENGTH) .. "'s") or nil)
+	local turnSeat = seatById(message, message.TurnId)
 	self.Title.Text = ("%s %d / %d%s"):format(
 		if message.Frenzy then "FINAL FRENZY · Round" else "Round",
 		message.Round or 0,
 		message.Rounds or 0,
-		if who then "  ·  " .. who .. " turn" else ""
+		if turnSeat then ("  ·  Turn %d / %d"):format(turnSeat.Order, #message.Seats) else ""
 	)
 	local sub = message.Text or ""
 	if message.Stage == "OrderRoll" then
 		self.Title.Text = ("Round %d / %d  ·  Turn order"):format(message.Round or 0, message.Rounds or 0)
-		sub = if message.OrderPending and message.OrderPending[myId] then "Tap ROLL! Highest roll goes first" else (message.Text or "")
+		sub = if message.OrderPending and message.OrderPending[myId] then "Roll! Highest roll goes first" else (message.Text or "")
 	elseif message.Stage == "Moving" and message.Remaining then
 		sub = ("Rolled %d  ·  %d move%s left"):format(message.Roll or 0, message.Remaining, if message.Remaining == 1 then "" else "s")
 	elseif message.Stage == "Roll" and myTurn then
-		sub = if (message.Dice or 1) > 1
-			then ("Tap ROLL to roll %d dice!"):format(message.Dice)
-			else "Use an item, or tap ROLL to roll the die!"
+		sub = if (message.Dice or 1) > 1 then ("Your turn  ·  rolling %d dice"):format(message.Dice) else "Your turn"
 	end
-	if message.Bridge and message.Stage ~= "RotationWarning" and message.Stage ~= "Rotating" then sub ..= " · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
+	if message.Bridge and message.Stage ~= "RotationWarning" and message.Stage ~= "Rotating" then
+		sub ..= " · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment
+	end
 	if message.Bridge and message.Stage == "Roll" then
-  for _,seat in message.Seats do
-   local dock=seat.Zone and message.Bridge.Docks[seat.Zone]
-   if seat.Id==message.TurnId and dock and not dock.Open then sub="Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment end
-  end
- end
- self.Subtitle.Text = Theme.shortWords(sub, HEADER_NAME_LENGTH + 2)
-
-	-- Standings rows (turn order)
-	for _, row in self.Rows do
-		row:Destroy()
-	end
-	self.Rows = {}
-	for _, seat in message.Seats do
-		local isTurn = seat.Id == message.TurnId
-		local isMe = seat.Id == myId
-		local row = make("Frame", {
-			LayoutOrder = seat.Order,
-			Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
-			BackgroundColor3 = if isMe then Theme.Colors.CardLight else Theme.Colors.Card,
-			BackgroundTransparency = if TOUCH then 0.25 else 0.1,
-			Parent = self.Standings,
-		}, { Theme.corner(12) })
-		if isTurn then
-			Theme.stroke(Theme.Colors.Accent, 3).Parent = row
-		end
-		-- Fixed size, cut with "…": a long name never shrinks the text or pushes "(bot)" out.
-		local name = if isMe then "YOU" else seat.Name
-		make("TextLabel", {
-			Position = UDim2.fromOffset(10, if TOUCH then 3 else 4),
-			Size = UDim2.new(1, -20, 0, if TOUCH then 22 else 26),
-			BackgroundTransparency = 1,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextTruncate = Enum.TextTruncate.AtEnd,
-			Font = Theme.TitleFont,
-			TextSize = 22,
-			TextColor3 = Theme.Colors.Text,
-			Text = (if isTurn then "▶ " else "") .. (if seat.IsBot and TOUCH then "🤖 " else "") .. name .. (if seat.IsBot and not TOUCH then " (bot)" else ""),
-			Parent = row,
-		})
-		local line = seatLine(seat, message.CollectiblePlural or "Crowns")
-		if seat.OrderRolls and #seat.OrderRolls > 0 then
-			line = "Rolled " .. table.concat(seat.OrderRolls, ", then ")
-		else
-			line ..= ("  ·  %d item%s"):format(#(seat.Items or {}), if #(seat.Items or {}) == 1 then "" else "s")
-			if seat.Shield then
-				line ..= "  ·  shield"
-			end
-			if seat.Underdog then
-				line ..= "  ·  underdog"
+		for _, seat in message.Seats do
+			local dock = seat.Zone and message.Bridge.Docks[seat.Zone]
+			if seat.Id == message.TurnId and dock and not dock.Open then
+				sub = "Exit CLOSED · keep looping · " .. message.Bridge.Alignment .. " → " .. message.Bridge.NextAlignment
 			end
 		end
-		if TOUCH then
-			make("TextLabel", {
-				Position = UDim2.fromOffset(8, 24),
-				Size = UDim2.new(1, -16, 0, 18),
-				BackgroundTransparency = 1,
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextTruncate = Enum.TextTruncate.AtEnd,
-				Font = Theme.BodyFont,
-				TextSize = 19,
-				TextColor3 = Theme.Colors.Accent,
-				Text = compactSeatLine(seat),
-				Parent = row,
-			})
-		else
-			Theme.label({
-				Position = UDim2.fromOffset(10, 30),
-				Size = UDim2.new(1, -20, 0, 20),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextColor3 = Theme.Colors.Accent,
-				Text = line,
-				Parent = row,
-			}, 18)
-		end
-		table.insert(self.Rows, row)
 	end
+	self.Subtitle.Text = Theme.shortWords(sub, HEADER_NAME_LENGTH + 2)
 
-	-- Item buttons: your turn, before rolling, no item used yet.
-	local mySeat
-	for _, seat in message.Seats do
-		if seat.Id == myId then
-			mySeat = seat
-		end
+	self.Strip:render(message, myId)
+	self:refresh()
+end
+
+-- Turn-start handoff: banner + big avatar; the controls appear when the banner leaves.
+function BoardView:playIntro(seat)
+	if not seat then
+		return
 	end
+	local name = if seat.Id == myId then Players.LocalPlayer.DisplayName else seat.Name
+	self.IntroActive = true
+	self.IntroSeat = seat
+	self.Menu:closeItems()
+	self.Menu:select("Roll")
+	self.Banner:play(Theme.shortWords(name, 12) .. ", start!", seat.IsBot, function()
+		self.IntroActive = false
+		self:refresh()
+	end)
+	self:refresh()
+end
+
+-- What's on screen right now, from the latest state and the local flags (intro, MAP, items).
+function BoardView:refresh()
+	local state = self.State
+	if not (self.Visible and state) then
+		return
+	end
+	local panels = not self.PanelsHidden
+	local intro = self.IntroActive and panels
+	local myTurn = state.TurnId == myId
+	local stage = state.Stage
+	local mySeat = seatById(state, myId)
 	local items = mySeat and mySeat.Items or {}
-	local showItems = myTurn and message.Stage == "Roll" and not message.ItemUsed and #items > 0
-	local itemKey = if showItems then itemKeyOf(items) else nil
-	if itemKey ~= self.ItemKey then
-		self.ItemKey = itemKey
-		for _, child in self.ItemBar:GetChildren() do
-			if child:IsA("GuiButton") then
-				child:Destroy()
-			end
-		end
-		for slot, item in items do
-			local button = make("TextButton", {
-				LayoutOrder = slot,
-				Size = UDim2.fromOffset(160, 84), -- >= 44pt tall after the phone HUD scale (0.55)
-				BackgroundColor3 = Theme.Colors.Cool,
-				Font = Theme.BodyFont,
-				TextScaled = true,
-				TextColor3 = Theme.Colors.Overlay,
-				Text = item.Name,
-				Parent = self.ItemBar,
-			}, { Theme.corner(14), Theme.padding(6), make("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 10 }) })
-			button.Activated:Connect(function()
-				self.ItemBar.Visible = false
-				self.Send({ Kind = "UseItem", Slot = slot })
-			end)
-		end
-	end
-	self.ItemBar.Visible = showItems
+	local canRoll = (myTurn and stage == "Roll")
+		or (stage == "OrderRoll" and state.OrderPending ~= nil and state.OrderPending[myId] == true)
+	local prompting = self.Prompt.Visible
 
-	-- Roll button: on your turn (or when rolling for turn order), while waiting for the roll.
-	local canRoll = (myTurn and message.Stage == "Roll")
-		or (message.Stage == "OrderRoll" and message.OrderPending ~= nil and message.OrderPending[myId] == true)
-	if canRoll and not self.RollButton.Visible then
-		Theme.pop(self.RollButton)
+	self.Standings.Visible = panels and not intro
+	self.Header.Visible = panels and not intro
+
+	-- Menu: your roll (turn or turn order), or the MAP's CLOSE row.
+	local itemsUsable = myTurn and stage == "Roll" and not state.ItemUsed and #items > 0
+	local menuShown = panels and not intro and not prompting and (canRoll or self.MapOpen)
+	self.ItemsOffered = menuShown and canRoll and itemsUsable
+	self.Menu:setItems(items)
+	self.Menu:setRows({
+		Roll = { Visible = canRoll and not self.MapOpen },
+		Items = {
+			Visible = canRoll and not self.MapOpen,
+			Enabled = itemsUsable,
+			Reason = if stage == "OrderRoll" then "Items unlock on your turn"
+				elseif state.ItemUsed then "One item per turn"
+				else "No items yet",
+			Note = if #items > 0 then ("%d held"):format(#items) else "",
+		},
+		Map = {
+			Visible = true,
+			Label = if self.MapOpen then "CLOSE" else "MAP",
+			Note = if self.MapOpen then "Back to the turn" else "Whole board",
+		},
+	})
+	if not itemsUsable then
+		self.Menu:closeItems()
+	end
+	if menuShown and not self.Menu.Root.Visible then
+		self.Menu.Root.Visible = true
+		self.Menu:select(if self.MapOpen then "Map" else "Roll")
+		self.Menu:bind()
+		Theme.pop(self.Menu.Root)
+	elseif not menuShown and self.Menu.Root.Visible then
+		self.Menu.Root.Visible = false
+		self.Menu:closeItems()
+		self.Menu:unbind()
+	end
+	self.RollButton.Visible = menuShown and canRoll and not self.MapOpen
+
+	-- Space rolls while ROLL is the picked row (Enter / gamepad A activate any row).
+	local rollKey = self.RollButton.Visible and self.Menu.Selected == "Roll" and not self.Menu.ItemsOpen
+	if rollKey and not self.RollBound then
 		ContextActionService:BindAction(ROLL_ACTION, function(_, inputState)
 			if inputState == Enum.UserInputState.Begin then
 				self:roll()
 			end
 			return Enum.ContextActionResult.Sink
-		end, false, Enum.KeyCode.Space, Enum.KeyCode.ButtonA)
-	elseif not canRoll then
+		end, false, Enum.KeyCode.Space)
+	elseif not rollKey and self.RollBound then
 		ContextActionService:UnbindAction(ROLL_ACTION)
 	end
-	self.RollButton.Visible = canRoll
+	self.RollBound = rollKey
+
+	-- Avatar: big during the banner, normal on your own turn, gone while moving or on the MAP.
+	local turnSeat = seatById(state, state.TurnId)
+	if intro and self.IntroSeat then
+		self.Portrait:show(self.IntroSeat.Character, "Big")
+	elseif panels and myTurn and stage == "Roll" and not self.MapOpen and self.PortraitFits then
+		self.Portrait:show(turnSeat and turnSeat.Character, "Normal")
+	else
+		self.Portrait:hide()
+	end
+
+	-- The physical die above your character while ROLL is picked.
+	if rollKey and myTurn and stage == "Roll" and not prompting then
+		local hint = if UserInputService.GamepadEnabled and UserInputService:GetLastInputType().Name:find("Gamepad")
+			then "Press A to roll"
+			elseif TOUCH then "Tap the die"
+			else "Press Space or click the die"
+		self.DicePrompt:show(Players.LocalPlayer.Character, hint)
+	else
+		self.DicePrompt:hide()
+	end
+	self:layout()
 end
 
 function BoardView:roll()
-	if self.RollButton.Visible then
-		self.RollButton.Visible = false
-		ContextActionService:UnbindAction(ROLL_ACTION)
-		local state = self.State
-		-- Your own turn on a diorama board: the throw starts on the press, the number lands
-		-- when the server's roll arrives. (Turn-order rolls stay instant.)
-		if self:isDiorama() and state and state.Stage == "Roll" and state.TurnId == myId then
-			self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
-		end
-		self.Send({ Kind = "Roll" })
+	if not self.RollButton.Visible then
+		return
 	end
+	self.RollButton.Visible = false
+	self.DicePrompt:hide()
+	if self.RollBound then
+		ContextActionService:UnbindAction(ROLL_ACTION)
+		self.RollBound = false
+	end
+	local state = self.State
+	-- Your own turn: the throw starts on the press, the number lands when the server's roll
+	-- arrives. (Turn-order rolls stay instant.)
+	if state and state.Stage == "Roll" and state.TurnId == myId then
+		self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
+		self.Portrait:hide()
+	end
+	self.Send({ Kind = "Roll" })
 end
 
 -- Map ---------------------------------------------------------------------------------------------
@@ -559,12 +528,14 @@ function BoardView:toggleMap(open: boolean?)
 	end
 	self.MapOpen = open and self.Visible
 	self.MapPanel.Visible = self.MapOpen
-	self.Standings.Visible = self.Visible and not self.MapOpen and self.Header.Visible
-	self.MapButton.Text = if self.MapOpen then "CLOSE" else "MAP"
 	self.Focus = nil
 	if self.MapOpen then
+		self.Menu:select("Map")
 		self:refreshMap()
+	else
+		self.Menu:select("Roll")
 	end
+	self:refresh()
 end
 
 -- Prompt ------------------------------------------------------------------------------------------
@@ -580,6 +551,7 @@ function BoardView:showPrompt(message)
 	self.PromptMessage = message -- Kind / Routes / Price: read by the first-action guidance
 	if not message.PromptId then
 		self.Prompt.Visible = false
+		self:refresh()
 		return
 	end
 	self.PromptText.Text = Theme.shortWords(message.Prompt, NAME_LENGTH)
@@ -604,11 +576,13 @@ function BoardView:showPrompt(message)
 				self.Send({ Kind = "Choice", PromptId = message.PromptId, Index = index })
 				self.PromptId = nil
 				self.Prompt.Visible = false
+				self:refresh()
 			end
 		end)
 	end
 	self.Prompt.Visible = true
 	Theme.pop(self.Prompt)
+	self:refresh()
 end
 
 -- Visibility + camera -----------------------------------------------------------------------------
@@ -681,13 +655,12 @@ local function turnFocus(self): Vector3?
 end
 
 function BoardView:show()
+	self.PanelsHidden = false
 	if self.Visible then
+		self:refresh()
 		return
 	end
 	self.Visible = true
-	self.Header.Visible = true
-	self.Standings.Visible = true
-	self.MapButton.Visible = true
 	ContextActionService:BindAction(MAP_ACTION, function(_, inputState)
 		if inputState == Enum.UserInputState.Begin then
 			self:toggleMap()
@@ -752,21 +725,32 @@ function BoardView:show()
 	end
 end
 
+-- Everything off: banner, standings, menu, avatar, die prompt, progress, prompt card, MAP.
+local function clearPanels(self)
+	self.Banner:stop()
+	self.IntroActive = false
+	self.Header.Visible = false
+	self.Standings.Visible = false
+	self:toggleMap(false)
+	self.Menu.Root.Visible = false
+	self.Menu:closeItems()
+	self.Menu:unbind()
+	self.RollButton.Visible = false
+	self.ItemsOffered = false
+	self.Portrait:hide()
+	self.DicePrompt:hide()
+	self.Prompt.Visible = false
+	ContextActionService:UnbindAction(ROLL_ACTION)
+	self.RollBound = false
+end
+
 function BoardView:hide()
 	if not self.Visible then
 		return
 	end
+	clearPanels(self)
 	self.Visible = false
-	self.Header.Visible = false
-	self.Standings.Visible = false
-	self.MapButton.Visible = false
-	self:toggleMap(false)
 	ContextActionService:UnbindAction(MAP_ACTION)
-	self.RollButton.Visible = false
-	self.ItemBar.Visible = false
-	self.ItemKey = nil
-	self.Prompt.Visible = false
-	ContextActionService:UnbindAction(ROLL_ACTION)
 	self.Dice:clear()
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
 	local camera = Workspace.CurrentCamera
@@ -778,24 +762,19 @@ function BoardView:hide()
 	end
 end
 
--- Keeps the board camera but hides the header, standings, roll and prompt (final standings card).
+-- Keeps the board camera but hides every panel (final standings card).
 function BoardView:hidePanels()
-	self.Header.Visible = false
-	self.Standings.Visible = false
-	self.MapButton.Visible = false
-	self:toggleMap(false)
+	self.PanelsHidden = true
+	clearPanels(self)
 	ContextActionService:UnbindAction(MAP_ACTION)
-	self.RollButton.Visible = false
-	self.ItemBar.Visible = false
-	self.ItemKey = nil
-	self.Prompt.Visible = false
-	ContextActionService:UnbindAction(ROLL_ACTION)
 end
 
--- Per frame: countdown on the roll button.
+-- Per frame: the roll countdown on the ROLL row.
 function BoardView:update()
+	local row = self.Menu.Rows.Roll
 	if self.RollButton.Visible and self.State and self.State.RollEndsAt then
-		self.RollClock.Text = ("%ds"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))
+		row.BaseNote = ("%ds left"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))
+		row.Note.Text = row.BaseNote
 	end
 end
 

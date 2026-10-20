@@ -223,7 +223,7 @@ test("onboarding: item guidance explains the item and leaves ROLL as the way out
 	local cleared = {}
 	local controller = Onboarding.new({
 		Guide = { clear = function(_, key) table.insert(cleared, key) end },
-		Board = { State = { Stage = "Roll" }, ItemBar = { Visible = true } },
+		Board = { State = { Stage = "Roll" }, ItemsOffered = true },
 	})
 	controller:setFlags({ RolledForOrder = true })
 	controller.Step = step
@@ -296,7 +296,7 @@ test("onboarding: pressing an item only waits for the server; a refused item kee
 	local cleared = {}
 	local controller = Onboarding.new({
 		Guide = { clear = function(_, key) table.insert(cleared, key) end },
-		Board = { State = { Stage = "Roll" }, ItemBar = { Visible = true } },
+		Board = { State = { Stage = "Roll" }, ItemsOffered = true },
 	})
 	controller:setFlags({ RolledForOrder = true })
 	controller.Step = { Key = "SawItem", Flag = "SawItem" }

@@ -110,7 +110,7 @@ spectatorBar = SpectatorBar.new(screen, function(direction)
 	spectatorBar:show(CameraController.getTargetName())
 end)
 Controls.setActionBar(ActionBar.new(screen))
-local boardView = BoardView.new(screen, sendInput)
+local boardView = BoardView.new(screen, sendInput, player:WaitForChild("PlayerGui"))
 local lobbyPanel = LobbyPanel.new(screen, sendInput)
 local shopScreen = ShopScreen.new(screen, sendInput)
 lobbyPanel.OnShop = function()
@@ -145,24 +145,14 @@ local HUD_STRIPS = {
 	"ProgressBar",
 	"SpectatorBar",
 	"Lobby",
-	"BoardHeader",
-	"BoardStandings",
-	"BoardRoll",
-	"BoardPrompt",
-	"BoardItems",
-	"BoardMap",
-	"BoardMapPanel",
+	"BoardPrompt", -- the other board panels are placed by BoardView:layout()
 	"WaitingRoom",
 	"CosmeticShop",
 }
 local HUD_DESIGN_HEIGHT = 720
 -- Panels full of buttons would shrink below a tappable size; they don't go smaller than this.
-local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75, BoardMap = 0.85, BoardMapPanel = 0.75 }
+local HUD_MIN_SCALE = { CosmeticShop = 0.85, WaitingRoom = 0.85, BoardPrompt = 0.75 }
 local hudBasePositions = {}
--- Board strips pinned to the top edge: however small the phone scale makes their offset, they
--- stay below Roblox's top bar (PartyUI ignores the inset, so the bar is part of our space).
-local CLEAR_TOP_BAR = { BoardHeader = true, BoardStandings = true, BoardMapPanel = true }
-local TOP_BAR_GAP = 6
 
 local function fitHudToScreen()
 	local camera = workspace.CurrentCamera
@@ -179,11 +169,7 @@ local function fitHudToScreen()
 			local uiScale = strip:FindFirstChildOfClass("UIScale") or Theme.make("UIScale", { Parent = strip })
 			uiScale.Scale = scale
 			strip:SetAttribute("HudScale", scale) -- Theme.pop animates back to this, not to 1
-			local y = base.Y.Offset * scale
-			if CLEAR_TOP_BAR[name] and base.Y.Scale == 0 then
-				y = math.max(y, GuiService:GetGuiInset().Y + TOP_BAR_GAP)
-			end
-			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, y)
+			strip.Position = UDim2.new(base.X.Scale, base.X.Offset * scale, base.Y.Scale, base.Y.Offset * scale)
 		end
 	end
 end

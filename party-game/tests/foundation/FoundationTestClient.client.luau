@@ -131,7 +131,7 @@ local function onBoardState(state)
 			run.TurnKey = key
 			run.Turns += 1
 			task.spawn(function()
-				task.wait(0.4)
+				task.wait(1.6) -- after the "start!" banner (~1.25 s), the turn menu is up
 				if visible("BoardRoll") then
 					run.TurnsWithControls += 1
 				end
@@ -150,7 +150,7 @@ local function onBoardState(state)
 				input:FireServer({ Kind = "Roll" })
 			end)
 		elseif not myTurn then
-			task.delay(0.4, function()
+			task.delay(1.6, function()
 				if lastState == state and visible("BoardRoll") then
 					issue("ROLL shown on someone else's turn")
 				end

@@ -24,9 +24,9 @@ local TOAST_WIDTH = if TOUCH then 0.24 else 0.3
 local TOAST_MIN_WIDTH = if TOUCH then 170 else 220
 -- Phones on the board: the left column belongs to the standings and MAP, so the feed moves to
 -- the top right, under Roblox's top bar, as a narrow column of two-line toasts.
-local BOARD_TOAST_WIDTH = 210
-local BOARD_TOAST_HEIGHT = 34
-local BOARD_TOAST_TEXT_SIZE = 12
+local BOARD_TOAST_WIDTH = if TOUCH then 210 else 300
+local BOARD_TOAST_HEIGHT = if TOUCH then 34 else 46
+local BOARD_TOAST_TEXT_SIZE = if TOUCH then 12 else 17
 
 function Hud.new(screen: ScreenGui)
 	local self = setmetatable({}, Hud)
@@ -183,10 +183,8 @@ function Hud:clearToasts()
 	end
 end
 
--- Phone board layout for the feed (see BOARD_TOAST_*); desktop and minigames keep the
--- left-side feed.
+-- Board layout for the feed (see BOARD_TOAST_*); minigames keep the left-side feed.
 function Hud:setBoardToasts(on: boolean)
-	on = on and TOUCH
 	if on == self.BoardToasts then
 		return
 	end
@@ -196,9 +194,10 @@ function Hud:setBoardToasts(on: boolean)
 	local constraint = list:FindFirstChildOfClass("UISizeConstraint")
 	local layout = list:FindFirstChildOfClass("UIListLayout")
 	if on then
-		local inset = GuiService:GetGuiInset().Y
+		-- Right side, below the standings strip and Roblox's player list: the left side holds
+		-- the turn menu and the avatar.
 		list.AnchorPoint = Vector2.new(1, 0)
-		list.Position = UDim2.new(1, -10, 0, inset + 6)
+		list.Position = UDim2.new(1, -10, 0.34, 0)
 		list.Size = UDim2.fromOffset(BOARD_TOAST_WIDTH, MAX_TOASTS * (BOARD_TOAST_HEIGHT + 4))
 		constraint.MinSize = Vector2.zero
 		layout.Padding = UDim.new(0, 4)
