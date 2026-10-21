@@ -32,7 +32,9 @@ local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
 local Profiles = require(script.Parent.Parent.Profiles)
 local SeatClaims = require(script.Parent.Parent.SeatClaims)
+local ReadyState = require(script.Parent.Parent.ReadyState)
 local Tutorial = require(script.Parent.Parent.Tutorial)
+local IntroPlan = require(script.Parent.IntroPlan)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -198,17 +200,10 @@ end
 
 -- Pieces on the board ---------------------------------------------------------------------------
 
+-- Each seat keeps its own corner on every space: stable, never overlapping (up to four), and
+-- an arriving piece walks straight into a free corner without nudging anyone.
 local function slotOf(seat): number
-	local slot = 0
-	for _, other in current.Match.Seats do
-		if other.SpaceId == seat.SpaceId then
-			slot += 1
-		end
-		if other == seat then
-			return slot
-		end
-	end
-	return 1
+	return table.find(current.Match.Seats, seat) or 1
 end
 
 local function placeSeat(seat)
@@ -219,9 +214,11 @@ local function placeSeat(seat)
 	local facing = current.Match:nextOptions(seat.SpaceId)[1]
 	participant:Teleport(current.World:spaceCFrame(seat.SpaceId, slotOf(seat), facing))
 	participant:Freeze()
-	if current.Match.Board.Bridge then
-		local root = participant:GetRoot()
-		if root then root.Anchored = true end
+	-- Anchored on the board: no physics pushing, and clients animate moves locally (BoardMove)
+	-- without fighting replication; this snap is the confirmed position.
+	local root = participant:GetRoot()
+	if root then
+		root.Anchored = true
 	end
 	-- Pieces bumping on a shared tile can tip over; stand bots back up (players' own
 	-- clients do the same in BoardView).
@@ -237,14 +234,45 @@ local function placeAll()
 	end
 end
 
--- Board pieces are anchored on this board: clients cannot jump/walk across a gap.
--- Release before any minigame/duel or lobby transition.
+-- Board pieces are anchored (placeSeat). Release before any minigame/duel or lobby transition.
 local function releasePieces()
- if not current or not current.Match or not current.Match.Board.Bridge then return end
- for _,seat in current.Match.Seats do
-  local root=seat.Participant:GetRoot()
-  if root then root.Anchored=false end
- end
+	if not current or not current.Match then
+		return
+	end
+	for _, seat in current.Match.Seats do
+		local root = seat.Participant:GetRoot()
+		if root then
+			root.Anchored = false
+		end
+	end
+end
+
+-- One move segment, presented: every client runs the piece along the visible route (BoardMove,
+-- client BoardMotion) while the server waits the same time, then snaps it to the confirmed space.
+-- Never waits on a client, so a slow or failed animation can't stall the match.
+local function moveSeat(seat, fromId: number, step: number)
+	local participant = seat.Participant
+	local slot = slotOf(seat)
+	local facing = current.Match:nextOptions(seat.SpaceId)[1]
+	local target = current.World:spaceCFrame(seat.SpaceId, slot, facing)
+	if fromId ~= seat.SpaceId and participant:IsAlive() then
+		local from = current.World:spaceCFrame(fromId, slot).Position
+		local points, stairs = current.World:movePath(from, fromId, seat.SpaceId, target.Position)
+		local duration = BoardWorld.moveTime(points, stairs, step, participant.IsBot)
+		current.Moving = seat
+		MinigameManager.broadcast({
+			Type = Net.Message.BoardMove,
+			Id = participant.Id,
+			Character = participant:GetCharacter(),
+			Points = points,
+			Face = target.LookVector,
+			StartsAt = now(),
+			Duration = duration,
+		})
+		task.wait(duration + Config.Board.StepPause * Config.Board.HopTime / 0.35)
+		current.Moving = nil
+	end
+	placeSeat(seat)
 end
 
 local function warnRotation()
@@ -292,6 +320,9 @@ local function recoverPieces()
 	local fixed = 0
 	for _, seat in current.Match.Seats do
 		local participant = seat.Participant
+		if seat == current.Moving then
+			continue -- mid-segment: the server snaps it when the segment ends
+		end
 		if participant.IsBot and not participant:IsAlive() then
 			BotService.reviveAll(Arena.lobbySpot)
 		end
@@ -531,6 +562,64 @@ end
 -- Turns -------------------------------------------------------------------------------------------
 
 -- Turn order: everyone rolls once before round 1; ties roll again among themselves.
+--[[
+	Board-opening introduction: once per match, after the board is built and before turn order.
+	The server owns the schedule (seat order, who arrives when, where they stand, when it ends);
+	clients only run the cameras and the arrivals (BoardIntro). Pieces are already standing on
+	Start here, so a client that misses it simply sees them there. Nobody can roll or move until
+	it ends; humans may speed up the group shot once everyone has appeared (Input.IntroSkip).
+]]
+local function runIntro()
+	local match = current.Match
+	current.IntroPlayed = true
+	current.Stage = "Intro"
+	current.Text = match.Board.DisplayName or ""
+	ensureBodies()
+	placeAll()
+	local spec = current.World:introSpec()
+	local plan = IntroPlan.schedule(#match.Seats, spec ~= nil, spec and spec.Times, now() + Config.Board.Intro.Lead)
+	local seats, humans = {}, {}
+	for index, seat in match.Seats do
+		local participant = seat.Participant
+		table.insert(seats, {
+			Id = participant.Id,
+			Name = participant.Name,
+			IsBot = participant.IsBot,
+			Character = participant:GetCharacter(),
+			ArriveAt = plan.ArriveAt[index],
+			Destination = current.World:spaceCFrame(seat.SpaceId, slotOf(seat), match:nextOptions(seat.SpaceId)[1]),
+		})
+		if not participant.IsBot and not isAway(participant) then
+			table.insert(humans, participant)
+		end
+	end
+	current.Skips = ReadyState.new(humans, plan.GroupAt, "Intro")
+	current.IntroMessage = {
+		Type = Net.Message.BoardIntro,
+		BoardName = match.Board.DisplayName,
+		Spec = spec,
+		Seats = seats,
+		StartsAt = plan.ArriveAt[1] and (plan.ArriveAt[1] - (if spec then plan.Times.Establish else 0)) or now(),
+		GroupAt = plan.GroupAt,
+		EndsAt = plan.EndsAt,
+		Out = plan.Times.Out,
+	}
+	print(("[BoardIntro] start: %d seats, %s, %.1fs"):format(#seats, if spec then spec.Effect else "no intro data", plan.EndsAt - now()))
+	MinigameManager.broadcast(current.IntroMessage)
+	publish()
+	while now() < plan.EndsAt do
+		if now() >= plan.GroupAt and #humans > 0 and current.Skips:everyone() then
+			break -- everyone asked to move on
+		end
+		task.wait(0.05)
+	end
+	current.IntroMessage = nil
+	current.Skips = nil
+	MinigameManager.broadcast({ Type = Net.Message.BoardIntro, Done = true })
+	placeAll() -- whatever any client showed, everyone stands on Start
+	print("[BoardIntro] done")
+end
+
 local function rollForTurnOrder()
 	local match = current.Match
 	current.Stage = "OrderRoll"
@@ -700,11 +789,13 @@ local function takeTurn(seat)
 	-- bots get the short version.
 	task.wait(if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
 
+	local fromId, step = seat.SpaceId, 0
 	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
-		current.Remaining = remaining
-		placeSeat(movedSeat)
+		step += 1
+		moveSeat(movedSeat, fromId, step)
+		fromId = movedSeat.SpaceId
+		current.Remaining = remaining -- counts down as each space is reached
 		publish()
-		task.wait(Config.Board.HopTime)
 	end, function(note)
 		feed(note)
 		publish()
@@ -806,6 +897,9 @@ function BoardGame.play(participants, settings)
 			task.wait(1.5)
 		end
 		if round == 1 then
+			if not current.IntroPlayed then
+				runIntro()
+			end
 			rollForTurnOrder()
 		end
 
@@ -942,6 +1036,17 @@ function BoardGame.handleInput(player: Player, payload): boolean
 			Tutorial.complete(player, "RolledForOrder")
 		end
 		return true
+	elseif kind == Net.Input.IntroSkip then
+		-- Yourself only; ReadyState checks the stage and that everyone has appeared.
+		local skips = current and current.Skips
+		if skips then
+			for _, participant in skips.Participants do
+				if participant.Player == player then
+					skips:mark(participant, current.Stage, now())
+				end
+			end
+		end
+		return true
 	elseif kind == Net.Input.UseItem then
 		-- Only queued here; takeTurn hands it to Match:useItem, which checks everything.
 		if current and current.RollWaiting == player and not current.ItemRequest then
@@ -978,6 +1083,10 @@ MinigameManager.onReady(function(player)
 		MinigameManager.sendTo(player, current.LayoutMessage)
 		if current.StateMessage then
 			MinigameManager.sendTo(player, stateMessage())
+		end
+		-- Joined during the board intro: the same schedule, picked up where it is now (never restarted).
+		if current.IntroMessage then
+			MinigameManager.sendTo(player, current.IntroMessage)
 		end
 		-- Still waiting for their seat (the queued message may have arrived before the
 		-- client was listening): say so again.

@@ -2,9 +2,9 @@
 	ReadyState
 	Who is ready on the pre-minigame tutorial screen. Pure (no remotes, no clock of its own).
 
-	  local ready = ReadyState.new(participants, readyAt)
+	  local ready = ReadyState.new(participants, readyAt, phase?)
 	  ready:mark(participant, phase, time) -> true if it counted
-	      only in the Instructions phase, only for one of this round's participants, only once
+	      only in `phase` (default "Instructions"; the board intro uses "Intro"), only for one of this round's participants, only once
 	      READY has unlocked (readyAt, with half a second of slack for clock drift)
 	  ready:everyone() -> true when everyone still in the round is ready (leavers never block)
 	  ready:ids() -> { [participantId] = true }   for the TutorialReady message
@@ -19,12 +19,12 @@ ReadyState.__index = ReadyState
 
 ReadyState.SLACK = 0.5
 
-function ReadyState.new(participants, readyAt: number)
-	return setmetatable({ Participants = participants, ReadyAt = readyAt, Ready = {} }, ReadyState)
+function ReadyState.new(participants, readyAt: number, phase: string?)
+	return setmetatable({ Participants = participants, ReadyAt = readyAt, Phase = phase or "Instructions", Ready = {} }, ReadyState)
 end
 
 function ReadyState:mark(participant, phase: string, time: number): boolean
-	if phase ~= "Instructions" or time < self.ReadyAt - ReadyState.SLACK then
+	if phase ~= self.Phase or time < self.ReadyAt - ReadyState.SLACK then
 		return false
 	end
 	if self.Ready[participant] or not table.find(self.Participants, participant) then
