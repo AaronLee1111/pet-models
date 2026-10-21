@@ -25,6 +25,8 @@ local Workspace = game:GetService("Workspace")
 
 local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
 local BoardDice = require(script.Parent.BoardDice)
+local BoardIntro = require(script.Parent.BoardIntro)
+local BoardMotion = require(script.Parent.BoardMotion)
 local DicePrompt = require(script.Parent.DicePrompt)
 local PlayerStandingsStrip = require(script.Parent.PlayerStandingsStrip)
 local Theme = require(script.Parent.Theme)
@@ -158,6 +160,7 @@ function BoardView.new(screen: ScreenGui, send: (any) -> (), playerGui: PlayerGu
 	self.Focus = nil
 	self.Zoom = 1
 	self.Dice = BoardDice.new()
+	self.Opening = BoardIntro.new(screen, send)
 
 	Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 		self:layout()
@@ -332,7 +335,8 @@ function BoardView:refresh()
 	if not (self.Visible and state) then
 		return
 	end
-	local panels = not self.PanelsHidden
+	-- The board-opening intro owns the screen: no HUD, no input until it ends.
+	local panels = not self.PanelsHidden and not self.Opening.Active and state.Stage ~= "Intro"
 	local intro = self.IntroActive and panels
 	local myTurn = state.TurnId == myId
 	local stage = state.Stage
@@ -634,6 +638,20 @@ local function dioramaShot(self): (Vector3?, number)
 	if state.Stage == "Deciding" then
 		return focus + DIORAMA_PROMPT_SHIFT, DIORAMA_DECIDE_ZOOM
 	end
+	if state.Stage == "Moving" and ahead then
+		-- Running: look one or two spaces ahead, and pull back for turns and climbs so the next
+		-- stretch of route stays in view.
+		local beyond = ahead.Next and ahead.Next[1] and self.SpaceById[ahead.Next[1]]
+		local target = if beyond then (ahead.Position + beyond.Position) / 2 else ahead.Position
+		local zoom = 1 + math.clamp(math.abs(target.Y - here.Y) / 14, 0, 0.25)
+		if beyond then
+			local first, second = ahead.Position - space.Position, beyond.Position - ahead.Position
+			if first.Magnitude > 0 and second.Magnitude > 0 and first.Unit:Dot(second.Unit) < 0.8 then
+				zoom += 0.1
+			end
+		end
+		return here:Lerp(target, DIORAMA_LOOKAHEAD), zoom
+	end
 	return focus, 1
 end
 
@@ -712,6 +730,11 @@ function BoardView:show()
 			aim += Vector3.new(-30, 0, 0)
 		end
 		camera.CFrame = CFrame.lookAt(aim + offset, aim)
+		-- Board-opening intro: its own shots, blending into this camera at the end.
+		local shot, blend = self.Opening:camera()
+		if shot then
+			camera.CFrame = shot:Lerp(camera.CFrame, blend * blend * (3 - 2 * blend))
+		end
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -745,6 +768,8 @@ local function clearPanels(self)
 end
 
 function BoardView:hide()
+	BoardMotion.stopAll()
+	self.Opening:finish()
 	if not self.Visible then
 		return
 	end
@@ -769,8 +794,24 @@ function BoardView:hidePanels()
 	ContextActionService:UnbindAction(MAP_ACTION)
 end
 
--- Per frame: the roll countdown on the ROLL row.
-function BoardView:update()
+-- Server presentation messages: a move segment (BoardMove) and the board intro (BoardIntro).
+function BoardView:move(message)
+	BoardMotion.play(message)
+end
+
+function BoardView:playOpening(message)
+	self.Opening:play(message)
+	self:refresh()
+end
+
+-- Per frame: moving pieces, the intro, and the roll countdown on the ROLL row.
+function BoardView:update(dt: number?)
+	BoardMotion.update(dt or 1 / 60)
+	local opening = self.Opening.Active
+	self.Opening:update(dt or 1 / 60)
+	if opening and not self.Opening.Active then
+		self:refresh() -- intro over: the HUD comes back
+	end
 	local row = self.Menu.Rows.Roll
 	if self.RollButton.Visible and self.State and self.State.RollEndsAt then
 		row.BaseNote = ("%ds left"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))

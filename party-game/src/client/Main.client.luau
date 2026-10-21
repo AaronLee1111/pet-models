@@ -424,6 +424,10 @@ stateRemote.OnClientEvent:Connect(function(message)
 		boardView:setLayout(message)
 	elseif message.Type == Net.Message.BoardState then
 		boardView:setState(message)
+	elseif message.Type == Net.Message.BoardMove then
+		boardView:move(message)
+	elseif message.Type == Net.Message.BoardIntro then
+		boardView:playOpening(message)
 	elseif message.Type == Net.Message.Prompt then
 		boardView:showPrompt(message)
 	elseif message.Type == Net.Message.Inventory then
@@ -463,11 +467,11 @@ local function youMarkerWanted(): boolean
 	})
 end
 
-RunService.RenderStepped:Connect(function()
+RunService.RenderStepped:Connect(function(dt)
 	hud:update()
 	randomizer:update()
 	instructions:update()
-	boardView:update()
+	boardView:update(dt)
 	lobbyPanel:update()
 	onboarding:update()
 	youMarker:setActive(youMarkerWanted())
