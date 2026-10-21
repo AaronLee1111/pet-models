@@ -116,7 +116,19 @@ Config.Board = {
 	DieSides = 6,
 	RollTimeout = 12, -- a player who doesn't roll in time rolls automatically
 	ChoiceTimeout = 10, -- unanswered prompts take their default option
-	HopTime = 0.35, -- seconds per space moved
+	HopTime = 0.35, -- reference seconds per space; every movement time below scales with HopTime / 0.35
+	-- Smooth movement (BoardWorld:movePath + client BoardMotion): seconds per segment come from
+	-- the path length at MoveSpeed, clamped; stairs get their own band. Later steps of a long
+	-- roll speed up (MoveRamp per step, down to MoveRampMin); bots move a bit faster.
+	MoveSpeed = 28, -- studs per second
+	MoveTime = { 0.3, 0.5 },
+	StairTime = { 0.45, 0.7 },
+	MoveRamp = 0.035,
+	MoveRampMin = 0.75,
+	BotMoveScale = 0.85,
+	StepPause = 0.1, -- the landing beat on each space
+	-- Board-opening introduction (round 1 only): seconds. Boards may override in Intro.Times.
+	Intro = { Lead = 0.5, Establish = 1.3, Each = 1.25, Group = 1.1, Out = 0.4, NoSpec = 1.2 },
 	-- Thrown-dice presentation (boards with Presentation = "Diorama"): seconds from the roll to
 	-- the first hop, so everyone sees the die fly, land and show its number.
 	DiceReveal = 1.9,
@@ -742,6 +754,8 @@ Net.Message = {
 	Inventory = "Inventory", -- to one player: owned cosmetics, what's equipped, bank coins
 	ShopResult = "ShopResult", -- to one player: { Ok, ItemId, Text } after a lobby shop purchase
 	Tutorial = "Tutorial", -- to one player: { Flags = { [flag] = true } } guided first actions done
+	BoardMove = "BoardMove", -- a piece crossing one route segment: { Id, Points, Face, StartsAt, Duration }
+	BoardIntro = "BoardIntro", -- board-opening introduction schedule ({ Done = true } ends it early)
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -760,6 +774,7 @@ Net.Input = {
 	ActionUsed = "ActionUsed", -- a minigame action that the minigame's client code sent itself
 	-- (tutorial only; the server checks you're playing). Studio-only: "ResetTutorial".
 	ResetTutorial = "ResetTutorial",
+	IntroSkip = "IntroSkip", -- board intro: speed up the group shot (after everyone has arrived)
 }
 
 local function getFolder(): Instance
@@ -1110,7 +1125,9 @@ local MinigameManager = require(script.Parent.Parent.MinigameManager)
 local Participant = require(script.Parent.Parent.Participant)
 local Profiles = require(script.Parent.Parent.Profiles)
 local SeatClaims = require(script.Parent.Parent.SeatClaims)
+local ReadyState = require(script.Parent.Parent.ReadyState)
 local Tutorial = require(script.Parent.Parent.Tutorial)
+local IntroPlan = require(script.Parent.IntroPlan)
 local BoardLayout = require(script.Parent.BoardLayout)
 local BoardWorld = require(script.Parent.BoardWorld)
 local Match = require(script.Parent.Match)
@@ -1276,17 +1293,10 @@ end
 
 -- Pieces on the board ---------------------------------------------------------------------------
 
+-- Each seat keeps its own corner on every space: stable, never overlapping (up to four), and
+-- an arriving piece walks straight into a free corner without nudging anyone.
 local function slotOf(seat): number
-	local slot = 0
-	for _, other in current.Match.Seats do
-		if other.SpaceId == seat.SpaceId then
-			slot += 1
-		end
-		if other == seat then
-			return slot
-		end
-	end
-	return 1
+	return table.find(current.Match.Seats, seat) or 1
 end
 
 local function placeSeat(seat)
@@ -1297,9 +1307,11 @@ local function placeSeat(seat)
 	local facing = current.Match:nextOptions(seat.SpaceId)[1]
 	participant:Teleport(current.World:spaceCFrame(seat.SpaceId, slotOf(seat), facing))
 	participant:Freeze()
-	if current.Match.Board.Bridge then
-		local root = participant:GetRoot()
-		if root then root.Anchored = true end
+	-- Anchored on the board: no physics pushing, and clients animate moves locally (BoardMove)
+	-- without fighting replication; this snap is the confirmed position.
+	local root = participant:GetRoot()
+	if root then
+		root.Anchored = true
 	end
 	-- Pieces bumping on a shared tile can tip over; stand bots back up (players' own
 	-- clients do the same in BoardView).
@@ -1315,14 +1327,45 @@ local function placeAll()
 	end
 end
 
--- Board pieces are anchored on this board: clients cannot jump/walk across a gap.
--- Release before any minigame/duel or lobby transition.
+-- Board pieces are anchored (placeSeat). Release before any minigame/duel or lobby transition.
 local function releasePieces()
- if not current or not current.Match or not current.Match.Board.Bridge then return end
- for _,seat in current.Match.Seats do
-  local root=seat.Participant:GetRoot()
-  if root then root.Anchored=false end
- end
+	if not current or not current.Match then
+		return
+	end
+	for _, seat in current.Match.Seats do
+		local root = seat.Participant:GetRoot()
+		if root then
+			root.Anchored = false
+		end
+	end
+end
+
+-- One move segment, presented: every client runs the piece along the visible route (BoardMove,
+-- client BoardMotion) while the server waits the same time, then snaps it to the confirmed space.
+-- Never waits on a client, so a slow or failed animation can't stall the match.
+local function moveSeat(seat, fromId: number, step: number)
+	local participant = seat.Participant
+	local slot = slotOf(seat)
+	local facing = current.Match:nextOptions(seat.SpaceId)[1]
+	local target = current.World:spaceCFrame(seat.SpaceId, slot, facing)
+	if fromId ~= seat.SpaceId and participant:IsAlive() then
+		local from = current.World:spaceCFrame(fromId, slot).Position
+		local points, stairs = current.World:movePath(from, fromId, seat.SpaceId, target.Position)
+		local duration = BoardWorld.moveTime(points, stairs, step, participant.IsBot)
+		current.Moving = seat
+		MinigameManager.broadcast({
+			Type = Net.Message.BoardMove,
+			Id = participant.Id,
+			Character = participant:GetCharacter(),
+			Points = points,
+			Face = target.LookVector,
+			StartsAt = now(),
+			Duration = duration,
+		})
+		task.wait(duration + Config.Board.StepPause * Config.Board.HopTime / 0.35)
+		current.Moving = nil
+	end
+	placeSeat(seat)
 end
 
 local function warnRotation()
@@ -1370,6 +1413,9 @@ local function recoverPieces()
 	local fixed = 0
 	for _, seat in current.Match.Seats do
 		local participant = seat.Participant
+		if seat == current.Moving then
+			continue -- mid-segment: the server snaps it when the segment ends
+		end
 		if participant.IsBot and not participant:IsAlive() then
 			BotService.reviveAll(Arena.lobbySpot)
 		end
@@ -1609,6 +1655,64 @@ end
 -- Turns -------------------------------------------------------------------------------------------
 
 -- Turn order: everyone rolls once before round 1; ties roll again among themselves.
+--[[
+	Board-opening introduction: once per match, after the board is built and before turn order.
+	The server owns the schedule (seat order, who arrives when, where they stand, when it ends);
+	clients only run the cameras and the arrivals (BoardIntro). Pieces are already standing on
+	Start here, so a client that misses it simply sees them there. Nobody can roll or move until
+	it ends; humans may speed up the group shot once everyone has appeared (Input.IntroSkip).
+]]
+local function runIntro()
+	local match = current.Match
+	current.IntroPlayed = true
+	current.Stage = "Intro"
+	current.Text = match.Board.DisplayName or ""
+	ensureBodies()
+	placeAll()
+	local spec = current.World:introSpec()
+	local plan = IntroPlan.schedule(#match.Seats, spec ~= nil, spec and spec.Times, now() + Config.Board.Intro.Lead)
+	local seats, humans = {}, {}
+	for index, seat in match.Seats do
+		local participant = seat.Participant
+		table.insert(seats, {
+			Id = participant.Id,
+			Name = participant.Name,
+			IsBot = participant.IsBot,
+			Character = participant:GetCharacter(),
+			ArriveAt = plan.ArriveAt[index],
+			Destination = current.World:spaceCFrame(seat.SpaceId, slotOf(seat), match:nextOptions(seat.SpaceId)[1]),
+		})
+		if not participant.IsBot and not isAway(participant) then
+			table.insert(humans, participant)
+		end
+	end
+	current.Skips = ReadyState.new(humans, plan.GroupAt, "Intro")
+	current.IntroMessage = {
+		Type = Net.Message.BoardIntro,
+		BoardName = match.Board.DisplayName,
+		Spec = spec,
+		Seats = seats,
+		StartsAt = plan.ArriveAt[1] and (plan.ArriveAt[1] - (if spec then plan.Times.Establish else 0)) or now(),
+		GroupAt = plan.GroupAt,
+		EndsAt = plan.EndsAt,
+		Out = plan.Times.Out,
+	}
+	print(("[BoardIntro] start: %d seats, %s, %.1fs"):format(#seats, if spec then spec.Effect else "no intro data", plan.EndsAt - now()))
+	MinigameManager.broadcast(current.IntroMessage)
+	publish()
+	while now() < plan.EndsAt do
+		if now() >= plan.GroupAt and #humans > 0 and current.Skips:everyone() then
+			break -- everyone asked to move on
+		end
+		task.wait(0.05)
+	end
+	current.IntroMessage = nil
+	current.Skips = nil
+	MinigameManager.broadcast({ Type = Net.Message.BoardIntro, Done = true })
+	placeAll() -- whatever any client showed, everyone stands on Start
+	print("[BoardIntro] done")
+end
+
 local function rollForTurnOrder()
 	local match = current.Match
 	current.Stage = "OrderRoll"
@@ -1778,11 +1882,13 @@ local function takeTurn(seat)
 	-- bots get the short version.
 	task.wait(if participant.IsBot then Config.Board.DiceRevealBot else Config.Board.DiceReveal)
 
+	local fromId, step = seat.SpaceId, 0
 	local landing = match:move(seat, roll, function(movedSeat, _, remaining)
-		current.Remaining = remaining
-		placeSeat(movedSeat)
+		step += 1
+		moveSeat(movedSeat, fromId, step)
+		fromId = movedSeat.SpaceId
+		current.Remaining = remaining -- counts down as each space is reached
 		publish()
-		task.wait(Config.Board.HopTime)
 	end, function(note)
 		feed(note)
 		publish()
@@ -1884,6 +1990,9 @@ function BoardGame.play(participants, settings)
 			task.wait(1.5)
 		end
 		if round == 1 then
+			if not current.IntroPlayed then
+				runIntro()
+			end
 			rollForTurnOrder()
 		end
 
@@ -2020,6 +2129,17 @@ function BoardGame.handleInput(player: Player, payload): boolean
 			Tutorial.complete(player, "RolledForOrder")
 		end
 		return true
+	elseif kind == Net.Input.IntroSkip then
+		-- Yourself only; ReadyState checks the stage and that everyone has appeared.
+		local skips = current and current.Skips
+		if skips then
+			for _, participant in skips.Participants do
+				if participant.Player == player then
+					skips:mark(participant, current.Stage, now())
+				end
+			end
+		end
+		return true
 	elseif kind == Net.Input.UseItem then
 		-- Only queued here; takeTurn hands it to Match:useItem, which checks everything.
 		if current and current.RollWaiting == player and not current.ItemRequest then
@@ -2056,6 +2176,10 @@ MinigameManager.onReady(function(player)
 		MinigameManager.sendTo(player, current.LayoutMessage)
 		if current.StateMessage then
 			MinigameManager.sendTo(player, stateMessage())
+		end
+		-- Joined during the board intro: the same schedule, picked up where it is now (never restarted).
+		if current.IntroMessage then
+			MinigameManager.sendTo(player, current.IntroMessage)
 		end
 		-- Still waiting for their seat (the queued message may have arrived before the
 		-- client was listening): say so again.
@@ -2200,6 +2324,17 @@ function BoardLayout.validate(data, spaceTypes): string?
 				return ("space %d points to missing space %s"):format(space.Id, tostring(nextId))
 			end
 		end
+		-- Via: visual-only movement waypoints per edge ({ x, z, height } like At); never routes.
+		for toId, points in space.Via or {} do
+			if not table.find(space.Next, toId) or type(points) ~= "table" then
+				return ("space %d has Via for %s, which is not one of its Next"):format(space.Id, tostring(toId))
+			end
+			for _, at in points do
+				if type(at) ~= "table" or type(at[1]) ~= "number" or type(at[2]) ~= "number" then
+					return ("space %d Via %s: waypoints are { x, z, height }"):format(space.Id, tostring(toId))
+				end
+			end
+		end
 	end
 	if not byId[data.Start] then
 		return "Start is not a space"
@@ -2257,6 +2392,27 @@ function BoardLayout.validate(data, spaceTypes): string?
 			return ("space %d never leads back to Start"):format(space.Id)
 		end
 	end
+	-- Intro (optional): shots are { Camera, Look } grid points, Entry a non-empty point list.
+	local intro = data.Intro
+	if intro ~= nil then
+		local function point(at)
+			return type(at) == "table" and type(at[1]) == "number" and type(at[2]) == "number"
+		end
+		for _, key in { "Establish", "Arrival", "Group" } do
+			local shot = intro[key]
+			if type(shot) ~= "table" or not point(shot.Camera) or not point(shot.Look) then
+				return "Intro." .. key .. " needs Camera and Look points"
+			end
+		end
+		if type(intro.Entry) ~= "table" or #intro.Entry == 0 then
+			return "Intro.Entry needs at least one point"
+		end
+		for _, at in intro.Entry do
+			if not point(at) then
+				return "Intro.Entry points are { x, z, height }"
+			end
+		end
+	end
 	return nil
 end
 
@@ -2277,6 +2433,7 @@ function BoardLayout.load(data, spaceTypes)
 		Style = data.Style,
 		Scene = data.Scene,
 		Presentation = data.Presentation,
+		Intro = data.Intro, -- board-opening introduction anchors (BoardWorld:introSpec)
 		Spaces = {},
 		Order = {},
 	}, Board)
@@ -2301,6 +2458,9 @@ return BoardLayout
 
 	  local world = BoardWorld.build(board, spaceTypes, origin)
 	  world:spaceCFrame(id, slot, facingId?)  where a piece stands (slot 1..4 share a tile)
+	  world:movePath(from, fromId, toId, to) the visible route of one move segment (BoardMove)
+	  BoardWorld.moveTime(points, stairs, step, isBot)  seconds that segment takes
+	  world:introSpec()                      the board-opening intro anchors in world space, or nil
 	  world:setCollectible(id, label)        move the collectible marker
 	  world:destroy()
 	  BoardWorld.clearStale()                remove boards left in the Workspace (see below)
@@ -2485,6 +2645,101 @@ function BoardWorld:spaceCFrame(id: number, slot: number?, facingId: number?): C
 		return CFrame.lookAt(position, look)
 	end
 	return CFrame.new(position)
+end
+
+-- The visible route of one move segment, as HumanoidRootPart positions from `from` to `to` (the
+-- piece's slot on `toId`). Presentation only: Match has already decided the move. Uses the
+-- edge's Via waypoints when the board has them; otherwise medallion boards run edge to edge
+-- and climb every stair step, and tile boards go straight. Returns the points and whether the
+-- segment is a stair climb.
+function BoardWorld:movePath(from: Vector3, fromId: number, toId: number, to: Vector3): ({ Vector3 }, boolean)
+	local lift = Vector3.new(0, ROOT_HEIGHT, 0)
+	local medallions = self.Board.Style == "Medallion"
+	local points, stairs = { from }, false
+	local space = self.Board.Spaces[fromId]
+	local via = space and space.Via and space.Via[toId]
+	local a, b = self.Tops[fromId], self.Tops[toId]
+	if via then
+		local surface = Vector3.new(0, if medallions then MedallionKit.TOP else TILE_HEIGHT, 0)
+		for _, at in via do
+			table.insert(points, self.WorldAt(at) + surface + lift)
+		end
+	elseif medallions and a and b and space and table.find(space.Next, toId) then
+		local flat = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+		if flat.Magnitude > MedallionKit.DIAMETER then
+			local radius = MedallionKit.DIAMETER / 2 - 0.4
+			local exit, entry = a + flat.Unit * radius, b - flat.Unit * radius
+			table.insert(points, exit + lift)
+			local rise = b.Y - a.Y
+			if math.abs(rise) >= 1.5 then
+				stairs = true
+				local count = MedallionKit.stairCount(rise)
+				for i = 1, count do
+					local t = (i - 0.5) / count
+					local y = a.Y + rise * (if rise > 0 then i / count else (i - 1) / count)
+					local centre = exit:Lerp(entry, t)
+					table.insert(points, Vector3.new(centre.X, y, centre.Z) + lift)
+				end
+			end
+			table.insert(points, entry + lift)
+		end
+	end
+	table.insert(points, to)
+	return points, stairs
+end
+
+-- Seconds one segment takes: path length at MoveSpeed inside the normal or stair band, faster
+-- for later steps of a long roll and for bots, all scaled by HopTime (tests run it fast).
+function BoardWorld.moveTime(points: { Vector3 }, stairs: boolean, step: number, isBot: boolean): number
+	local board = Config.Board
+	local length = 0
+	for i = 2, #points do
+		length += (points[i] - points[i - 1]).Magnitude
+	end
+	local band = if stairs then board.StairTime else board.MoveTime
+	local seconds = math.clamp(length / board.MoveSpeed, band[1], band[2])
+	seconds *= math.max(board.MoveRampMin, 1 - board.MoveRamp * (step - 1))
+	if isBot then
+		seconds *= board.BotMoveScale
+	end
+	return seconds * board.HopTime / 0.35
+end
+
+--[[
+	The board-opening introduction in world space, from the board's declarative Intro data
+	(grid points { x, z, height } like At), or nil when the board has none:
+	  Establish = { Camera, Look }   the landmark shot
+	  Arrival = { Camera, Look }     the entrance, held while each participant arrives
+	  Entry = { points }             where arrivals appear, then walk through (the last point
+	                                 leads to the piece's slot on Start)
+	  Group = { Camera, Look }       everyone on the start space
+	  Effect = "Sunbeam" | "Moonbeam" | "Walk"
+	  Times = { Establish = 1.3, Each = 1.25, ... } overrides Config.Board.Intro
+]]
+function BoardWorld:introSpec()
+	local intro = self.Board.Intro
+	if not intro then
+		return nil
+	end
+	local surface = Vector3.new(0, if self.Board.Style == "Medallion" then MedallionKit.TOP else TILE_HEIGHT, 0)
+	local function at(point)
+		return self.WorldAt(point) + surface
+	end
+	local function shot(data)
+		return { Camera = at(data.Camera), Look = at(data.Look) }
+	end
+	local entry = {}
+	for _, point in intro.Entry do
+		table.insert(entry, at(point) + Vector3.new(0, ROOT_HEIGHT, 0))
+	end
+	return {
+		Establish = shot(intro.Establish),
+		Arrival = shot(intro.Arrival),
+		Group = shot(intro.Group),
+		Entry = entry,
+		Effect = intro.Effect or "Walk",
+		Times = intro.Times,
+	}
 end
 
 -- True if a piece at `position` is clearly not standing on space `id` (knocked off, fell
@@ -2688,6 +2943,14 @@ return {
 	DisplayName = "Sunny Loop", -- shown to players
 	-- Beginner board: one loop, one toll shortcut, a single Switch, few Chaos spaces.
 	Start = 1,
+	-- Board-opening intro (BoardWorld:introSpec): everyone walks in from the bottom-left corner.
+	Intro = {
+		Establish = { Camera = { 4, -4.5, 55 }, Look = { 4, 2.5, 0 } },
+		Arrival = { Camera = { -0.4, -2.8, 13 }, Look = { -0.4, -0.3, 3 } },
+		Entry = { { -1.4, -1.1, 0 } },
+		Group = { Camera = { 0, -2.5, 15 }, Look = { 0, 0, 2.5 } },
+		Effect = "Walk",
+	},
 	CrownSpaces = { 7, 10, 13, 15, 20, 23, 26 },
 	Gates = {
 		{ Id = "Shortcut", From = 5, To = 27, Open = true, Toll = 3 },
@@ -2771,6 +3034,15 @@ end
 return {
  Name="MagicalFestival", DisplayName="Magical Festival Island", Start=17,
  CrownSpaces={4,12,20,28,34,35}, Spaces=spaces, Zones=zones,
+ -- Board-opening intro (BoardWorld:introSpec): the moon bridge, then each participant floats down
+ -- a moonbeam on the open lawn east of Start (17) and walks onto it. Cameras checked clear of props.
+ Intro={
+  Establish={ Camera={0,-7,58}, Look={0,0,0} },
+  Arrival={ Camera={0.2,-4.0,14}, Look={0.6,-2.8,2} },
+  Entry={ {1.17,-2.8,16}, {1.17,-2.8,0} },
+  Group={ Camera={-0.08,-3.95,13}, Look={0.1,-2.8,2} },
+  Effect="Moonbeam",
+ },
  Bridge={ EveryRounds=1, WarningSeconds=2, RotationSeconds=1.5, DialCooldownRounds=2,
   -- Crown relocation when a rotation strands it (Match:chooseCrownSpace).
   CrownMemory=2, CrownLeaderBuffer=4 },
@@ -2815,6 +3087,15 @@ return {
 	Scene = "SkyGarden", -- environment dressing (vertical slice: the orchard)
 	Presentation = "Diorama", -- close turn camera + thrown dice
 	Start = 1,
+	-- Board-opening intro (BoardWorld:introSpec): the sundial, then each participant rides a
+	-- sunbeam down under the Sun Gate (between 29 and 1) and walks to their slot on Start.
+	Intro = {
+		Establish = { Camera = { 0.1, -4.3, 26 }, Look = { 0.1, -1.1, 5 } },
+		Arrival = { Camera = { 0.2, -5.85, 12 }, Look = { 0.25, -4.45, 2.5 } }, -- due south: clear of gate posts and lamps
+		Entry = { { 0.58, -4.43, 16 }, { 0.58, -4.43, 0 } },
+		Group = { Camera = { 0.05, -6.15, 10 }, Look = { 0.05, -4.6, 2.5 } },
+		Effect = "Sunbeam",
+	},
 	CrownSpaces = { 9, 17, 22, 26, 28, 31, 39 },
 	Gates = {
 		{ Id = "SundialBridge", From = 12, To = 33, Open = true, Toll = 3 },
@@ -3652,6 +3933,55 @@ return Scene
         </Item>
         <Item class="ModuleScript" referent="23">
           <Properties>
+            <string name="Name">IntroPlan</string>
+            <string name="Source"><![CDATA[--[[
+	IntroPlan
+	The board-opening introduction's timetable. Pure (no remotes, no clock of its own).
+
+	  local plan = IntroPlan.schedule(count, hasSpec, boardTimes, startsAt)
+	    plan.ArriveAt[i]   when seat i appears (seat order), plan.GroupAt (everyone has
+	                       arrived: skipping unlocks), plan.EndsAt (turn order may start)
+
+	With no Intro data on the board everyone is already on Start and only a short group shot
+	plays. Board Intro.Times override Config.Board.Intro key by key.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.PartyShared.Config)
+
+local IntroPlan = {}
+
+function IntroPlan.schedule(count: number, hasSpec: boolean, boardTimes, startsAt: number)
+	local times = table.clone(Config.Board.Intro)
+	for key, value in boardTimes or {} do
+		times[key] = value
+	end
+	local plan = { ArriveAt = {}, Times = times }
+	if not hasSpec then
+		for i = 1, count do
+			plan.ArriveAt[i] = startsAt
+		end
+		plan.GroupAt = startsAt
+		plan.EndsAt = startsAt + times.NoSpec
+		return plan
+	end
+	local at = startsAt + times.Establish
+	for i = 1, count do
+		plan.ArriveAt[i] = at
+		at += times.Each
+	end
+	plan.GroupAt = at
+	plan.EndsAt = at + times.Group + times.Out
+	return plan
+end
+
+return IntroPlan
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="24">
+          <Properties>
             <string name="Name">Items</string>
             <string name="Source"><![CDATA[--[[
 	Items
@@ -3825,7 +4155,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">Match</string>
             <string name="Source"><![CDATA[--[[
@@ -5037,11 +5367,11 @@ return Match
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="25">
+        <Item class="Folder" referent="26">
           <Properties>
             <string name="Name">MedallionAssets</string>
           </Properties>
-          <Item class="MeshPart" referent="26">
+          <Item class="MeshPart" referent="27">
             <Properties>
               <string name="Name">SunnyLoop_Space_Base_v1</string>
               <bool name="Anchored">true</bool>
@@ -5082,7 +5412,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="27">
+          <Item class="MeshPart" referent="28">
             <Properties>
               <string name="Name">SunnyLoop_Space_Inlay_Circle_v1</string>
               <bool name="Anchored">true</bool>
@@ -5124,7 +5454,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="28">
+          <Item class="MeshPart" referent="29">
             <Properties>
               <string name="Name">SunnyLoop_Space_Inlay_Diamond_v1</string>
               <bool name="Anchored">true</bool>
@@ -5166,7 +5496,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="29">
+          <Item class="MeshPart" referent="30">
             <Properties>
               <string name="Name">SunnyLoop_Space_Inlay_Dot_v1</string>
               <bool name="Anchored">true</bool>
@@ -5208,7 +5538,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="30">
+          <Item class="MeshPart" referent="31">
             <Properties>
               <string name="Name">SunnyLoop_Space_Inlay_Ring_v1</string>
               <bool name="Anchored">true</bool>
@@ -5250,7 +5580,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="31">
+          <Item class="MeshPart" referent="32">
             <Properties>
               <string name="Name">SunnyLoop_Space_Inlay_Square_v1</string>
               <bool name="Anchored">true</bool>
@@ -5292,7 +5622,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="32">
+          <Item class="MeshPart" referent="33">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Chaos_v1</string>
               <bool name="Anchored">true</bool>
@@ -5334,7 +5664,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="33">
+          <Item class="MeshPart" referent="34">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Duel_v1</string>
               <bool name="Anchored">true</bool>
@@ -5376,7 +5706,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="34">
+          <Item class="MeshPart" referent="35">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Event_v1</string>
               <bool name="Anchored">true</bool>
@@ -5418,7 +5748,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="35">
+          <Item class="MeshPart" referent="36">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Gain_v1</string>
               <bool name="Anchored">true</bool>
@@ -5460,7 +5790,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="36">
+          <Item class="MeshPart" referent="37">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Item_v1</string>
               <bool name="Anchored">true</bool>
@@ -5502,7 +5832,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="37">
+          <Item class="MeshPart" referent="38">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Lose_v1</string>
               <bool name="Anchored">true</bool>
@@ -5544,7 +5874,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="38">
+          <Item class="MeshPart" referent="39">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Reward_v1</string>
               <bool name="Anchored">true</bool>
@@ -5586,7 +5916,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="39">
+          <Item class="MeshPart" referent="40">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Shop_v1</string>
               <bool name="Anchored">true</bool>
@@ -5628,7 +5958,7 @@ return Match
               </Content>
             </Properties>
           </Item>
-          <Item class="MeshPart" referent="40">
+          <Item class="MeshPart" referent="41">
             <Properties>
               <string name="Name">SunnyLoop_Space_Symbol_Switch_v1</string>
               <bool name="Anchored">true</bool>
@@ -5671,7 +6001,7 @@ return Match
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">MedallionKit</string>
             <string name="Source"><![CDATA[--[[
@@ -5879,6 +6209,11 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 end
 
 -- Path segment from one medallion's edge to the next, sloping with the height change.
+-- Steps in a stair run that climbs `rise` studs (~0.8 studs each, never fewer than 3).
+function MedallionKit.stairCount(rise: number): number
+	return math.max(3, math.ceil(math.abs(rise) / 0.8))
+end
+
 function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, name: string, area: string?)
 	local flat = Vector3.new(toTop.X - fromTop.X, 0, toTop.Z - fromTop.Z)
 	local direction = flat.Unit
@@ -5919,7 +6254,7 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		slope.Transparency = 1
 		slope.CanCollide = false
 		local run = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
-		local count = math.max(3, math.ceil(math.abs(rise) / 0.8))
+		local count = MedallionKit.stairCount(rise)
 		local depth = run.Magnitude / count
 		local low = math.min(a.Y, b.Y) - 0.5
 		for i = 1, count do
@@ -5969,7 +6304,7 @@ return MedallionKit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">MedallionMeshes</string>
             <string name="Source"><![CDATA[-- Blender-authored geometry; imported templates share the same mesh content IDs.
@@ -6014,7 +6349,7 @@ return Kit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">RotatingBridge</string>
             <string name="Source"><![CDATA[-- Pure topology; no yields, rendering, randomness or mutation during queries.
@@ -6090,7 +6425,7 @@ return Bridge
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">SceneAudit</string>
             <string name="Source"><![CDATA[--[[
@@ -6327,7 +6662,7 @@ return SceneAudit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">SkyGardenKit</string>
             <string name="Source"><![CDATA[--[[
@@ -6707,7 +7042,7 @@ return Kit
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">SkyGardenScene</string>
             <string name="Source"><![CDATA[--[[
@@ -8104,7 +8439,7 @@ return Scene
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">SpaceTypes</string>
             <string name="Source"><![CDATA[--[[
@@ -8223,7 +8558,7 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="48">
+      <Item class="ModuleScript" referent="49">
         <Properties>
           <string name="Name">BotService</string>
           <string name="Source"><![CDATA[--[[
@@ -8517,7 +8852,7 @@ return BotService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="49">
+      <Item class="ModuleScript" referent="50">
         <Properties>
           <string name="Name">CoinService</string>
           <string name="Source"><![CDATA[--[[
@@ -8664,7 +8999,7 @@ return CoinService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="50">
+      <Item class="ModuleScript" referent="51">
         <Properties>
           <string name="Name">CosmeticService</string>
           <string name="Source"><![CDATA[--[[
@@ -8906,7 +9241,7 @@ return CosmeticService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="51">
+      <Item class="ModuleScript" referent="52">
         <Properties>
           <string name="Name">CosmeticShop</string>
           <string name="Source"><![CDATA[--[[
@@ -9034,7 +9369,7 @@ return CosmeticShop
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="52">
+      <Item class="ModuleScript" referent="53">
         <Properties>
           <string name="Name">Inventory</string>
           <string name="Source"><![CDATA[--[[
@@ -9164,7 +9499,7 @@ return Inventory
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="53">
+      <Item class="Script" referent="54">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -9285,7 +9620,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="54">
+      <Item class="ModuleScript" referent="55">
         <Properties>
           <string name="Name">MinigameInfo</string>
           <string name="Source"><![CDATA[--[[
@@ -9574,7 +9909,7 @@ return MinigameInfo
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="55">
+      <Item class="ModuleScript" referent="56">
         <Properties>
           <string name="Name">MinigameManager</string>
           <string name="Source"><![CDATA[--[[
@@ -10362,7 +10697,7 @@ return MinigameManager
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="56">
+      <Item class="ModuleScript" referent="57">
         <Properties>
           <string name="Name">MinigameMode</string>
           <string name="Source"><![CDATA[--[[
@@ -10581,11 +10916,11 @@ return MinigameMode
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="57">
+      <Item class="Folder" referent="58">
         <Properties>
           <string name="Name">Minigames</string>
         </Properties>
-        <Item class="ModuleScript" referent="58">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">Bullseye</string>
             <string name="Source"><![CDATA[--[[
@@ -10868,7 +11203,7 @@ return Bullseye
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="59">
+        <Item class="ModuleScript" referent="60">
           <Properties>
             <string name="Name">BumperBout</string>
             <string name="Source"><![CDATA[--[[
@@ -11735,7 +12070,7 @@ return BumperBout
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="60">
+        <Item class="ModuleScript" referent="61">
           <Properties>
             <string name="Name">FallingPlatforms</string>
             <string name="Source"><![CDATA[--[[
@@ -12088,7 +12423,7 @@ return FallingPlatforms
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="61">
+        <Item class="ModuleScript" referent="62">
           <Properties>
             <string name="Name">HotPotato</string>
             <string name="Source"><![CDATA[--[[
@@ -12619,7 +12954,7 @@ return HotPotato
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="62">
+        <Item class="ModuleScript" referent="63">
           <Properties>
             <string name="Name">IceDash</string>
             <string name="Source"><![CDATA[--[[
@@ -13320,7 +13655,7 @@ return IceDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="63">
+        <Item class="ModuleScript" referent="64">
           <Properties>
             <string name="Name">KernelCatch</string>
             <string name="Source"><![CDATA[--[[
@@ -13863,7 +14198,7 @@ return KernelCatch
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="64">
+        <Item class="ModuleScript" referent="65">
           <Properties>
             <string name="Name">MashDash</string>
             <string name="Source"><![CDATA[--[[
@@ -14060,7 +14395,7 @@ return MashDash
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="65">
+        <Item class="ModuleScript" referent="66">
           <Properties>
             <string name="Name">PatternRecall</string>
             <string name="Source"><![CDATA[--[[
@@ -14355,7 +14690,7 @@ return PatternRecall
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="66">
+        <Item class="ModuleScript" referent="67">
           <Properties>
             <string name="Name">PoleShimmy</string>
             <string name="Source"><![CDATA[--[[
@@ -14809,7 +15144,7 @@ return PoleShimmy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="67">
+        <Item class="ModuleScript" referent="68">
           <Properties>
             <string name="Name">QuickDraw</string>
             <string name="Source"><![CDATA[--[[
@@ -15026,7 +15361,7 @@ return QuickDraw
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="68">
+        <Item class="ModuleScript" referent="69">
           <Properties>
             <string name="Name">TrailTangle</string>
             <string name="Source"><![CDATA[--[[
@@ -15764,7 +16099,7 @@ return TrailTangle
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="69">
+        <Item class="ModuleScript" referent="70">
           <Properties>
             <string name="Name">_Template</string>
             <string name="Source"><![CDATA[--[[
@@ -15890,7 +16225,7 @@ return Template
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="70">
+      <Item class="ModuleScript" referent="71">
         <Properties>
           <string name="Name">Participant</string>
           <string name="Source"><![CDATA[--[[
@@ -16036,7 +16371,7 @@ return Participant
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="71">
+      <Item class="ModuleScript" referent="72">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[--[[
@@ -16178,7 +16513,7 @@ end
 return Profiles
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="72">
+        <Item class="ModuleScript" referent="73">
           <Properties>
             <string name="Name">DataStoreBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -16301,7 +16636,7 @@ return DataStoreBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="73">
+        <Item class="ModuleScript" referent="74">
           <Properties>
             <string name="Name">MemoryBackend</string>
             <string name="Source"><![CDATA[--[[
@@ -16332,7 +16667,7 @@ return MemoryBackend
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="74">
+        <Item class="ModuleScript" referent="75">
           <Properties>
             <string name="Name">ProfileStore</string>
             <string name="Source"><![CDATA[--[[
@@ -16480,16 +16815,16 @@ return ProfileStore
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="75">
+      <Item class="ModuleScript" referent="76">
         <Properties>
           <string name="Name">ReadyState</string>
           <string name="Source"><![CDATA[--[[
 	ReadyState
 	Who is ready on the pre-minigame tutorial screen. Pure (no remotes, no clock of its own).
 
-	  local ready = ReadyState.new(participants, readyAt)
+	  local ready = ReadyState.new(participants, readyAt, phase?)
 	  ready:mark(participant, phase, time) -> true if it counted
-	      only in the Instructions phase, only for one of this round's participants, only once
+	      only in `phase` (default "Instructions"; the board intro uses "Intro"), only for one of this round's participants, only once
 	      READY has unlocked (readyAt, with half a second of slack for clock drift)
 	  ready:everyone() -> true when everyone still in the round is ready (leavers never block)
 	  ready:ids() -> { [participantId] = true }   for the TutorialReady message
@@ -16504,12 +16839,12 @@ ReadyState.__index = ReadyState
 
 ReadyState.SLACK = 0.5
 
-function ReadyState.new(participants, readyAt: number)
-	return setmetatable({ Participants = participants, ReadyAt = readyAt, Ready = {} }, ReadyState)
+function ReadyState.new(participants, readyAt: number, phase: string?)
+	return setmetatable({ Participants = participants, ReadyAt = readyAt, Phase = phase or "Instructions", Ready = {} }, ReadyState)
 end
 
 function ReadyState:mark(participant, phase: string, time: number): boolean
-	if phase ~= "Instructions" or time < self.ReadyAt - ReadyState.SLACK then
+	if phase ~= self.Phase or time < self.ReadyAt - ReadyState.SLACK then
 		return false
 	end
 	if self.Ready[participant] or not table.find(self.Participants, participant) then
@@ -16550,7 +16885,7 @@ return ReadyState
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="76">
+      <Item class="ModuleScript" referent="77">
         <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
@@ -16666,7 +17001,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="77">
+      <Item class="ModuleScript" referent="78">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -16791,7 +17126,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="78">
+      <Item class="ModuleScript" referent="79">
         <Properties>
           <string name="Name">SeatClaims</string>
           <string name="Source"><![CDATA[--[[
@@ -16955,7 +17290,7 @@ return SeatClaims
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="79">
+      <Item class="ModuleScript" referent="80">
         <Properties>
           <string name="Name">Tutorial</string>
           <string name="Source"><![CDATA[--[[
@@ -17098,7 +17433,7 @@ return Tutorial
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="80">
+      <Item class="ModuleScript" referent="81">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -17245,19 +17580,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="81">
+  <Item class="StarterPlayer" referent="82">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="82">
+    <Item class="StarterPlayerScripts" referent="83">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="83">
+      <Item class="Folder" referent="84">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="84">
+        <Item class="ModuleScript" referent="85">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -17481,7 +17816,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="85">
+        <Item class="ModuleScript" referent="86">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -17602,7 +17937,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="86">
+        <Item class="LocalScript" referent="87">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -18031,6 +18366,10 @@ stateRemote.OnClientEvent:Connect(function(message)
 		boardView:setLayout(message)
 	elseif message.Type == Net.Message.BoardState then
 		boardView:setState(message)
+	elseif message.Type == Net.Message.BoardMove then
+		boardView:move(message)
+	elseif message.Type == Net.Message.BoardIntro then
+		boardView:playOpening(message)
 	elseif message.Type == Net.Message.Prompt then
 		boardView:showPrompt(message)
 	elseif message.Type == Net.Message.Inventory then
@@ -18070,11 +18409,11 @@ local function youMarkerWanted(): boolean
 	})
 end
 
-RunService.RenderStepped:Connect(function()
+RunService.RenderStepped:Connect(function(dt)
 	hud:update()
 	randomizer:update()
 	instructions:update()
-	boardView:update()
+	boardView:update(dt)
 	lobbyPanel:update()
 	onboarding:update()
 	youMarker:setActive(youMarkerWanted())
@@ -18089,11 +18428,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="87">
+        <Item class="Folder" referent="88">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">BumperBout</string>
               <string name="Source"><![CDATA[--[[
@@ -18209,7 +18548,7 @@ return BumperBoutClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -18494,7 +18833,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -18749,7 +19088,7 @@ return PoleShimmyClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="91">
+          <Item class="ModuleScript" referent="92">
             <Properties>
               <string name="Name">TrailTangle</string>
               <string name="Source"><![CDATA[--[[
@@ -18891,7 +19230,7 @@ return TrailTangleClient
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="92">
+        <Item class="ModuleScript" referent="93">
           <Properties>
             <string name="Name">Onboarding</string>
             <string name="Source"><![CDATA[--[[
@@ -19446,7 +19785,7 @@ return Onboarding
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="93">
+        <Item class="ModuleScript" referent="94">
           <Properties>
             <string name="Name">SceneAmbience</string>
             <string name="Source"><![CDATA[--[[
@@ -19536,11 +19875,11 @@ return SceneAmbience
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="94">
+        <Item class="Folder" referent="95">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -19690,7 +20029,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">ActivePlayerPortrait</string>
               <string name="Source"><![CDATA[--[[
@@ -19833,7 +20172,7 @@ return ActivePlayerPortrait
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">BoardDice</string>
               <string name="Source"><![CDATA[--[[
@@ -20159,7 +20498,602 @@ return BoardDice
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="99">
+            <Properties>
+              <string name="Name">BoardIntro</string>
+              <string name="Source"><![CDATA[--[[
+	BoardIntro
+	The board-opening introduction on this client, from the server's schedule (Message.
+	BoardIntro, sent once per match before turn order):
+
+	  1. establishing shot of the board's landmark (a slow push-in)
+	  2. the camera moves to the entrance; each participant in seat order arrives (sunbeam /
+	     moonbeam drop, or walking in), their name card shows with a BOT tag for bots, they wave,
+	     then run onto their slot on Start
+	  3. group shot of everyone on Start; once all have appeared the player may CONTINUE
+	  4. a short blend into the normal board camera for turn order
+
+	The server decides who arrives when and where they end up, and ends the intro; this module
+	only moves cameras and characters locally. Characters are hidden (locally) until their
+	arrival. A client that joins late picks up the schedule where it is; Done (or leaving the
+	board) puts everyone back on their real spots.
+
+	  local intro = BoardIntro.new(screen, send)
+	  intro:play(message) / intro:finish()
+	  intro:update(dt)                     every frame
+	  intro:camera() -> CFrame?, blend     BoardView's camera: the shot, and how far to blend
+	                                       into the normal board camera (0..1)
+	  intro.Active
+]]
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local BoardMotion = require(script.Parent.BoardMotion)
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local BoardIntro = {}
+BoardIntro.__index = BoardIntro
+
+local SKIP_ACTION = "PartyBoardIntroSkip"
+-- Phases of one arrival, as fractions of its slot (Each): drop in, wave, run to the slot.
+local DROP, WAVE, WALK = 0.3, 0.62, 0.95
+local BEAM_COLORS = { Sunbeam = Color3.fromRGB(255, 214, 92), Moonbeam = Color3.fromRGB(196, 170, 255) }
+local myId = "player_" .. Players.LocalPlayer.UserId
+
+function BoardIntro.new(screen: ScreenGui, send: (any) -> ())
+	local self = setmetatable({ Send = send, Active = false }, BoardIntro)
+	self.Root = make("Frame", {
+		Name = "BoardIntro",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Visible = false,
+		ZIndex = 4,
+		Parent = screen,
+	})
+	self.Title = make("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 70),
+		Size = UDim2.fromOffset(900, 64),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 54,
+		TextColor3 = Theme.Glass.Gold,
+		Parent = self.Root,
+	}, { make("UIStroke", { Color = Theme.Glass.Deep, Thickness = 3 }), make("UIScale", {}) })
+	-- Name card: lower centre, clear of the centre of the screen and of Roblox's own UI.
+	self.Card = Theme.glass(make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Size = UDim2.fromOffset(420, 76),
+		Visible = false,
+		Parent = self.Root,
+	}, { make("UIScale", {}) }), 20, 3)
+	self.Name = make("TextLabel", {
+		Position = UDim2.fromOffset(22, 0),
+		Size = UDim2.new(1, -44, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 40,
+		TextColor3 = Theme.Glass.Cream,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = self.Card,
+	}, { make("UIStroke", { Color = Theme.Glass.Deep, Thickness = 2 }) })
+	self.Tag = make("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -16, 0.5, 0),
+		Size = UDim2.fromOffset(64, 32),
+		BackgroundColor3 = Theme.Glass.Gold,
+		Font = Theme.TitleFont,
+		TextSize = 22,
+		TextColor3 = Theme.Glass.Deep,
+		Text = "BOT",
+		Visible = false,
+		Parent = self.Card,
+	}, { Theme.corner(10) })
+	self.Skip = make("TextButton", {
+		Name = "IntroContinue",
+		AnchorPoint = Vector2.new(1, 1),
+		Size = UDim2.fromOffset(220, 60),
+		Font = Theme.TitleFont,
+		TextSize = 28,
+		TextColor3 = Theme.Glass.Cream,
+		Text = "CONTINUE",
+		AutoButtonColor = true,
+		Visible = false,
+		Parent = self.Root,
+	})
+	Theme.glass(self.Skip, 16, 2)
+	make("UIScale", { Parent = self.Skip })
+	self.Skip.Activated:Connect(function()
+		self:skip()
+	end)
+	return self
+end
+
+local function rootOf(character: Model?): BasePart?
+	return character and character.Parent and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+-- Local-only hide / show of a whole character (accessories and layered clothing included).
+local function setHidden(character: Model, hidden: boolean)
+	local value = if hidden then 1 else 0
+	for _, item in character:GetDescendants() do
+		if item:IsA("BasePart") or item:IsA("Decal") then
+			item.LocalTransparencyModifier = value
+		end
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.DisplayDistanceType = if hidden then Enum.HumanoidDisplayDistanceType.None else Enum.HumanoidDisplayDistanceType.Viewer
+	end
+end
+
+local function lookFlat(from: Vector3, to: Vector3): CFrame
+	local flat = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
+	return if flat.Magnitude > 0.05 then CFrame.lookAt(from, from + flat) else CFrame.new(from)
+end
+
+function BoardIntro:play(message)
+	local now = Workspace:GetServerTimeNow()
+	if message.Done then
+		-- The server moved on (everyone continued): blend out from here.
+		if self.Active then
+			local out = self.Message.Out or 0.4
+			self.Message.EndsAt = math.min(self.Message.EndsAt, now + out)
+		end
+		return
+	end
+	if self.Active then
+		self:finish()
+	end
+	if now >= message.EndsAt then
+		return
+	end
+	self.Message = message
+	self.Active = true
+	self.Reduced = BoardMotion.reducedMotion()
+	self.Hidden = {}
+	self.Waved = {}
+	self.Skipped = false
+	self.Shot = nil
+	self.Title.Text = string.upper((string.gsub(message.BoardName or "", "%s*%b()", "")))
+	self.Root.Visible = true
+	for _, seat in message.Seats do
+		if seat.Character then
+			self.Hidden[seat.Character] = false
+		end
+	end
+	ContextActionService:BindAction(SKIP_ACTION, function(_, state)
+		if state == Enum.UserInputState.Begin and self.Skip.Visible then
+			self:skip()
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.KeyCode.Space, Enum.KeyCode.Return, Enum.KeyCode.ButtonA)
+	self:update(0)
+end
+
+function BoardIntro:skip()
+	if self.Skipped then
+		return
+	end
+	self.Skipped = true
+	self.Skip.Text = "WAITING…"
+	self.Send({ Kind = "IntroSkip" })
+end
+
+function BoardIntro:finish()
+	if not self.Active then
+		return
+	end
+	self.Active = false
+	ContextActionService:UnbindAction(SKIP_ACTION)
+	self.Root.Visible = false
+	self.Card.Visible = false
+	self.Skip.Visible = false
+	if self.Beam then
+		self.Beam:Destroy()
+		self.Beam = nil
+	end
+	-- Everyone visible, standing where the server put them.
+	for _, seat in self.Message.Seats do
+		local character = seat.Character
+		if character and character.Parent then
+			setHidden(character, false)
+			local run = BoardMotion.track(character, "run")
+			if run then
+				run:Stop(0.1)
+			end
+			local root = rootOf(character)
+			if root and seat.Destination then
+				root.CFrame = seat.Destination
+			end
+		end
+	end
+	self.Message = nil
+end
+
+-- The participant arriving now (index), or nil before the first / after the last.
+function BoardIntro:arriving(now: number)
+	local message = self.Message
+	for i = #message.Seats, 1, -1 do
+		local seat = message.Seats[i]
+		if now >= seat.ArriveAt then
+			return if now < message.GroupAt then i else nil
+		end
+	end
+	return nil
+end
+
+-- Where seat's root is at `now` and which animation it should be in.
+function BoardIntro:pose(seat, now: number, each: number): (CFrame?, string?)
+	local spec = self.Message.Spec
+	local destination: CFrame = seat.Destination
+	if not spec or self.Reduced then
+		return destination, nil
+	end
+	local p = (now - seat.ArriveAt) / each
+	if p >= WALK then
+		return destination, nil
+	end
+	local entry = spec.Entry
+	local landing = entry[#entry]
+	local face = lookFlat(landing, spec.Arrival.Camera)
+	if p < DROP then
+		local position = BoardMotion.sample(entry, BoardMotion.length(entry) * math.sin(p / DROP * math.pi / 2))
+		return face.Rotation + position, nil
+	elseif p < WAVE then
+		return face.Rotation + landing, "wave"
+	end
+	local path = { landing, destination.Position }
+	local position = BoardMotion.sample(path, BoardMotion.length(path) * (p - WAVE) / (WALK - WAVE))
+	return lookFlat(landing, destination.Position).Rotation + position, "run"
+end
+
+function BoardIntro:update(dt: number)
+	if not self.Active then
+		return
+	end
+	local message = self.Message
+	local now = Workspace:GetServerTimeNow()
+	if now >= message.EndsAt then
+		self:finish()
+		return
+	end
+	local spec = message.Spec
+	local each = if #message.Seats > 1 then message.Seats[2].ArriveAt - message.Seats[1].ArriveAt else message.GroupAt - message.Seats[1].ArriveAt
+	each = math.max(each, 0.5)
+	local index = self:arriving(now)
+
+	for _, seat in message.Seats do
+		local character = seat.Character
+		local root = rootOf(character)
+		if not root then
+			continue -- left during the intro, or the body is still loading: never blocks
+		end
+		local hidden = now < seat.ArriveAt
+		if self.Hidden[character] ~= hidden then
+			self.Hidden[character] = hidden
+			setHidden(character, hidden)
+		end
+		if hidden then
+			continue
+		end
+		local cframe, animation = self:pose(seat, now, each)
+		if cframe then
+			root.CFrame = cframe
+		end
+		local run = BoardMotion.track(character, "run")
+		if run and (animation == "run") ~= run.IsPlaying then
+			if animation == "run" then
+				run:Play(0.1)
+			else
+				run:Stop(0.15)
+			end
+		end
+		if animation == "wave" and not self.Waved[character] then
+			self.Waved[character] = true
+			local wave = BoardMotion.track(character, "wave")
+			if wave then
+				wave:Play(0.1)
+			end
+		end
+	end
+
+	-- Arrival effect: a beam down onto the entrance while someone drops in (off as they land).
+	local beamOn = spec and index and not self.Reduced and BEAM_COLORS[spec.Effect]
+		and (now - message.Seats[index].ArriveAt) / each < DROP
+	if beamOn and not self.Beam then
+		local entry = spec.Entry
+		local top, bottom = entry[1], entry[#entry] - Vector3.new(0, 3, 0)
+		self.Beam = make("Part", {
+			Name = "IntroBeam",
+			Shape = Enum.PartType.Cylinder,
+			Anchored = true,
+			CanCollide = false,
+			CanQuery = false,
+			CanTouch = false,
+			CastShadow = false,
+			Material = Enum.Material.Neon,
+			Color = BEAM_COLORS[spec.Effect],
+			Transparency = 0.65,
+			Size = Vector3.new((top - bottom).Magnitude + 6, 3.2, 3.2),
+			CFrame = CFrame.new((top + bottom) / 2 + Vector3.new(0, 3, 0)) * CFrame.Angles(0, 0, math.pi / 2),
+			Parent = Workspace,
+		})
+	elseif not beamOn and self.Beam then
+		self.Beam:Destroy()
+		self.Beam = nil
+	end
+
+	-- Name card for whoever is arriving.
+	local seat = index and message.Seats[index]
+	self.Card.Visible = seat ~= nil
+	if seat then
+		self.Name.Text = Theme.shortWords(if seat.Id == myId then Players.LocalPlayer.DisplayName else seat.Name, 14)
+		self.Tag.Visible = seat.IsBot == true
+	end
+	self.Title.Visible = spec ~= nil and now < message.Seats[1].ArriveAt
+	local canSkip = now >= message.GroupAt and now < message.EndsAt - (message.Out or 0.4)
+	self.Skip.Visible = canSkip
+	if not self.Skipped then
+		self.Skip.Text = "CONTINUE"
+	end
+
+	-- Phones: same layout, scaled to the screen height (names stay readable).
+	local size = self.Root.AbsoluteSize
+	local scale = math.clamp(size.Y / 720, 0.72, 1.25)
+	for _, item in { self.Title, self.Card, self.Skip } do
+		item:FindFirstChildOfClass("UIScale").Scale = scale
+	end
+	self.Title.Position = UDim2.new(0.5, 0, 0, 70 * scale)
+	self.Card.Position = UDim2.new(0.5, 0, 1, -56 * scale)
+	self.Skip.Position = UDim2.new(1, -size.X * 0.06, 1, -40 * scale) -- clear of rounded corners
+	self:aim(now, index, dt)
+end
+
+-- The camera shot for this moment (smoothed: shots move into each other unless reduced motion).
+function BoardIntro:aim(now: number, index: number?, dt: number)
+	local message = self.Message
+	local spec = message.Spec
+	local goal
+	if not spec then
+		local sum = Vector3.zero
+		for _, seat in message.Seats do
+			sum += seat.Destination.Position
+		end
+		local centre = sum / math.max(1, #message.Seats)
+		goal = CFrame.lookAt(centre + Vector3.new(0, 16, 22), centre)
+	elseif now < message.Seats[1].ArriveAt then
+		local u = math.clamp((now - message.StartsAt) / math.max(0.1, message.Seats[1].ArriveAt - message.StartsAt), 0, 1)
+		local camera = spec.Establish.Camera:Lerp(spec.Establish.Look, 0.12 * u) -- slow push-in
+		goal = CFrame.lookAt(camera, spec.Establish.Look)
+	elseif index then
+		local root = rootOf(message.Seats[index].Character)
+		local look = if root then spec.Arrival.Look:Lerp(root.Position, 0.4) else spec.Arrival.Look
+		goal = CFrame.lookAt(spec.Arrival.Camera, look)
+	else
+		goal = CFrame.lookAt(spec.Group.Camera, spec.Group.Look)
+	end
+	if self.Reduced or not self.Shot then
+		self.Shot = goal
+	else
+		self.Shot = self.Shot:Lerp(goal, 1 - math.exp(-5 * dt))
+	end
+end
+
+function BoardIntro:camera(): (CFrame?, number)
+	if not self.Active or not self.Shot then
+		return nil, 1
+	end
+	local message = self.Message
+	local out = message.Out or 0.4
+	local blend = math.clamp((Workspace:GetServerTimeNow() - (message.EndsAt - out)) / out, 0, 1)
+	return self.Shot, blend
+end
+
+return BoardIntro
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="100">
+            <Properties>
+              <string name="Name">BoardMotion</string>
+              <string name="Source"><![CDATA[--[[
+	BoardMotion
+	Runs board pieces along the route the server sends after a roll (Message.BoardMove): turn
+	toward the segment, run the visible path (curves, slopes and every stair step are points in
+	it), a small hop onto the next space, land facing the route. Presentation only: pieces are
+	anchored and the server snaps each one to its confirmed space when the segment ends, so a
+	late, missed or failed animation just shows that snap and never holds the match up.
+
+	  BoardMotion.play(message)          start a segment (a newer one for the same piece replaces it)
+	  BoardMotion.update(dt)             every frame
+	  BoardMotion.stopAll()              leaving the board
+	  BoardMotion.sample(points, d)      -> position d studs along the path, segment direction (pure)
+	  BoardMotion.track(character, name) -> the character's own "run" / "wave" AnimationTrack
+
+	Animations are the character's own Animate script ones (Roblox's default R15 ones when a
+	body has none); nothing is uploaded.
+]]
+
+local GuiService = game:GetService("GuiService")
+local Workspace = game:GetService("Workspace")
+
+local BoardMotion = {}
+
+local HOP_HEIGHT = 1.1 -- studs: the step-up onto the next space
+local TURN_RATE = 16 -- facing catch-up per second (higher = snappier turns)
+local RUN_SPEED = 16 -- studs/s the run cycle is authored for
+-- Roblox's own default R15 animations, used only when a body has no Animate script.
+local DEFAULT_ANIMATIONS = { run = "rbxassetid://913376220", wave = "rbxassetid://507770239" }
+
+local moves = {} -- [character] = the segment in progress
+local tracks = setmetatable({}, { __mode = "k" }) -- [character] = { [name] = AnimationTrack }
+
+local function reducedMotion(): boolean
+	local ok, value = pcall(function()
+		return (GuiService :: any).ReducedMotionEnabled
+	end)
+	return ok and value == true
+end
+BoardMotion.reducedMotion = reducedMotion
+
+function BoardMotion.sample(points: { Vector3 }, distance: number): (Vector3, Vector3)
+	for i = 2, #points do
+		local a, b = points[i - 1], points[i]
+		local length = (b - a).Magnitude
+		if distance <= length or i == #points then
+			return a:Lerp(b, if length > 0 then math.clamp(distance / length, 0, 1) else 1), b - a
+		end
+		distance -= length
+	end
+	return points[1], Vector3.zero
+end
+
+function BoardMotion.length(points: { Vector3 }): number
+	local total = 0
+	for i = 2, #points do
+		total += (points[i] - points[i - 1]).Magnitude
+	end
+	return total
+end
+
+function BoardMotion.track(character: Model, name: string): AnimationTrack?
+	local cache = tracks[character]
+	if cache and cache[name] then
+		return cache[name]
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return nil
+	end
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+	local animate = character:FindFirstChild("Animate")
+	local folder = animate and animate:FindFirstChild(name)
+	local animation = folder and folder:FindFirstChildOfClass("Animation")
+	if not animation then
+		animation = Instance.new("Animation")
+		animation.AnimationId = DEFAULT_ANIMATIONS[name]
+	end
+	local ok, track = pcall(animator.LoadAnimation, animator, animation)
+	if not ok or not track then
+		return nil
+	end
+	track.Priority = if name == "run" then Enum.AnimationPriority.Movement else Enum.AnimationPriority.Action
+	tracks[character] = cache or {}
+	tracks[character][name] = track
+	return track
+end
+
+local function rootOf(character: Model?): BasePart?
+	return character and character.Parent and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+local function flat(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
+end
+
+local function finish(character: Model, move)
+	moves[character] = nil
+	if move.Track then
+		move.Track:Stop(0.15)
+	end
+	local root = rootOf(character)
+	if root then
+		local last = move.Points[#move.Points]
+		local face = flat(move.Face or Vector3.zero)
+		root.CFrame = if face.Magnitude > 0.01 then CFrame.lookAt(last, last + face) else CFrame.new(last) * root.CFrame.Rotation
+	end
+end
+
+function BoardMotion.play(message)
+	local character = message.Character
+	local root = rootOf(character)
+	local points = message.Points
+	if not root or type(points) ~= "table" or #points < 2 then
+		return -- the server's snap still puts it on the space
+	end
+	local previous = moves[character]
+	if previous then
+		finish(character, previous)
+	end
+	local move = {
+		Points = points,
+		Total = BoardMotion.length(points),
+		StartsAt = message.StartsAt,
+		Duration = math.max(0.05, message.Duration or 0.35),
+		Face = message.Face,
+		Look = flat(root.CFrame.LookVector),
+	}
+	if reducedMotion() then
+		-- No run: wait out the segment, then appear on the space (no hop, no camera swing).
+		move.Instant = true
+	else
+		move.Track = BoardMotion.track(character, "run")
+		if move.Track then
+			move.Track:Play(0.1)
+			move.Track:AdjustSpeed(math.clamp(move.Total / move.Duration / RUN_SPEED, 0.8, 1.8))
+		end
+	end
+	moves[character] = move
+end
+
+function BoardMotion.update(dt: number)
+	local now = Workspace:GetServerTimeNow()
+	for character, move in moves do
+		local root = rootOf(character)
+		if not root then
+			moves[character] = nil
+			continue
+		end
+		local u = (now - move.StartsAt) / move.Duration
+		if u >= 1 then
+			finish(character, move)
+			continue
+		end
+		if move.Instant or u < 0 then
+			continue
+		end
+		-- Mostly even pace with a soft start and finish.
+		local eased = 0.75 * u + 0.25 * u * u * (3 - 2 * u)
+		local distance = move.Total * eased
+		local position, direction = BoardMotion.sample(move.Points, distance)
+		-- The hop onto the next space over the last stretch.
+		local window = math.min(move.Total, math.max(3, move.Total * 0.3))
+		local s = (distance - (move.Total - window)) / window
+		if s > 0 then
+			position += Vector3.new(0, HOP_HEIGHT * 4 * s * (1 - s), 0)
+		end
+		local heading = flat(direction)
+		if heading.Magnitude > 0.05 then
+			move.Look = move.Look:Lerp(heading.Unit, 1 - math.exp(-TURN_RATE * dt))
+		end
+		root.CFrame = if move.Look.Magnitude > 0.01 then CFrame.lookAt(position, position + move.Look) else CFrame.new(position)
+	end
+end
+
+function BoardMotion.isMoving(character: Model?): boolean
+	return character ~= nil and moves[character] ~= nil
+end
+
+function BoardMotion.stopAll()
+	for character, move in moves do
+		finish(character, move)
+	end
+end
+
+return BoardMotion
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -20189,6 +21123,8 @@ local Workspace = game:GetService("Workspace")
 
 local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
 local BoardDice = require(script.Parent.BoardDice)
+local BoardIntro = require(script.Parent.BoardIntro)
+local BoardMotion = require(script.Parent.BoardMotion)
 local DicePrompt = require(script.Parent.DicePrompt)
 local PlayerStandingsStrip = require(script.Parent.PlayerStandingsStrip)
 local Theme = require(script.Parent.Theme)
@@ -20322,6 +21258,7 @@ function BoardView.new(screen: ScreenGui, send: (any) -> (), playerGui: PlayerGu
 	self.Focus = nil
 	self.Zoom = 1
 	self.Dice = BoardDice.new()
+	self.Opening = BoardIntro.new(screen, send)
 
 	Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 		self:layout()
@@ -20496,7 +21433,8 @@ function BoardView:refresh()
 	if not (self.Visible and state) then
 		return
 	end
-	local panels = not self.PanelsHidden
+	-- The board-opening intro owns the screen: no HUD, no input until it ends.
+	local panels = not self.PanelsHidden and not self.Opening.Active and state.Stage ~= "Intro"
 	local intro = self.IntroActive and panels
 	local myTurn = state.TurnId == myId
 	local stage = state.Stage
@@ -20798,6 +21736,20 @@ local function dioramaShot(self): (Vector3?, number)
 	if state.Stage == "Deciding" then
 		return focus + DIORAMA_PROMPT_SHIFT, DIORAMA_DECIDE_ZOOM
 	end
+	if state.Stage == "Moving" and ahead then
+		-- Running: look one or two spaces ahead, and pull back for turns and climbs so the next
+		-- stretch of route stays in view.
+		local beyond = ahead.Next and ahead.Next[1] and self.SpaceById[ahead.Next[1]]
+		local target = if beyond then (ahead.Position + beyond.Position) / 2 else ahead.Position
+		local zoom = 1 + math.clamp(math.abs(target.Y - here.Y) / 14, 0, 0.25)
+		if beyond then
+			local first, second = ahead.Position - space.Position, beyond.Position - ahead.Position
+			if first.Magnitude > 0 and second.Magnitude > 0 and first.Unit:Dot(second.Unit) < 0.8 then
+				zoom += 0.1
+			end
+		end
+		return here:Lerp(target, DIORAMA_LOOKAHEAD), zoom
+	end
 	return focus, 1
 end
 
@@ -20876,6 +21828,11 @@ function BoardView:show()
 			aim += Vector3.new(-30, 0, 0)
 		end
 		camera.CFrame = CFrame.lookAt(aim + offset, aim)
+		-- Board-opening intro: its own shots, blending into this camera at the end.
+		local shot, blend = self.Opening:camera()
+		if shot then
+			camera.CFrame = shot:Lerp(camera.CFrame, blend * blend * (3 - 2 * blend))
+		end
 		-- Your piece is teleported around; if it tips over, stand it back up.
 		local character = Players.LocalPlayer.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -20909,6 +21866,8 @@ local function clearPanels(self)
 end
 
 function BoardView:hide()
+	BoardMotion.stopAll()
+	self.Opening:finish()
 	if not self.Visible then
 		return
 	end
@@ -20933,8 +21892,24 @@ function BoardView:hidePanels()
 	ContextActionService:UnbindAction(MAP_ACTION)
 end
 
--- Per frame: the roll countdown on the ROLL row.
-function BoardView:update()
+-- Server presentation messages: a move segment (BoardMove) and the board intro (BoardIntro).
+function BoardView:move(message)
+	BoardMotion.play(message)
+end
+
+function BoardView:playOpening(message)
+	self.Opening:play(message)
+	self:refresh()
+end
+
+-- Per frame: moving pieces, the intro, and the roll countdown on the ROLL row.
+function BoardView:update(dt: number?)
+	BoardMotion.update(dt or 1 / 60)
+	local opening = self.Opening.Active
+	self.Opening:update(dt or 1 / 60)
+	if opening and not self.Opening.Active then
+		self:refresh() -- intro over: the HUD comes back
+	end
 	local row = self.Menu.Rows.Roll
 	if self.RollButton.Visible and self.State and self.State.RollEndsAt then
 		row.BaseNote = ("%ds left"):format(math.max(0, math.ceil(self.State.RollEndsAt - Workspace:GetServerTimeNow())))
@@ -20946,7 +21921,7 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">Canvas</string>
               <string name="Source"><![CDATA[--[[
@@ -21020,7 +21995,7 @@ return Canvas
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="103">
             <Properties>
               <string name="Name">DicePrompt</string>
               <string name="Source"><![CDATA[--[[
@@ -21139,7 +22114,7 @@ return DicePrompt
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="104">
             <Properties>
               <string name="Name">GuidePointer</string>
               <string name="Source"><![CDATA[--[[
@@ -21552,7 +22527,7 @@ return GuidePointer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="102">
+          <Item class="ModuleScript" referent="105">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -21831,7 +22806,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="103">
+          <Item class="ModuleScript" referent="106">
             <Properties>
               <string name="Name">Icons</string>
               <string name="Source"><![CDATA[--[[
@@ -22003,7 +22978,7 @@ return Icons
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="104">
+          <Item class="ModuleScript" referent="107">
             <Properties>
               <string name="Name">InputHint</string>
               <string name="Source"><![CDATA[--[[
@@ -22102,7 +23077,7 @@ return InputHint
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="105">
+          <Item class="ModuleScript" referent="108">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
@@ -22613,7 +23588,7 @@ return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="106">
+          <Item class="ModuleScript" referent="109">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -23011,7 +23986,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="107">
+          <Item class="ModuleScript" referent="110">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -23126,7 +24101,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="108">
+          <Item class="ModuleScript" referent="111">
             <Properties>
               <string name="Name">PlayerStandingsStrip</string>
               <string name="Source"><![CDATA[--[[
@@ -23322,7 +24297,7 @@ return PlayerStandingsStrip
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="109">
+          <Item class="ModuleScript" referent="112">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -23459,7 +24434,7 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="110">
+          <Item class="ModuleScript" referent="113">
             <Properties>
               <string name="Name">RandomizerScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -23633,7 +24608,7 @@ return RandomizerScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="111">
+          <Item class="ModuleScript" referent="114">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -23752,7 +24727,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="112">
+          <Item class="ModuleScript" referent="115">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -24166,7 +25141,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="113">
+          <Item class="ModuleScript" referent="116">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -24255,7 +25230,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="114">
+          <Item class="ModuleScript" referent="117">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -24426,7 +25401,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="115">
+          <Item class="ModuleScript" referent="118">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -24622,7 +25597,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="116">
+          <Item class="ModuleScript" referent="119">
             <Properties>
               <string name="Name">TurnMenu</string>
               <string name="Source"><![CDATA[--[[
@@ -25083,7 +26058,7 @@ return TurnMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="117">
+          <Item class="ModuleScript" referent="120">
             <Properties>
               <string name="Name">TurnProgress</string>
               <string name="Source"><![CDATA[--[[
@@ -25141,7 +26116,7 @@ return TurnProgress
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="118">
+          <Item class="ModuleScript" referent="121">
             <Properties>
               <string name="Name">TurnStartBanner</string>
               <string name="Source"><![CDATA[--[[
@@ -25254,7 +26229,7 @@ return TurnStartBanner
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="119">
+          <Item class="ModuleScript" referent="122">
             <Properties>
               <string name="Name">TutorialPreview</string>
               <string name="Source"><![CDATA[--[[
@@ -25585,7 +26560,7 @@ return TutorialPreview
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="120">
+          <Item class="ModuleScript" referent="123">
             <Properties>
               <string name="Name">YouMarker</string>
               <string name="Source"><![CDATA[--[[
@@ -25759,18 +26734,18 @@ return YouMarker
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="121">
+  <Item class="Workspace" referent="124">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="122">
+    <Item class="Model" referent="125">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="123">
+      <Item class="Part" referent="126">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -25790,7 +26765,7 @@ return YouMarker
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="124">
+      <Item class="SpawnLocation" referent="127">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
