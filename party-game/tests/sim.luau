@@ -2,7 +2,7 @@
 	Headless end-to-end smoke test: 1 simulated real player + 3 bots play several rounds.
 	Run from the party-game folder:   lune run tests/sim
 
-	Checks every round goes Vote -> Instructions -> Countdown x3 -> Playing -> Finished ->
+	Checks every round goes Select -> Instructions -> Countdown x3 -> Playing -> Finished ->
 	Results -> Lobby, results/coins are consistent, the arena is cleaned up, nobody is left
 	frozen, and no script errored or warned. Also fuzzes the input remote with junk and
 	covers a player leaving mid-round.
@@ -25,7 +25,10 @@ local client = Engine.mount(ROOT .. "/client", Engine.StarterPlayer.StarterPlaye
 -- Speed up the boring waits; minigame logic is untouched.
 local Config = Engine.requireAs(shared.Config, "server")
 Config.IntermissionDuration = 1
-Config.VoteDuration = 4
+Config.SelectDuration = 2
+Config.SelectHold = 0.4
+Config.TutorialMinDuration = 1
+Config.InstructionsDuration = 4
 
 local failures = {}
 local function check(condition, message)
@@ -71,8 +74,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 	if message.Type ~= "Phase" then
 		return
 	end
-	if message.Phase == "Vote" then
-		current = { Phases = {}, Choices = message.Choices }
+	if message.Phase == "Select" then
+		current = { Phases = {}, Candidates = message.Candidates, ResultId = message.ResultId }
 		table.insert(rounds, current)
 	end
 	if current then
@@ -89,8 +92,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 	end
 end)
 
--- Fake "human": clicks a vote card through the real UI, wanders, spams its action buttons,
--- and occasionally sends garbage to the server.
+-- Fake "human": presses READY on the tutorial screen, wanders, spams its action buttons,
+-- and occasionally sends garbage to the server (it can't influence the minigame pick).
 local playerGui = player.PlayerGui
 local lastPhase = nil
 local nextAct = 0
@@ -98,36 +101,15 @@ local function humanBrain()
 	local phase = rounds[#rounds] and rounds[#rounds].Phases[#rounds[#rounds].Phases]
 	if phase ~= lastPhase then
 		lastPhase = phase
-		if phase == "Vote" then
-			Engine.task.delay(1, function()
-				local cards = {}
-				for _, d in playerGui:GetDescendants() do
-					if d.ClassName == "TextButton" and string.sub(d.Name, 1, 4) == "Card" then
-						table.insert(cards, d)
-					end
-				end
-				-- Alternate preferences so both minigames get covered.
-				local cycle = { "Hot Potato", "Falling Platforms", "Mash Dash" }
-				local wanted = cycle[#rounds % #cycle + 1]
-				local pick = cards[1]
-				for i, choice in rounds[#rounds].Choices do
-					if choice.Name == wanted and cards[i] then
-						for _, card in cards do
-							if card.Name == "Card" .. i then
-								pick = card
-							end
-						end
-					end
-				end
-				if pick then
-					pick.Activated:Fire()
-				end
-				-- junk inputs a malicious client could send
-				Engine.fireServerRaw(inputRemote, player, { Kind = "Vote", Choice = 99 })
-				Engine.fireServerRaw(inputRemote, player, { Kind = "Vote", Choice = 0 / 0 })
-				Engine.fireServerRaw(inputRemote, player, { Kind = "Vote", Choice = 1.5 })
-				Engine.fireServerRaw(inputRemote, player, "lol")
-				Engine.fireServerRaw(inputRemote, player, nil)
+		if phase == "Select" then
+			-- junk a malicious client could send: there is no vote input any more
+			Engine.fireServerRaw(inputRemote, player, { Kind = "Vote", Choice = 1 })
+			Engine.fireServerRaw(inputRemote, player, { Kind = "TutorialReady" }) -- too early: ignored
+			Engine.fireServerRaw(inputRemote, player, "lol")
+			Engine.fireServerRaw(inputRemote, player, nil)
+		elseif phase == "Instructions" then
+			Engine.task.delay(1.2, function()
+				Engine.fireServerRaw(inputRemote, player, { Kind = "TutorialReady" })
 			end)
 		end
 	end
@@ -175,7 +157,7 @@ end
 local checkedRounds = 0
 local function checkRound(round, index)
 	local label = ("round %d (%s)"):format(index, tostring(round.Minigame))
-	local expected = { "Vote", "Instructions", "Countdown", "Countdown", "Countdown", "Playing", "Finished", "Results", "Lobby" }
+	local expected = { "Select", "Instructions", "Countdown", "Countdown", "Countdown", "Playing", "Finished", "Results", "Lobby" }
 	check(
 		table.concat(round.Phases, ",") == table.concat(expected, ","),
 		label .. ": phase order was " .. table.concat(round.Phases, ",")

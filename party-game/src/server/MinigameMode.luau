@@ -1,6 +1,6 @@
 --[[
 	MinigameMode
-	The "Minigames" match mode: no board, just back-to-back minigames (vote -> play ->
+	The "Minigames" match mode: no board, just back-to-back minigames (server pick -> tutorial -> play ->
 	results) for the chosen number of rounds. Most coins wins; ties share a place. Real
 	players get bank coins by placement, same as the board party.
 

@@ -3,7 +3,7 @@
 	The two RemoteEvents the whole framework uses, plus the message vocabulary.
 
 	  PartyState  (server -> client): authoritative state. The client only ever renders this.
-	  PartyInput  (client -> server): inputs only (ready / vote / minigame action).
+	  PartyInput  (client -> server): inputs only (ready / tutorial ready / minigame action).
 	                                  The server validates every one of them.
 
 	Two more remotes exist for minigames that run their own client code (Info.ClientModule):
@@ -28,8 +28,8 @@ local Net = {}
 -- Phases the server walks through each round. The client shows a screen per phase.
 Net.Phase = {
 	Lobby = "Lobby",
-	Vote = "Vote",
-	Instructions = "Instructions",
+	Select = "Select", -- the server's minigame pick, animated as a roulette (no voting)
+	Instructions = "Instructions", -- tutorial: preview, controls, ready-up
 	Countdown = "Countdown",
 	Playing = "Playing",
 	Finished = "Finished",
@@ -42,7 +42,7 @@ Net.Phase = {
 -- Server -> client message types (message.Type).
 Net.Message = {
 	Phase = "Phase", -- full phase change; carries everything needed to draw that screen
-	VoteUpdate = "VoteUpdate", -- live vote counts during the Vote phase
+	TutorialReady = "TutorialReady", -- Instructions phase: { Ready = { [id] = true }, Left = { [id] = true } }
 	Status = "Status", -- persistent HUD line set by the minigame ("Pip has the potato!")
 	Toast = "Toast", -- short-lived feed message ("BOOM!")
 	Chips = "Chips", -- player-chip strip: every participant's live value + eliminated flag
@@ -57,7 +57,7 @@ Net.Message = {
 -- Client -> server input kinds (payload.Kind).
 Net.Input = {
 	Ready = "Ready", -- client finished loading; server replies with a state snapshot
-	Vote = "Vote", -- payload.Choice = index of the vote card
+	TutorialReady = "TutorialReady", -- Instructions phase: I'm ready to play
 	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
 	Roll = "Roll", -- roll the die on your turn
 	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt

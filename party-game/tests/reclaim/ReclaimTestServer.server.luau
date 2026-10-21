@@ -22,7 +22,8 @@ Config.Board.LandPause = 0.2
 Config.Match.OrderRollTimeout = 2
 Config.Board.ChoiceTimeout = 2
 Config.Match.WaitingRoomDuration = 60
-Config.VoteDuration = 2
+Config.SelectDuration = 2
+Config.SelectHold = 0.4
 Config.InstructionsDuration = 2
 Config.ResultsDuration = 2
 

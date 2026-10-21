@@ -31,7 +31,8 @@ Config.Match.WaitingRoomDuration = 120
 Config.Match.PreBonusDuration = 2
 Config.Match.BonusDuration = 3
 Config.Match.StandingsDuration = 6
-Config.VoteDuration = 5
+Config.SelectDuration = 2
+Config.SelectHold = 0.4
 Config.InstructionsDuration = 3
 Config.ResultsDuration = 4
 
@@ -92,14 +93,14 @@ MinigameManager.broadcast = function(message)
 	return broadcast(message)
 end
 
--- Individual Minigames: play a chosen sequence instead of a random vote (layout coverage).
+-- Individual Minigames: play a chosen sequence instead of a random pick (layout coverage).
 local forced = {}
 local runRound = MinigameManager.runRound
 MinigameManager.runRound = function(participants, options)
 	options = options or {}
 	if not options.Entry and #forced > 0 and #participants == Config.PlayersPerMatch then
 		local id = table.remove(forced, 1)
-		for _, entry in MinigameManager.voteMinigames() do
+		for _, entry in MinigameManager.roundMinigames() do
 			if entry.Id == id then
 				options.Entry = entry
 			end

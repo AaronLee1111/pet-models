@@ -16,15 +16,24 @@ Config.Layouts = {
 	FFA = "FFA", -- everyone for themselves
 	OneVsThree = "1v3", -- one solo player vs a team of three
 	TwoVsTwo = "2v2", -- two teams of two
-	Duel = "Duel", -- exactly two players (board Duel spaces); never in the normal vote
+	Duel = "Duel", -- exactly two players (board Duel spaces); never in normal rounds
 }
 
 -- Phase timings (seconds) ----------------------------------------------------
 
-Config.IntermissionDuration = 5 -- lobby wait before the vote opens
-Config.VoteChoices = 3 -- cards shown on the vote screen
-Config.VoteDuration = 12
-Config.InstructionsDuration = 7
+Config.IntermissionDuration = 5 -- lobby wait before the minigame is picked
+-- The server picks the minigame; clients animate the pick (a roulette over the eligible names)
+-- for SelectDuration, ending with SelectHold seconds on the result.
+Config.SelectDuration = 4.2
+Config.SelectHold = 0.9
+-- Tutorial (instructions) screen: READY unlocks after TutorialMinDuration (at least one preview
+-- loop); the round starts when every connected human is ready, or at InstructionsDuration.
+Config.TutorialMinDuration = 5
+Config.InstructionsDuration = 25
+Config.BotReadyDelay = { 0.4, 2.5 } -- after TutorialMinDuration
+-- Repeat avoidance: never the previous minigame (if anything else fits), and not the previous
+-- two when at least AvoidTwoPoolSize games are eligible. Every eligible game is otherwise equally likely.
+Config.AvoidTwoPoolSize = 4
 Config.CountdownFrom = 3
 Config.FinishBannerDuration = 2 -- "FINISH!" beat before teleporting back
 Config.ResultsDuration = 8
@@ -226,7 +235,6 @@ Config.ChipFlushInterval = 0.15
 -- Bots ---------------------------------------------------------------------------
 
 Config.BotThinkInterval = 0.2 -- how often each bot's brain runs
-Config.BotVoteDelay = { 1.5, 5 } -- bots "think" about their vote for this long (min, max)
 Config.BotNames = {
 	"Pip",
 	"Mochi",
@@ -244,13 +252,5 @@ Config.BotNames = {
 
 Config.InputRateLimit = 20 -- max inputs per second per player before they are dropped
 Config.MinigameMessageRateLimit = 40 -- same, for messages a minigame's own client code sends
-
--- The extra vote card shown when there are fewer minigames than Config.VoteChoices.
-Config.RandomChoice = {
-	Id = "__random",
-	Name = "🎲 Surprise Me",
-	Description = "Can't decide? Let the game pick one at random.",
-	Layout = "???",
-}
 
 return Config

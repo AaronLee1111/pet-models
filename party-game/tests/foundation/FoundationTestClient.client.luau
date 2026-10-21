@@ -303,11 +303,10 @@ remotes.PartyState.OnClientEvent:Connect(function(message)
 					input:FireServer({ Kind = "StartMatch" })
 				end)
 			end
-		elseif phase == "Vote" then
-			task.delay(0.5, function()
-				input:FireServer({ Kind = "Vote", Choice = math.random(1, #message.Choices) })
-			end)
 		elseif phase == "Instructions" then
+			task.delay(math.max(0, (message.ReadyAt or 0) - workspace:GetServerTimeNow()) + 0.3, function()
+				input:FireServer({ Kind = "TutorialReady" })
+			end)
 			if run then
 				local teams = {}
 				for _, participant in message.Participants or {} do

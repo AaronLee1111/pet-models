@@ -1,7 +1,7 @@
 --[[
 	_Template — copy this file to start a new minigame.
 	Files whose names start with "_" are ignored by the MinigameManager, so rename the copy
-	(e.g. "CoinRush") and it will show up in the vote automatically.
+	(e.g. "CoinRush") and it will join the random minigame pool automatically.
 
 	Lifecycle (all called by the MinigameManager on a fresh instance each round, so keep
 	per-round state on `self`):
@@ -40,7 +40,7 @@ local Template = {}
 
 Template.Info = {
 	Name = "My Minigame",
-	Description = "One or two sentences shown on the vote card and instructions screen.",
+	Description = "One or two sentences: the objective shown on the tutorial screen.",
 	Duration = 60, -- seconds; the round ends automatically when this runs out
 	Layout = Config.Layouts.FFA, -- FFA | OneVsThree ("1v3") | TwoVsTwo ("2v2")
 

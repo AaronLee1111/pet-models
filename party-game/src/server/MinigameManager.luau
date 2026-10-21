@@ -4,8 +4,11 @@
 	clients only receive PartyState messages and send validated inputs.
 
 	Round flow (MinigameManager.runRound):
-	  Vote -> Instructions (arena is built + everyone teleported & frozen)
-	       -> Countdown 3-2-1 -> Playing -> Finished -> back to lobby -> Results
+	  Select (the server picks the minigame; clients animate the pick as a roulette)
+	    -> Instructions (tutorial: preview, controls, ready-up; the arena is built and everyone
+	       teleported & frozen meanwhile) -> Countdown 3-2-1 -> Playing -> Finished
+	    -> back to lobby -> Results
+	Nobody votes: the pick is server-authoritative (MinigameManager.pick).
 
 	Minigames are ModuleScripts in PartyServer/Minigames (names starting with "_" are
 	ignored, e.g. _Template). See _Template.luau for the full interface.
@@ -21,6 +24,7 @@ local Arena = require(script.Parent.Arena)
 local BotService = require(script.Parent.BotService)
 local CoinService = require(script.Parent.CoinService)
 local MinigameInfo = require(script.Parent.MinigameInfo)
+local ReadyState = require(script.Parent.ReadyState)
 local ResultsUtil = require(script.Parent.ResultsUtil)
 local RoundContext = require(script.Parent.RoundContext)
 local Tutorial = require(script.Parent.Tutorial)
@@ -40,7 +44,8 @@ local state = {
 	Status = nil :: string?,
 	Participants = {},
 	ByPlayer = {} :: { [Player]: any },
-	Vote = nil :: any, -- { Choices, Votes = { [participant] = choiceIndex } }
+	Tutorial = nil :: any, -- Instructions phase: a ReadyState
+	History = { Normal = {}, Duel = {} } :: any, -- minigame ids picked, newest first
 	Active = nil :: any, -- the round in progress, see runRound
 }
 
@@ -110,30 +115,15 @@ local function queueChipFlush()
 	end)
 end
 
--- Counts votes per card; also returns who voted for what (shown under each card).
-local function tallyVotes(vote)
-	local counts, voters = {}, {}
-	for i = 1, #vote.Choices do
-		counts[i] = 0
-		voters[i] = {}
-	end
-	for participant, choice in vote.Votes do
-		counts[choice] += 1
-		table.insert(voters[choice], participant.Name)
-	end
-	return counts, voters
-end
-
-local function voteUpdateMessage(vote)
-	local counts, voters = tallyVotes(vote)
-	return { Type = Net.Message.VoteUpdate, Counts = counts, Voters = voters }
+local function readyMessage(tutorial)
+	return { Type = Net.Message.TutorialReady, Ready = tutorial:ids(), Left = tutorial:leftIds() }
 end
 
 -- Late joiners / reloaded clients get the current screen re-sent.
 local function sendSnapshot(player: Player)
-	stateRemote:FireClient(player, state.PhaseMessage)
-	if state.Vote then
-		stateRemote:FireClient(player, voteUpdateMessage(state.Vote))
+	stateRemote:FireClient(player, state.PhaseMessage) -- Select / Instructions carry their own timing
+	if state.Tutorial then
+		stateRemote:FireClient(player, readyMessage(state.Tutorial))
 	end
 	if state.Status then
 		stateRemote:FireClient(player, { Type = Net.Message.Status, Text = state.Status })
@@ -179,15 +169,6 @@ local function describeMinigame(entry)
 	return table.clone(entry.Described)
 end
 
-local function findEntry(id: string)
-	for _, entry in registry do
-		if entry.Id == id then
-			return entry
-		end
-	end
-	return nil
-end
-
 -- Calls an optional minigame method, logging (not propagating) errors.
 local function safeCall(instance, methodName: string, ...)
 	local method = instance[methodName]
@@ -201,98 +182,125 @@ local function safeCall(instance, methodName: string, ...)
 	return ok, result
 end
 
--- Voting -------------------------------------------------------------------------------
+-- Selection ----------------------------------------------------------------------------
+-- The server picks; clients only animate the pick. Nobody votes.
 
-local function castVote(participant, choice)
-	local vote = state.Vote
-	if not vote or participant.Left then
-		return
+local CATEGORY_TITLES = {
+	FFA = "FREE-FOR-ALL MINIGAME",
+	["2v2"] = "2 vs 2 MINIGAME",
+	["1v3"] = "1 vs 3 MINIGAME",
+	Duel = "DUEL MINIGAME",
+}
+
+-- Layouts that fit `count` players.
+local function layoutFits(layout: string, count: number): boolean
+	if layout == "Duel" then
+		return count == 2
+	elseif layout == "1v3" or layout == "2v2" then
+		return count == 4
 	end
-	-- Inputs are untrusted: must be an integer index of a real card.
-	if type(choice) ~= "number" or choice % 1 ~= 0 or choice < 1 or choice > #vote.Choices then
-		return
-	end
-	vote.Votes[participant] = choice
-	broadcast(voteUpdateMessage(vote))
+	return count >= 2
 end
 
-local function everyoneVoted(vote, participants): boolean
-	for _, participant in participants do
-		if not participant.Left and vote.Votes[participant] == nil then
-			return false
-		end
-	end
-	return true
-end
-
--- Minigames for the normal 4-player vote (Duel minigames are only played from Duel spaces).
-local function votePool()
+-- Minigames a round can pick from: Duel games only for duels, never in normal rounds.
+local function selectionPool(duel: boolean, count: number)
 	local pool = {}
 	for _, entry in registry do
-		if entry.Definition.Info.Layout ~= "Duel" then
+		local layout = entry.Definition.Info.Layout
+		if (layout == "Duel") == duel and layoutFits(layout, count) then
 			table.insert(pool, entry)
 		end
 	end
 	return pool
 end
 
-local function runVote(participants)
-	local pool = votePool()
-	for i = #pool, 2, -1 do -- shuffle
-		local j = rng:NextInteger(1, i)
-		pool[i], pool[j] = pool[j], pool[i]
-	end
-
-	local choices = {}
-	for i = 1, math.min(Config.VoteChoices, #pool) do
-		table.insert(choices, describeMinigame(pool[i]))
-	end
-	if #choices < Config.VoteChoices and #pool > 1 then
-		table.insert(choices, table.clone(Config.RandomChoice))
-	end
-
-	local vote = { Choices = choices, Votes = {} }
-	state.Vote = vote
-	local endsAt = now() + Config.VoteDuration
-	setPhase(Net.Phase.Vote, { Choices = choices, EndsAt = endsAt })
-	broadcast(voteUpdateMessage(vote))
-
-	-- Bots vote after a short "thinking" delay, through the same validated path as players.
-	for _, participant in participants do
-		if participant.IsBot then
-			task.delay(rng:NextNumber(Config.BotVoteDelay[1], Config.BotVoteDelay[2]), function()
-				if state.Vote == vote then
-					castVote(participant, rng:NextInteger(1, #choices))
-				end
-			end)
+--[[
+	Picks one entry from `pool`, every eligible game equally likely, avoiding repeats:
+	never the previous pick (recent[1]) while anything else is eligible, and not the previous
+	two when the pool has at least Config.AvoidTwoPoolSize games. No game is ever excluded for
+	good. `recent` = ids, newest first. `random` = a Random (seed it in tests).
+]]
+function MinigameManager.pick(pool, recent, random)
+	assert(#pool > 0, "empty minigame pool")
+	local avoid = if #pool >= Config.AvoidTwoPoolSize then 2 else 1
+	local options = {}
+	for _, entry in pool do
+		local repeated = false
+		for i = 1, math.min(avoid, #recent) do
+			repeated = repeated or recent[i] == entry.Id
+		end
+		if not repeated then
+			table.insert(options, entry)
 		end
 	end
-
-	while now() < endsAt and not everyoneVoted(vote, participants) do
-		task.wait(0.1)
+	if #options == 0 then
+		options = pool
 	end
-	if now() < endsAt then
-		task.wait(1) -- everyone voted early: let them see the final tally for a beat
-	end
-	state.Vote = nil
+	return options[random:NextInteger(1, #options)]
+end
 
-	-- Most votes wins; ties (and no votes at all) are broken randomly.
-	local tally = tallyVotes(vote)
-	local best, bestCount = {}, -1
-	for i, count in tally do
-		if count > bestCount then
-			best, bestCount = { i }, count
-		elseif count == bestCount then
-			table.insert(best, i)
+--[[
+	The roulette every client plays: the highlight starts on row `Start` and moves `Steps`
+	rows (wrapping) to land on the picked row. Chosen here so all clients agree.
+]]
+function MinigameManager.rouletteSteps(count: number, resultIndex: number, random)
+	local start = random:NextInteger(1, count)
+	local steps = 16 + random:NextInteger(0, 3)
+	if count > 1 then
+		while (start - 1 + steps) % count ~= resultIndex - 1 do
+			steps += 1
 		end
 	end
-	local winner = choices[best[rng:NextInteger(1, #best)]]
+	return start, steps
+end
 
-	if winner.Id == Config.RandomChoice.Id then
-		local all = votePool()
-		return all[rng:NextInteger(1, #all)]
+-- Picks (or takes the forced `entry`), shows the roulette, records the history. Returns the entry.
+local function runSelection(participants, duel: boolean, forced)
+	local kind = if duel then "Duel" else "Normal"
+	local history = state.History[kind]
+	local candidates = selectionPool(duel, #participants)
+	local entry = forced or MinigameManager.pick(candidates, history, rng)
+	local layout = entry.Definition.Info.Layout
+	if not table.find(candidates, entry) then
+		table.insert(candidates, entry) -- a forced pick outside the pool (tests)
 	end
-	return findEntry(winner.Id)
+	local names, resultIndex = {}, 1
+	for index, candidate in candidates do
+		table.insert(names, candidate.Definition.Info.Name)
+		if candidate == entry then
+			resultIndex = index
+		end
+	end
+	local start, steps = MinigameManager.rouletteSteps(#names, resultIndex, rng)
+	local startsAt = now() + 0.3 -- a beat so every client receives it before the first tick
+	-- The roulette runs over every game this round could have picked (every eligible game is
+	-- equally likely, whatever its layout), so the category is revealed with the result.
+	setPhase(Net.Phase.Select, {
+		Category = layout,
+		Title = if duel then CATEGORY_TITLES.Duel else "MINIGAME TIME!",
+		ResultTitle = CATEGORY_TITLES[layout] or "MINIGAME",
+		Candidates = names,
+		ResultIndex = resultIndex,
+		ResultId = entry.Id,
+		Start = start,
+		Steps = steps,
+		StartsAt = startsAt,
+		SpinEndsAt = startsAt + Config.SelectDuration - Config.SelectHold,
+		EndsAt = startsAt + Config.SelectDuration,
+	})
+	table.insert(history, 1, entry.Id)
+	history[3] = nil
+	task.wait(math.max(0, startsAt + Config.SelectDuration - now()))
+	return entry
+end
+
+-- Tutorial ready-up ----------------------------------------------------------------------
+
+local function markReady(participant)
+	local tutorial = state.Tutorial
+	if tutorial and tutorial:mark(participant, state.PhaseMessage.Phase, now()) then
+		broadcast(readyMessage(tutorial))
+	end
 end
 
 -- Teams ----------------------------------------------------------------------------------
@@ -424,8 +432,9 @@ function MinigameManager.runRound(participants, options)
 		end
 	end
 
-	-- 1. Vote (skipped when the caller already picked, e.g. a duel)
-	local entry = options.Entry or runVote(participants)
+	-- 1. Pick the minigame (the server decides; the roulette only shows it). options.Entry
+	-- forces the result (tests / harnesses); the roulette still lands on it.
+	local entry = runSelection(participants, options.Duel == true, options.Entry)
 	local definition = entry.Definition
 	local info = definition.Info
 	local described = describeMinigame(entry)
@@ -465,14 +474,35 @@ function MinigameManager.runRound(participants, options)
 		Connections = {},
 	}
 
-	-- 3. Instructions card; build the map and teleport while everyone reads it
+	-- 3. Tutorial: preview + controls + ready-up; build the map and teleport meanwhile.
+	-- READY unlocks after one preview loop; bots ready themselves; the round starts when
+	-- everyone still here is ready, or at the timeout (an idle player never blocks it).
+	local readyAt = now() + Config.TutorialMinDuration
 	local instructionsEnd = now() + Config.InstructionsDuration
+	local tutorial = ReadyState.new(participants, readyAt)
+	state.Tutorial = tutorial
+	ensureBodies(participants) -- so every portrait has an avatar to show
+	local tutorialParticipants = describeParticipants(participants)
+	for index, participant in participants do
+		tutorialParticipants[index].Character = participant:GetCharacter() -- avatar portraits
+	end
 	setPhase(Net.Phase.Instructions, {
 		Minigame = described,
-		Participants = describeParticipants(participants),
+		Participants = tutorialParticipants,
 		ArenaOrigin = arena.Origin,
+		ReadyAt = readyAt,
 		EndsAt = instructionsEnd,
 	})
+	broadcast(readyMessage(tutorial))
+	for _, participant in participants do
+		if participant.IsBot then
+			task.delay(Config.TutorialMinDuration + rng:NextNumber(Config.BotReadyDelay[1], Config.BotReadyDelay[2]), function()
+				if state.Tutorial == tutorial then
+					markReady(participant)
+				end
+			end)
+		end
+	end
 
 	local spawns = instance:Setup(arena, participants, round) or {}
 	ensureBodies(participants)
@@ -482,7 +512,13 @@ function MinigameManager.runRound(participants, options)
 		participant:Freeze()
 	end
 	broadcast(chipsMessage()) -- characters exist now, so spectating works from the start
-	task.wait(math.max(0, instructionsEnd - now()))
+	while now() < instructionsEnd and not (now() >= readyAt and tutorial:everyone()) do
+		task.wait(0.1)
+	end
+	if now() < instructionsEnd then
+		task.wait(0.6) -- everyone's ready: let the last READY show for a beat
+	end
+	state.Tutorial = nil
 
 	-- 4. Countdown
 	for number = Config.CountdownFrom, 1, -1 do
@@ -568,9 +604,9 @@ function MinigameManager.runRound(participants, options)
 	return results, rows
 end
 
--- Minigames the normal 4-player vote draws from (never Duel ones).
-function MinigameManager.voteMinigames()
-	return votePool()
+-- Minigames a normal 4-player round picks from (never Duel ones).
+function MinigameManager.roundMinigames()
+	return selectionPool(false, Config.PlayersPerMatch)
 end
 
 -- Loads the minigame registry without starting anything else (tests; init does this too).
@@ -598,7 +634,7 @@ function MinigameManager.runDuel(a, b)
 	if #duels == 0 then
 		return nil
 	end
-	local results = MinigameManager.runRound({ a, b }, { Entry = duels[rng:NextInteger(1, #duels)], NoCoins = true })
+	local results = MinigameManager.runRound({ a, b }, { Duel = true, NoCoins = true })
 	local first = {}
 	for _, result in results do
 		if result.Placement == 1 then
@@ -610,7 +646,7 @@ end
 
 -- Emergency stop if anything in runRound threw. Leaves the server ready for the next round.
 function MinigameManager.abort(message: string?)
-	state.Vote = nil
+	state.Tutorial = nil
 	finishRound()
 	broadcast({ Type = Net.Message.Toast, Text = message or "Round cancelled" })
 end
@@ -634,7 +670,7 @@ function MinigameManager.sendTo(player: Player, message)
 	stateRemote:FireClient(player, message)
 end
 
--- fn(player, payload) -> true if it handled the input. Runs after rate limiting, before votes/actions.
+-- fn(player, payload) -> true if it handled the input. Runs after rate limiting, before ready/actions.
 function MinigameManager.setInputHandler(fn: ((Player, any) -> boolean)?)
 	extraInputHandler = fn
 end
@@ -713,10 +749,10 @@ function MinigameManager.init()
 		end
 		local participant = state.ByPlayer[player]
 		if not participant then
-			return -- spectators (5th+ player) can't vote or act
+			return -- spectators (5th+ player) can't ready up or act
 		end
-		if kind == Net.Input.Vote then
-			castVote(participant, payload.Choice)
+		if kind == Net.Input.TutorialReady then
+			markReady(participant) -- yourself only; ReadyState checks the phase and the unlock time
 		elseif kind == Net.Input.Action and type(payload.Action) == "string" then
 			submitAction(participant, payload.Action)
 		elseif kind == Net.Input.ActionUsed and type(payload.Action) == "string" then
@@ -736,9 +772,8 @@ function MinigameManager.init()
 		end
 		participant.Left = true
 		state.ByPlayer[player] = nil
-		if state.Vote then
-			state.Vote.Votes[participant] = nil
-			broadcast(voteUpdateMessage(state.Vote))
+		if state.Tutorial then
+			broadcast(readyMessage(state.Tutorial)) -- they no longer block the start
 		end
 		onParticipantLost(participant, "Left")
 	end)

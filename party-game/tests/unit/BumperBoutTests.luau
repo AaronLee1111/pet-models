@@ -2,7 +2,7 @@
 	Unit tests for Bumper Bout: dash validation and cooldown, hit detection (one per dash,
 	clashes), knockback limits, ring-outs (including both at once), the shrink schedule, the
 	time limit (centre, hits, sudden death), leaving, bot planning, cleanup, and that Duel
-	spaces can pick it while the 4-player vote never does. Run with RunAll (see README).
+	spaces can pick it while normal 4-player rounds never do. Run with RunAll (see README).
 ]]
 
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -144,18 +144,18 @@ test("info: a valid Duel with free movement, no jump, DASH on E/Space, X/R1 and 
 	ok(BB.ROUND_LIMIT >= 12 and BB.ROUND_LIMIT <= 20, "12-20 s target")
 end)
 
-test("duel spaces pick from both Duel games; the 4-player vote never offers them", function()
+test("duel spaces pick from both Duel games; normal rounds never pick them", function()
 	MinigameManager.loadMinigames()
-	local duels, vote = {}, {}
+	local duels, pool = {}, {}
 	for _, entry in MinigameManager.duelMinigames() do
 		duels[entry.Id] = true
 	end
-	for _, entry in MinigameManager.voteMinigames() do
-		vote[entry.Id] = true
+	for _, entry in MinigameManager.roundMinigames() do
+		pool[entry.Id] = true
 	end
 	ok(duels.QuickDraw and duels.BumperBout, "both Duel games eligible")
-	ok(not vote.QuickDraw and not vote.BumperBout, "neither in the vote")
-	ok(vote.TrailTangle and vote.IceDash, "normal games still in the vote")
+	ok(not pool.QuickDraw and not pool.BumperBout, "neither in the normal pool")
+	ok(pool.TrailTangle and pool.IceDash, "normal games still in the normal pool")
 end)
 
 -- Dash requests ----------------------------------------------------------------------------------
