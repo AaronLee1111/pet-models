@@ -53,9 +53,37 @@ local GATE_HEIGHT = 20
 
 IceDash.Info = {
 	Name = "Ice Dash",
-	Description = "Slide down the ice ❄! You move on your own, so just steer. Dodge bumpers and snow, don't slip off the edge. First to the flag wins!",
+	Description = "Slide down the ice! You move on your own, so just steer. Dodge bumpers and snow, don't slip off the edge. First to the flag wins!",
 	Duration = ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Steer down the ice to the flag.",
+		Rule = "You slide on your own. Don't slip off the edge.",
+		Win = "First to the flag wins.",
+		Controls = { { Label = "STEER", Actions = { "Left", "Right" } } },
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 10, 13), LookAt = Vector3.new(0, 0, -5) },
+			Actors = {
+				{ Start = Vector3.new(0, 0, 5), Face = Vector3.new(0, 0, -20) },
+			},
+			Props = {
+				{ Id = "Ice", Shape = "Block", Size = Vector3.new(9, 1, 22), Position = Vector3.new(0, -0.5, -4), Color = Color3.fromRGB(196, 232, 255) },
+				{ Id = "Bumper1", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(-2, 0.9, -1), Color = Color3.fromRGB(240, 120, 170) },
+				{ Id = "Bumper2", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(2, 0.9, -7), Color = Color3.fromRGB(240, 120, 170) },
+				{ Id = "Flag", Shape = "Block", Size = Vector3.new(3, 2, 0.3), Position = Vector3.new(0, 3, -13), Color = Color3.fromRGB(240, 198, 96) },
+			},
+			Steps = {
+				{ At = 0.2, Actor = 1, Caption = "RIGHT" },
+				{ At = 0.2, Actor = 1, To = Vector3.new(2, 0, -1), Time = 1.3 },
+				{ At = 1.5, Actor = 1, Caption = "LEFT" },
+				{ At = 1.5, Actor = 1, To = Vector3.new(-2, 0, -7), Time = 1.3 },
+				{ At = 2.8, Actor = 1, To = Vector3.new(0, 0, -12), Time = 1 },
+				{ At = 3.8, Prop = "Flag", Pulse = true },
+				{ At = 3.9, Caption = "FINISH!" },
+			},
+		},
+	},
 	Camera = { Mode = "FollowBehind", Height = 12, Distance = 22, Smooth = 12 },
 	Controls = {
 		Move = false, -- you slide on your own; you only steer

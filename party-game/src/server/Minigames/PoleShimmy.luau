@@ -56,9 +56,46 @@ local BOT_STUMBLE_PAUSE = { 0.5, 1.3 } -- seconds a stumble costs (or a wasted s
 
 PoleShimmy.Info = {
 	Name = "Pole Shimmy",
-	Description = "Alternate LEFT and RIGHT to shimmy up your pole! Keep a steady rhythm to climb faster. First to ring the bell wins 🔔",
+	Description = "Alternate LEFT and RIGHT to shimmy up your pole! Keep a steady rhythm to climb faster. First to ring the bell wins!",
 	Duration = ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Alternate LEFT and RIGHT to climb.",
+		Rule = "A steady rhythm climbs fastest.",
+		Win = "First to ring the bell wins.",
+		Controls = { { Label = "LEFT / RIGHT", Actions = { "Left", "Right" } } },
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 10, 32), LookAt = Vector3.new(0, 7.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-3, 0, 0.9), Face = Vector3.new(-3, 0, -5) },
+				{ Start = Vector3.new(3, 0, 0.9), Face = Vector3.new(3, 0, -5) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(16, 1, 8), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 160, 200) },
+				{ Id = "Pole1", Shape = "Cylinder", Upright = true, Size = Vector3.new(15, 1.2, 1.2), Position = Vector3.new(-3, 7.5, 0), Color = Color3.fromRGB(130, 130, 140) },
+				{ Id = "Pole2", Shape = "Cylinder", Upright = true, Size = Vector3.new(15, 1.2, 1.2), Position = Vector3.new(3, 7.5, 0), Color = Color3.fromRGB(130, 130, 140) },
+				{ Id = "Bell1", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(-3, 15.6, 0), Color = Color3.fromRGB(240, 198, 96) },
+				{ Id = "Bell2", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(3, 15.6, 0), Color = Color3.fromRGB(240, 198, 96) },
+			},
+			Steps = {
+				{ At = 0.3, Actor = 1, Caption = "LEFT" },
+				{ At = 0.3, Actor = 1, To = Vector3.new(-3, 2.2, 0.9), Time = 0.4 },
+				{ At = 0.8, Actor = 1, Caption = "RIGHT" },
+				{ At = 0.8, Actor = 1, To = Vector3.new(-3, 4.4, 0.9), Time = 0.4 },
+				{ At = 1.3, Actor = 1, Caption = "LEFT" },
+				{ At = 1.3, Actor = 1, To = Vector3.new(-3, 6.6, 0.9), Time = 0.4 },
+				{ At = 1.8, Actor = 1, Caption = "RIGHT" },
+				{ At = 1.8, Actor = 1, To = Vector3.new(-3, 8.8, 0.9), Time = 0.4 },
+				{ At = 0.5, Actor = 2, To = Vector3.new(3, 1.5, 0.9), Time = 0.5 },
+				{ At = 1.2, Actor = 2, To = Vector3.new(3, 3, 0.9), Time = 0.5 },
+				{ At = 1.9, Actor = 2, To = Vector3.new(3, 4.5, 0.9), Time = 0.5 },
+				{ At = 2.3, Actor = 1, To = Vector3.new(-3, 10.6, 0.9), Time = 0.5 },
+				{ At = 2.9, Prop = "Bell1", Pulse = true },
+				{ At = 3.0, Caption = "DING!" },
+			},
+		},
+	},
 	Camera = { Mode = "SideView", Distance = 26, Height = 3, Smooth = 7, FollowY = true },
 	Controls = {
 		Move = false,

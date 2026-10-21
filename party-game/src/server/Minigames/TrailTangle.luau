@@ -59,6 +59,40 @@ TrailTangle.Info = {
 	Description = "You ride on your own and leave a solid trail. Turn LEFT or RIGHT to dodge the edge and every trail. Trap the others; last rider wins! It speeds up, so plan ahead.",
 	Duration = TrailTangle.ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Turn to dodge every trail and the edge.",
+		Rule = "You ride on your own and leave a solid trail.",
+		Win = "Last rider wins.",
+		Controls = { { Label = "TURN", Actions = { "Left", "Right" } } },
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 18, 12), LookAt = Vector3.new(0, 0, 0) },
+			Actors = {
+				{ Start = Vector3.new(-6, 0, 6), Face = Vector3.new(-6, 0, -10) },
+				{ Start = Vector3.new(6, 0, -6), Face = Vector3.new(6, 0, 10) },
+			},
+			Props = {
+				{ Id = "Grid", Shape = "Block", Size = Vector3.new(16, 1, 16), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(40, 52, 76) },
+				{ Id = "TrailA", Shape = "Block", Size = Vector3.new(1, 0.4, 8), Position = Vector3.new(-6, 0.2, 2), Color = Color3.fromRGB(240, 198, 96), Neon = true, Hidden = true },
+				{ Id = "TrailB", Shape = "Block", Size = Vector3.new(8, 0.4, 1), Position = Vector3.new(-2, 0.2, -2), Color = Color3.fromRGB(240, 198, 96), Neon = true, Hidden = true },
+				{ Id = "TrailC", Shape = "Block", Size = Vector3.new(1, 0.4, 8), Position = Vector3.new(6, 0.2, -2), Color = Color3.fromRGB(120, 200, 255), Neon = true, Hidden = true },
+				{ Id = "TrailD", Shape = "Block", Size = Vector3.new(7, 0.4, 1), Position = Vector3.new(2.5, 0.2, 2), Color = Color3.fromRGB(120, 200, 255), Neon = true, Hidden = true },
+			},
+			Steps = {
+				{ At = 0.2, Actor = 1, To = Vector3.new(-6, 0, -2), Time = 1.4 },
+				{ At = 0.2, Actor = 2, To = Vector3.new(6, 0, 2), Time = 1.4 },
+				{ At = 1.0, Prop = "TrailA", Visible = true },
+				{ At = 1.0, Prop = "TrailC", Visible = true },
+				{ At = 1.7, Actor = 1, Caption = "RIGHT" },
+				{ At = 1.7, Actor = 1, To = Vector3.new(2, 0, -2), Time = 1.4 },
+				{ At = 1.7, Actor = 2, Caption = "LEFT" },
+				{ At = 1.7, Actor = 2, To = Vector3.new(-1, 0, 2), Time = 1.4 },
+				{ At = 2.6, Prop = "TrailB", Visible = true },
+				{ At = 2.6, Prop = "TrailD", Visible = true },
+				{ At = 3.6, Caption = "DON'T HIT A TRAIL" },
+			},
+		},
+	},
 	-- Steep, fixed view of the whole grid (no drift toward you). On phones it's a little
 	-- closer and aimed further ahead, so the grid fills the gap between the chips and the
 	-- bottom edge, between the LEFT and RIGHT buttons.

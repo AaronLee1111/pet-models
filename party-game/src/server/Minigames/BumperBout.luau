@@ -70,6 +70,30 @@ BumperBout.Info = {
 	Description = "Shove your rival off the platform! Walk around and press DASH to lunge into them. The platform shrinks, so stay near the middle. Don't dash yourself off!",
 	Duration = BumperBout.ROUND_LIMIT,
 	Layout = Config.Layouts.Duel,
+	Tutorial = {
+		Objective = "Shove your rival off the platform.",
+		Rule = "The platform shrinks. Don't dash yourself off!",
+		Win = "Last one on the platform wins.",
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 12, 16), LookAt = Vector3.new(0, 0, 0) },
+			Actors = {
+				{ Start = Vector3.new(-3.5, 0, 0), Face = Vector3.new(4, 0, 0) },
+				{ Start = Vector3.new(3, 0, 0), Face = Vector3.new(-4, 0, 0) },
+			},
+			Props = {
+				{ Id = "Platform", Shape = "Cylinder", Upright = true, Size = Vector3.new(1, 15, 15), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(120, 196, 170) },
+			},
+			Steps = {
+				{ At = 0.5, Actor = 1, To = Vector3.new(-1, 0, 0), Time = 0.6 },
+				{ At = 1.1, Actor = 1, Caption = "DASH!" },
+				{ At = 1.1, Actor = 1, To = Vector3.new(1.8, 0, 0), Time = 0.25 },
+				{ At = 1.3, Actor = 2, To = Vector3.new(7.8, 0.5, 0), Time = 0.45 },
+				{ At = 1.75, Actor = 2, To = Vector3.new(9.5, -9, 0), Time = 0.8 },
+				{ At = 2.8, Caption = "KNOCKED OFF!" },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 50, Distance = 30, Follow = 0, Smooth = 20, TouchZoom = 1, TouchLookAhead = 4 },
 	Controls = {
 		Move = true,

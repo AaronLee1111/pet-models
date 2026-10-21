@@ -43,9 +43,42 @@ local WALK_SPEED = 18
 
 KernelCatch.Info = {
 	Name = "Kernel Catch",
-	Description = "It's raining popcorn 🍿! Stand on the shadows to catch kernels in your head bucket. Dodge the rocks or lose your snacks!",
+	Description = "It's raining popcorn! Stand on the shadows to catch kernels in your head bucket. Dodge the rocks or lose your snacks!",
 	Duration = ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Catch popcorn. Avoid rocks.",
+		Rule = "Stand on a shadow to catch what falls there.",
+		Win = "Most popcorn wins.",
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 13, 16), LookAt = Vector3.new(0, 1.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-2, 0, 3) },
+				{ Start = Vector3.new(-4, 0, -2) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(20, 1, 14), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 182, 110) },
+				{ Id = "Shadow1", Shape = "Cylinder", Upright = true, Size = Vector3.new(0.1, 3, 3), Position = Vector3.new(3, 0.05, 0), Color = Color3.fromRGB(60, 50, 40), Transparency = 0.45 },
+				{ Id = "Shadow2", Shape = "Cylinder", Upright = true, Size = Vector3.new(0.1, 3, 3), Position = Vector3.new(-4, 0.05, -2), Color = Color3.fromRGB(60, 50, 40), Transparency = 0.45, Hidden = true },
+				{ Id = "Popcorn", Shape = "Ball", Size = Vector3.new(1.2, 1.2, 1.2), Position = Vector3.new(3, 14, 0), Color = Color3.fromRGB(255, 244, 200) },
+				{ Id = "Rock", Shape = "Ball", Size = Vector3.new(1.6, 1.6, 1.6), Position = Vector3.new(-4, 14, -2), Color = Color3.fromRGB(120, 116, 110) },
+			},
+			Steps = {
+				{ At = 0.2, Actor = 1, To = Vector3.new(3, 0, 0), Time = 0.9 },
+				{ At = 0.8, Prop = "Popcorn", To = Vector3.new(3, 5.8, 0), Time = 0.7 },
+				{ At = 1.5, Prop = "Popcorn", Visible = false },
+				{ At = 1.5, Prop = "Shadow1", Visible = false },
+				{ At = 1.5, Actor = 1, Caption = "+1" },
+				{ At = 2.0, Prop = "Shadow2", Visible = true },
+				{ At = 2.4, Actor = 2, Caption = "ROCK!" },
+				{ At = 2.4, Actor = 2, To = Vector3.new(-7, 0, 1.5), Time = 0.7 },
+				{ At = 2.8, Prop = "Rock", To = Vector3.new(-4, 0.8, -2), Time = 0.6 },
+				{ At = 3.6, Prop = "Shadow2", Visible = false },
+				{ At = 3.8, Caption = "MOST POPCORN WINS" },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 42, Distance = 32 },
 	Controls = { Move = true, Jump = true, WalkSpeed = WALK_SPEED },
 	ProgressLabel = "Popcorn",

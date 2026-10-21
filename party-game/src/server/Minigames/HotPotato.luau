@@ -16,9 +16,44 @@ local HotPotato = {}
 
 HotPotato.Info = {
 	Name = "Hot Potato",
-	Description = "Someone's holding a spicy potato 🥔🔥. Get close and pass it before it goes BOOM. Last one standing wins!",
+	Description = "Someone's holding a spicy potato. Get close and pass it before it goes BOOM. Last one standing wins!",
 	Duration = 90,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Pass the potato before it explodes.",
+		Rule = "Get close to someone and press PASS.",
+		Win = "Last player standing wins.",
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 16, 21), LookAt = Vector3.new(0, 1.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-5, 0, 2) },
+				{ Start = Vector3.new(1, 0, -3) },
+				{ Start = Vector3.new(5, 0, 3) },
+				{ Start = Vector3.new(-1, 0, 5) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Cylinder", Upright = true, Size = Vector3.new(1, 22, 22), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 182, 110) },
+				{ Id = "Potato", Shape = "Ball", Size = Vector3.new(1.6, 1.6, 1.6), Position = Vector3.new(-5, 6, 2), Color = Color3.fromRGB(196, 132, 74) },
+			},
+			Steps = {
+				{ At = 0, Prop = "Potato", Attach = 1 },
+				{ At = 0.2, Actor = 1, To = Vector3.new(-1.5, 0, -1), Time = 1 },
+				{ At = 1.3, Actor = 1, Caption = "PASS!" },
+				{ At = 1.3, Prop = "Potato", Attach = 2 },
+				{ At = 1.5, Actor = 2, To = Vector3.new(3.5, 0, 1), Time = 1 },
+				{ At = 1.6, Actor = 1, To = Vector3.new(-6, 0, 3), Time = 1 },
+				{ At = 2.7, Actor = 2, Caption = "PASS!" },
+				{ At = 2.7, Prop = "Potato", Attach = 3 },
+				{ At = 3.2, Prop = "Potato", Color = Color3.fromRGB(235, 90, 50) },
+				{ At = 3.4, Prop = "Potato", Pulse = true },
+				{ At = 3.9, Prop = "Potato", Pulse = true },
+				{ At = 4.5, Actor = 3, Caption = "BOOM!" },
+				{ At = 4.5, Prop = "Potato", Visible = false },
+				{ At = 4.5, Actor = 3, Jump = true },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 50, Distance = 38 },
 	Controls = {
 		Move = true,

@@ -19,6 +19,31 @@ QuickDraw.Info = {
 	Description = "Wait for the light to turn green, then press DRAW first. Too early and you lose the point! First to 2.",
 	Duration = 40,
 	Layout = Config.Layouts.Duel,
+	Tutorial = {
+		Objective = "Press DRAW when the light turns green.",
+		Rule = "Too early and you lose the point.",
+		Win = "First to 2 points wins.",
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 7, 15), LookAt = Vector3.new(0, 2.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-4, 0, 0), Face = Vector3.new(4, 0, 0) },
+				{ Start = Vector3.new(4, 0, 0), Face = Vector3.new(-4, 0, 0) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(16, 1, 8), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 182, 110) },
+				{ Id = "Light", Shape = "Ball", Size = Vector3.new(2, 2, 2), Position = Vector3.new(0, 6.5, -2), Color = Color3.fromRGB(226, 72, 70), Neon = true },
+			},
+			Steps = {
+				{ At = 0.4, Caption = "WAIT..." },
+				{ At = 2.4, Prop = "Light", Color = Color3.fromRGB(110, 230, 120) },
+				{ At = 2.4, Prop = "Light", Pulse = true },
+				{ At = 2.7, Actor = 1, Caption = "DRAW!" },
+				{ At = 2.7, Actor = 1, Jump = true },
+				{ At = 3.4, Caption = "POINT!" },
+			},
+		},
+	},
 	Camera = { Mode = "SideView", Distance = 36, Height = 6 },
 	Controls = {
 		Move = false,
