@@ -33,10 +33,9 @@ end
 return {
  Name="MagicalFestival", DisplayName="Magical Festival Island", Start=17,
  CrownSpaces={4,12,20,28,34,35}, Spaces=spaces, Zones=zones,
- -- Board-opening intro (BoardWorld:introSpec): the moon bridge, then each participant floats down
+ -- Board-opening intro (BoardWorld:introSpec): a sky dive-in to the whole map, then each participant floats down
  -- a moonbeam on the open lawn east of Start (17) and walks onto it. Cameras checked clear of props.
  Intro={
-  Establish={ Camera={0,-7,58}, Look={0,0,0} },
   Arrival={ Camera={0.2,-4.0,14}, Look={0.6,-2.8,2} },
   Entry={ {1.17,-2.8,16}, {1.17,-2.8,0} },
   Group={ Camera={-0.08,-3.95,13}, Look={0.1,-2.8,2} },

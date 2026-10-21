@@ -31,13 +31,13 @@ return {
 	DisplayName = "Sunny Loop", -- shown to players
 	-- Beginner board: one loop, one toll shortcut, a single Switch, few Chaos spaces.
 	Start = 1,
-	-- Board-opening intro (BoardWorld:introSpec): everyone walks in from the bottom-left corner.
+	-- Board-opening intro (BoardWorld:introSpec): a sky dive-in to the whole map, then each
+	-- participant rides a sunbeam down by the bottom-left corner and walks onto Start.
 	Intro = {
-		Establish = { Camera = { 4, -4.5, 55 }, Look = { 4, 2.5, 0 } },
 		Arrival = { Camera = { -0.4, -2.8, 13 }, Look = { -0.4, -0.3, 3 } },
-		Entry = { { -1.4, -1.1, 0 } },
+		Entry = { { -0.9, -0.9, 16 }, { -0.9, -0.9, 0 } }, -- on the base plate, just off the corner
 		Group = { Camera = { 0, -2.5, 15 }, Look = { 0, 0, 2.5 } },
-		Effect = "Walk",
+		Effect = "Sunbeam",
 	},
 	CrownSpaces = { 7, 10, 13, 15, 20, 23, 26 },
 	Gates = {

@@ -255,13 +255,14 @@ end
 --[[
 	The board-opening introduction in world space, from the board's declarative Intro data
 	(grid points { x, z, height } like At), or nil when the board has none:
-	  Establish = { Camera, Look }   the landmark shot
+	  Establish = { Camera, Look }   the whole-map shot the sky dive lands on (computed from the
+	                                 spaces unless the board gives one)
 	  Arrival = { Camera, Look }     the entrance, held while each participant arrives
 	  Entry = { points }             where arrivals appear, then walk through (the last point
 	                                 leads to the piece's slot on Start)
 	  Group = { Camera, Look }       everyone on the start space
 	  Effect = "Sunbeam" | "Moonbeam" | "Walk"
-	  Times = { Establish = 1.3, Each = 1.25, ... } overrides Config.Board.Intro
+	  Times = { Establish = 2.8, Each = 1.5, ... } overrides Config.Board.Intro
 ]]
 function BoardWorld:introSpec()
 	local intro = self.Board.Intro
@@ -279,8 +280,16 @@ function BoardWorld:introSpec()
 	for _, point in intro.Entry do
 		table.insert(entry, at(point) + Vector3.new(0, ROOT_HEIGHT, 0))
 	end
+	-- The whole map: above the middle of every space, far enough back to fit it all in.
+	local low, high = Vector3.one * math.huge, -Vector3.one * math.huge
+	for _, top in self.Tops do
+		low, high = low:Min(top), high:Max(top)
+	end
+	local centre = (low + high) / 2
+	local extent = math.max(high.X - low.X, high.Z - low.Z, 60)
+	local map = { Camera = centre + Vector3.new(0, extent * 0.75, extent * 0.6), Look = centre }
 	return {
-		Establish = shot(intro.Establish),
+		Establish = if intro.Establish then shot(intro.Establish) else map,
 		Arrival = shot(intro.Arrival),
 		Group = shot(intro.Group),
 		Entry = entry,

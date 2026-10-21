@@ -151,7 +151,8 @@ function BoardLayout.validate(data, spaceTypes): string?
 			return ("space %d never leads back to Start"):format(space.Id)
 		end
 	end
-	-- Intro (optional): shots are { Camera, Look } grid points, Entry a non-empty point list.
+	-- Intro (optional): shots are { Camera, Look } grid points (Establish optional: the whole
+	-- map is computed), Entry a non-empty point list.
 	local intro = data.Intro
 	if intro ~= nil then
 		local function point(at)
@@ -159,6 +160,9 @@ function BoardLayout.validate(data, spaceTypes): string?
 		end
 		for _, key in { "Establish", "Arrival", "Group" } do
 			local shot = intro[key]
+			if key == "Establish" and shot == nil then
+				continue
+			end
 			if type(shot) ~= "table" or not point(shot.Camera) or not point(shot.Look) then
 				return "Intro." .. key .. " needs Camera and Look points"
 			end

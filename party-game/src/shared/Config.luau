@@ -108,8 +108,9 @@ Config.Board = {
 	MoveRampMin = 0.75,
 	BotMoveScale = 0.85,
 	StepPause = 0.1, -- the landing beat on each space
-	-- Board-opening introduction (round 1 only): seconds. Boards may override in Intro.Times.
-	Intro = { Lead = 0.5, Establish = 1.3, Each = 1.25, Group = 1.1, Out = 0.4, NoSpec = 1.2 },
+	-- Board-opening introduction (round 1 only): seconds (~10 s). Establish = the sky dive-in to
+	-- the whole map and the swoop to the entrance; Each = one arrival. Boards may override in Intro.Times.
+	Intro = { Lead = 0.5, Establish = 2.8, Each = 1.5, Group = 1.0, Out = 0.4, NoSpec = 1.2 },
 	-- Thrown-dice presentation (boards with Presentation = "Diorama"): seconds from the roll to
 	-- the first hop, so everyone sees the die fly, land and show its number.
 	DiceReveal = 1.9,
