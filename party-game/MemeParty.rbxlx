@@ -35,15 +35,24 @@ Config.Layouts = {
 	FFA = "FFA", -- everyone for themselves
 	OneVsThree = "1v3", -- one solo player vs a team of three
 	TwoVsTwo = "2v2", -- two teams of two
-	Duel = "Duel", -- exactly two players (board Duel spaces); never in the normal vote
+	Duel = "Duel", -- exactly two players (board Duel spaces); never in normal rounds
 }
 
 -- Phase timings (seconds) ----------------------------------------------------
 
-Config.IntermissionDuration = 5 -- lobby wait before the vote opens
-Config.VoteChoices = 3 -- cards shown on the vote screen
-Config.VoteDuration = 12
-Config.InstructionsDuration = 7
+Config.IntermissionDuration = 5 -- lobby wait before the minigame is picked
+-- The server picks the minigame; clients animate the pick (a roulette over the eligible names)
+-- for SelectDuration, ending with SelectHold seconds on the result.
+Config.SelectDuration = 4.2
+Config.SelectHold = 0.9
+-- Tutorial (instructions) screen: READY unlocks after TutorialMinDuration (at least one preview
+-- loop); the round starts when every connected human is ready, or at InstructionsDuration.
+Config.TutorialMinDuration = 5
+Config.InstructionsDuration = 25
+Config.BotReadyDelay = { 0.4, 2.5 } -- after TutorialMinDuration
+-- Repeat avoidance: never the previous minigame (if anything else fits), and not the previous
+-- two when at least AvoidTwoPoolSize games are eligible. Every eligible game is otherwise equally likely.
+Config.AvoidTwoPoolSize = 4
 Config.CountdownFrom = 3
 Config.FinishBannerDuration = 2 -- "FINISH!" beat before teleporting back
 Config.ResultsDuration = 8
@@ -245,7 +254,6 @@ Config.ChipFlushInterval = 0.15
 -- Bots ---------------------------------------------------------------------------
 
 Config.BotThinkInterval = 0.2 -- how often each bot's brain runs
-Config.BotVoteDelay = { 1.5, 5 } -- bots "think" about their vote for this long (min, max)
 Config.BotNames = {
 	"Pip",
 	"Mochi",
@@ -263,14 +271,6 @@ Config.BotNames = {
 
 Config.InputRateLimit = 20 -- max inputs per second per player before they are dropped
 Config.MinigameMessageRateLimit = 40 -- same, for messages a minigame's own client code sends
-
--- The extra vote card shown when there are fewer minigames than Config.VoteChoices.
-Config.RandomChoice = {
-	Id = "__random",
-	Name = "🎲 Surprise Me",
-	Description = "Can't decide? Let the game pick one at random.",
-	Layout = "???",
-}
 
 return Config
 ]]></string>
@@ -693,7 +693,7 @@ return Sim
 	The two RemoteEvents the whole framework uses, plus the message vocabulary.
 
 	  PartyState  (server -> client): authoritative state. The client only ever renders this.
-	  PartyInput  (client -> server): inputs only (ready / vote / minigame action).
+	  PartyInput  (client -> server): inputs only (ready / tutorial ready / minigame action).
 	                                  The server validates every one of them.
 
 	Two more remotes exist for minigames that run their own client code (Info.ClientModule):
@@ -718,8 +718,8 @@ local Net = {}
 -- Phases the server walks through each round. The client shows a screen per phase.
 Net.Phase = {
 	Lobby = "Lobby",
-	Vote = "Vote",
-	Instructions = "Instructions",
+	Select = "Select", -- the server's minigame pick, animated as a roulette (no voting)
+	Instructions = "Instructions", -- tutorial: preview, controls, ready-up
 	Countdown = "Countdown",
 	Playing = "Playing",
 	Finished = "Finished",
@@ -732,7 +732,7 @@ Net.Phase = {
 -- Server -> client message types (message.Type).
 Net.Message = {
 	Phase = "Phase", -- full phase change; carries everything needed to draw that screen
-	VoteUpdate = "VoteUpdate", -- live vote counts during the Vote phase
+	TutorialReady = "TutorialReady", -- Instructions phase: { Ready = { [id] = true }, Left = { [id] = true } }
 	Status = "Status", -- persistent HUD line set by the minigame ("Pip has the potato!")
 	Toast = "Toast", -- short-lived feed message ("BOOM!")
 	Chips = "Chips", -- player-chip strip: every participant's live value + eliminated flag
@@ -747,7 +747,7 @@ Net.Message = {
 -- Client -> server input kinds (payload.Kind).
 Net.Input = {
 	Ready = "Ready", -- client finished loading; server replies with a state snapshot
-	Vote = "Vote", -- payload.Choice = index of the vote card
+	TutorialReady = "TutorialReady", -- Instructions phase: I'm ready to play
 	Action = "Action", -- payload.Action = action name declared in the minigame's Info.Controls
 	Roll = "Roll", -- roll the die on your turn
 	Choice = "Choice", -- payload.PromptId, payload.Index: answer to a Prompt
@@ -9319,7 +9319,29 @@ end
 	                               for the round (its messages arrive in OnClientMessage)
 	    ProgressBar = true,        optional: show a race bar along the top instead of the chips;
 	                               report values like "37%" (anything with 🏁 counts as 100%)
+	    Tutorial = {               optional: the pre-minigame tutorial screen (see below)
+	      Objective = "Pass the potato before it explodes.",   short primary objective
+	      Rule = "Holding it when it pops knocks you out.",    optional, one short rule
+	      Win = "Last player standing wins.",                  optional win condition
+	      Controls = { { Label = "STEER", Actions = { "Left", "Right" } } },
+	                               optional action lines (default: one per action); the
+	                               MOVE / JUMP / NO WALKING lines always come from Controls
+	      Preview = { ... },       optional looping demo, declarative only (validatePreview)
+	    },
 	  }
+
+	Tutorial.Preview is data, never code; TutorialPreview (client) plays it in a ViewportFrame:
+	  Loop = 5                     seconds, 3..8; everything resets each loop
+	  Camera = { Position = Vector3, LookAt = Vector3 }
+	  Actors = { { Start = Vector3, Team = 1? } }       1..4 avatars (the round's participants)
+	  Props = { { Id = "Potato", Shape = "Ball", Size = Vector3, Position = Vector3,
+	              Color = Color3, Transparency = 0?, Neon = false? } }          up to 40
+	  Steps = { { At = 1.2, <subject>, <change> } }                           up to 80
+	    subject: Actor = index | Prop = id | (none: a caption over the whole preview)
+	    change:  To = Vector3 (+ Time) move · Jump = true · Visible = bool · Attach = actor index
+	             or 0 (prop rides on an actor's head / lets go) · Color = Color3 · Pulse = true
+	             · Caption = "PASS!" (short text over the actor, or the preview)
+	Missing or invalid previews fall back to a generic one; the round never fails over it.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9329,6 +9351,73 @@ local Config = require(ReplicatedStorage.PartyShared.Config)
 local MinigameInfo = {}
 
 local REQUIRED_FUNCTIONS = { "Setup", "Start", "Cleanup", "GetResults" }
+local SHAPES = { Block = true, Ball = true, Cylinder = true }
+local STEP_KEYS = { At = true, Actor = true, Prop = true, To = true, Time = true, Jump = true, Visible = true, Attach = true, Color = true, Pulse = true, Caption = true }
+
+local function shortText(value, max: number): boolean
+	return type(value) == "string" and #value > 0 and #value <= max
+end
+
+-- Returns an error string, or nil if `preview` is a valid declarative preview.
+function MinigameInfo.validatePreview(preview): string?
+	if type(preview) ~= "table" then
+		return "Preview must be a table"
+	end
+	if type(preview.Loop) ~= "number" or preview.Loop < 3 or preview.Loop > 8 then
+		return "Preview.Loop must be 3..8 seconds"
+	end
+	local camera = preview.Camera
+	if type(camera) ~= "table" or typeof(camera.Position) ~= "Vector3" or typeof(camera.LookAt) ~= "Vector3" then
+		return "Preview.Camera needs Position and LookAt Vector3s"
+	end
+	local actors = preview.Actors
+	if type(actors) ~= "table" or #actors < 1 or #actors > 4 then
+		return "Preview.Actors must list 1..4 actors"
+	end
+	for _, actor in actors do
+		if type(actor) ~= "table" or typeof(actor.Start) ~= "Vector3" or (actor.Team ~= nil and actor.Team ~= 1 and actor.Team ~= 2) then
+			return "each actor needs a Start Vector3 (and Team 1/2 or nil)"
+		end
+	end
+	local props = preview.Props or {}
+	if type(props) ~= "table" or #props > 40 then
+		return "Preview.Props must be a list of at most 40"
+	end
+	local ids = {}
+	for _, prop in props do
+		if type(prop) ~= "table" or not shortText(prop.Id, 24) or not SHAPES[prop.Shape]
+			or typeof(prop.Size) ~= "Vector3" or typeof(prop.Position) ~= "Vector3" or typeof(prop.Color) ~= "Color3" then
+			return "each prop needs Id, Shape (Block/Ball/Cylinder), Size, Position and Color"
+		end
+		ids[prop.Id] = true
+	end
+	local steps = preview.Steps or {}
+	if type(steps) ~= "table" or #steps > 80 then
+		return "Preview.Steps must be a list of at most 80"
+	end
+	for index, step in steps do
+		if type(step) ~= "table" or type(step.At) ~= "number" or step.At < 0 or step.At > preview.Loop then
+			return ("step %d: At must be within the loop"):format(index)
+		end
+		for key in step do
+			if not STEP_KEYS[key] then
+				return ("step %d: unknown key %s"):format(index, tostring(key))
+			end
+		end
+		if step.Actor ~= nil and (type(step.Actor) ~= "number" or not actors[step.Actor]) then
+			return ("step %d: no actor %s"):format(index, tostring(step.Actor))
+		end
+		if step.Prop ~= nil and not ids[step.Prop] then
+			return ("step %d: no prop %s"):format(index, tostring(step.Prop))
+		end
+		if step.To ~= nil and typeof(step.To) ~= "Vector3" or step.Time ~= nil and type(step.Time) ~= "number"
+			or step.Color ~= nil and typeof(step.Color) ~= "Color3" or step.Caption ~= nil and not shortText(step.Caption, 20)
+			or step.Attach ~= nil and (type(step.Attach) ~= "number" or (step.Attach ~= 0 and not actors[step.Attach])) then
+			return ("step %d: bad value"):format(index)
+		end
+	end
+	return nil
+end
 
 -- Returns an error string, or nil if the module is usable.
 function MinigameInfo.validate(definition): string?
@@ -9360,6 +9449,22 @@ function MinigameInfo.validate(definition): string?
 		for _, action in controls.Actions or {} do
 			if type(action.Action) ~= "string" or type(action.Label) ~= "string" then
 				return "each Info.Controls.Actions entry needs Action and Label strings"
+			end
+		end
+	end
+	local tutorial = info.Tutorial
+	if tutorial ~= nil then
+		if type(tutorial) ~= "table" or not shortText(tutorial.Objective, 90) then
+			return "Info.Tutorial needs a short Objective (90 characters max)"
+		end
+		for _, key in { "Rule", "Win" } do
+			if tutorial[key] ~= nil and not shortText(tutorial[key], 90) then
+				return ("Info.Tutorial.%s must be a short string"):format(key)
+			end
+		end
+		for _, line in tutorial.Controls or {} do
+			if type(line) ~= "table" or not shortText(line.Label, 20) then
+				return "each Info.Tutorial.Controls line needs a short Label"
 			end
 		end
 	end
@@ -9406,6 +9511,7 @@ function MinigameInfo.normalize(id: string, info)
 	return {
 		Id = id,
 		Name = info.Name,
+		Tutorial = MinigameInfo.tutorial(id, info, controls),
 		Description = info.Description,
 		Layout = info.Layout,
 		Duration = info.Duration,
@@ -9414,6 +9520,53 @@ function MinigameInfo.normalize(id: string, info)
 		ProgressLabel = info.ProgressLabel,
 		ProgressBar = info.ProgressBar == true,
 		ClientModule = if type(info.ClientModule) == "string" then info.ClientModule else nil,
+	}
+end
+
+-- An action's short label: "Pass!" -> "PASS".
+local function word(label: string): string
+	local text = string.upper(string.gsub(label, "[!%.]", ""))
+	return if text == "" then "GO" else text
+end
+
+-- The tutorial screen's data: objective lines, control lines (each naming the actions it
+-- shows) and the preview (nil = the client's generic preview). Never fails.
+function MinigameInfo.tutorial(id: string, info, controls)
+	local tutorial = info.Tutorial or {}
+	-- Movement first, always from the real controls (overrides can't misstate it), then the
+	-- action lines: Tutorial.Controls if given, else one per action.
+	local lines = {}
+	if not controls.Move then
+		table.insert(lines, { Label = "NO WALKING", Actions = {}, NoMove = true })
+	elseif controls.Jump then
+		table.insert(lines, { Label = "MOVE", Actions = {}, Move = true })
+		table.insert(lines, { Label = "JUMP", Actions = {}, Jump = true })
+	else
+		table.insert(lines, { Label = "MOVE", Note = "No jumping", Actions = {}, Move = true })
+	end
+	if type(tutorial.Controls) == "table" then
+		for _, line in tutorial.Controls do
+			table.insert(lines, { Label = line.Label, Actions = line.Actions or {} })
+		end
+	else
+		for _, action in controls.Actions do
+			table.insert(lines, { Label = word(action.Label), Actions = { action.Action } })
+		end
+	end
+	local preview = tutorial.Preview
+	if preview ~= nil then
+		local problem = MinigameInfo.validatePreview(preview)
+		if problem then
+			warn(("[MinigameInfo] %s: tutorial preview ignored (%s)"):format(id, problem))
+			preview = nil
+		end
+	end
+	return {
+		Objective = tutorial.Objective or info.Description,
+		Rule = tutorial.Rule,
+		Win = tutorial.Win,
+		Controls = lines,
+		Preview = preview,
 	}
 end
 
@@ -9430,8 +9583,11 @@ return MinigameInfo
 	clients only receive PartyState messages and send validated inputs.
 
 	Round flow (MinigameManager.runRound):
-	  Vote -> Instructions (arena is built + everyone teleported & frozen)
-	       -> Countdown 3-2-1 -> Playing -> Finished -> back to lobby -> Results
+	  Select (the server picks the minigame; clients animate the pick as a roulette)
+	    -> Instructions (tutorial: preview, controls, ready-up; the arena is built and everyone
+	       teleported & frozen meanwhile) -> Countdown 3-2-1 -> Playing -> Finished
+	    -> back to lobby -> Results
+	Nobody votes: the pick is server-authoritative (MinigameManager.pick).
 
 	Minigames are ModuleScripts in PartyServer/Minigames (names starting with "_" are
 	ignored, e.g. _Template). See _Template.luau for the full interface.
@@ -9447,6 +9603,7 @@ local Arena = require(script.Parent.Arena)
 local BotService = require(script.Parent.BotService)
 local CoinService = require(script.Parent.CoinService)
 local MinigameInfo = require(script.Parent.MinigameInfo)
+local ReadyState = require(script.Parent.ReadyState)
 local ResultsUtil = require(script.Parent.ResultsUtil)
 local RoundContext = require(script.Parent.RoundContext)
 local Tutorial = require(script.Parent.Tutorial)
@@ -9466,7 +9623,8 @@ local state = {
 	Status = nil :: string?,
 	Participants = {},
 	ByPlayer = {} :: { [Player]: any },
-	Vote = nil :: any, -- { Choices, Votes = { [participant] = choiceIndex } }
+	Tutorial = nil :: any, -- Instructions phase: a ReadyState
+	History = { Normal = {}, Duel = {} } :: any, -- minigame ids picked, newest first
 	Active = nil :: any, -- the round in progress, see runRound
 }
 
@@ -9536,30 +9694,15 @@ local function queueChipFlush()
 	end)
 end
 
--- Counts votes per card; also returns who voted for what (shown under each card).
-local function tallyVotes(vote)
-	local counts, voters = {}, {}
-	for i = 1, #vote.Choices do
-		counts[i] = 0
-		voters[i] = {}
-	end
-	for participant, choice in vote.Votes do
-		counts[choice] += 1
-		table.insert(voters[choice], participant.Name)
-	end
-	return counts, voters
-end
-
-local function voteUpdateMessage(vote)
-	local counts, voters = tallyVotes(vote)
-	return { Type = Net.Message.VoteUpdate, Counts = counts, Voters = voters }
+local function readyMessage(tutorial)
+	return { Type = Net.Message.TutorialReady, Ready = tutorial:ids(), Left = tutorial:leftIds() }
 end
 
 -- Late joiners / reloaded clients get the current screen re-sent.
 local function sendSnapshot(player: Player)
-	stateRemote:FireClient(player, state.PhaseMessage)
-	if state.Vote then
-		stateRemote:FireClient(player, voteUpdateMessage(state.Vote))
+	stateRemote:FireClient(player, state.PhaseMessage) -- Select / Instructions carry their own timing
+	if state.Tutorial then
+		stateRemote:FireClient(player, readyMessage(state.Tutorial))
 	end
 	if state.Status then
 		stateRemote:FireClient(player, { Type = Net.Message.Status, Text = state.Status })
@@ -9605,15 +9748,6 @@ local function describeMinigame(entry)
 	return table.clone(entry.Described)
 end
 
-local function findEntry(id: string)
-	for _, entry in registry do
-		if entry.Id == id then
-			return entry
-		end
-	end
-	return nil
-end
-
 -- Calls an optional minigame method, logging (not propagating) errors.
 local function safeCall(instance, methodName: string, ...)
 	local method = instance[methodName]
@@ -9627,98 +9761,125 @@ local function safeCall(instance, methodName: string, ...)
 	return ok, result
 end
 
--- Voting -------------------------------------------------------------------------------
+-- Selection ----------------------------------------------------------------------------
+-- The server picks; clients only animate the pick. Nobody votes.
 
-local function castVote(participant, choice)
-	local vote = state.Vote
-	if not vote or participant.Left then
-		return
+local CATEGORY_TITLES = {
+	FFA = "FREE-FOR-ALL MINIGAME",
+	["2v2"] = "2 vs 2 MINIGAME",
+	["1v3"] = "1 vs 3 MINIGAME",
+	Duel = "DUEL MINIGAME",
+}
+
+-- Layouts that fit `count` players.
+local function layoutFits(layout: string, count: number): boolean
+	if layout == "Duel" then
+		return count == 2
+	elseif layout == "1v3" or layout == "2v2" then
+		return count == 4
 	end
-	-- Inputs are untrusted: must be an integer index of a real card.
-	if type(choice) ~= "number" or choice % 1 ~= 0 or choice < 1 or choice > #vote.Choices then
-		return
-	end
-	vote.Votes[participant] = choice
-	broadcast(voteUpdateMessage(vote))
+	return count >= 2
 end
 
-local function everyoneVoted(vote, participants): boolean
-	for _, participant in participants do
-		if not participant.Left and vote.Votes[participant] == nil then
-			return false
-		end
-	end
-	return true
-end
-
--- Minigames for the normal 4-player vote (Duel minigames are only played from Duel spaces).
-local function votePool()
+-- Minigames a round can pick from: Duel games only for duels, never in normal rounds.
+local function selectionPool(duel: boolean, count: number)
 	local pool = {}
 	for _, entry in registry do
-		if entry.Definition.Info.Layout ~= "Duel" then
+		local layout = entry.Definition.Info.Layout
+		if (layout == "Duel") == duel and layoutFits(layout, count) then
 			table.insert(pool, entry)
 		end
 	end
 	return pool
 end
 
-local function runVote(participants)
-	local pool = votePool()
-	for i = #pool, 2, -1 do -- shuffle
-		local j = rng:NextInteger(1, i)
-		pool[i], pool[j] = pool[j], pool[i]
-	end
-
-	local choices = {}
-	for i = 1, math.min(Config.VoteChoices, #pool) do
-		table.insert(choices, describeMinigame(pool[i]))
-	end
-	if #choices < Config.VoteChoices and #pool > 1 then
-		table.insert(choices, table.clone(Config.RandomChoice))
-	end
-
-	local vote = { Choices = choices, Votes = {} }
-	state.Vote = vote
-	local endsAt = now() + Config.VoteDuration
-	setPhase(Net.Phase.Vote, { Choices = choices, EndsAt = endsAt })
-	broadcast(voteUpdateMessage(vote))
-
-	-- Bots vote after a short "thinking" delay, through the same validated path as players.
-	for _, participant in participants do
-		if participant.IsBot then
-			task.delay(rng:NextNumber(Config.BotVoteDelay[1], Config.BotVoteDelay[2]), function()
-				if state.Vote == vote then
-					castVote(participant, rng:NextInteger(1, #choices))
-				end
-			end)
+--[[
+	Picks one entry from `pool`, every eligible game equally likely, avoiding repeats:
+	never the previous pick (recent[1]) while anything else is eligible, and not the previous
+	two when the pool has at least Config.AvoidTwoPoolSize games. No game is ever excluded for
+	good. `recent` = ids, newest first. `random` = a Random (seed it in tests).
+]]
+function MinigameManager.pick(pool, recent, random)
+	assert(#pool > 0, "empty minigame pool")
+	local avoid = if #pool >= Config.AvoidTwoPoolSize then 2 else 1
+	local options = {}
+	for _, entry in pool do
+		local repeated = false
+		for i = 1, math.min(avoid, #recent) do
+			repeated = repeated or recent[i] == entry.Id
+		end
+		if not repeated then
+			table.insert(options, entry)
 		end
 	end
-
-	while now() < endsAt and not everyoneVoted(vote, participants) do
-		task.wait(0.1)
+	if #options == 0 then
+		options = pool
 	end
-	if now() < endsAt then
-		task.wait(1) -- everyone voted early: let them see the final tally for a beat
-	end
-	state.Vote = nil
+	return options[random:NextInteger(1, #options)]
+end
 
-	-- Most votes wins; ties (and no votes at all) are broken randomly.
-	local tally = tallyVotes(vote)
-	local best, bestCount = {}, -1
-	for i, count in tally do
-		if count > bestCount then
-			best, bestCount = { i }, count
-		elseif count == bestCount then
-			table.insert(best, i)
+--[[
+	The roulette every client plays: the highlight starts on row `Start` and moves `Steps`
+	rows (wrapping) to land on the picked row. Chosen here so all clients agree.
+]]
+function MinigameManager.rouletteSteps(count: number, resultIndex: number, random)
+	local start = random:NextInteger(1, count)
+	local steps = 16 + random:NextInteger(0, 3)
+	if count > 1 then
+		while (start - 1 + steps) % count ~= resultIndex - 1 do
+			steps += 1
 		end
 	end
-	local winner = choices[best[rng:NextInteger(1, #best)]]
+	return start, steps
+end
 
-	if winner.Id == Config.RandomChoice.Id then
-		local all = votePool()
-		return all[rng:NextInteger(1, #all)]
+-- Picks (or takes the forced `entry`), shows the roulette, records the history. Returns the entry.
+local function runSelection(participants, duel: boolean, forced)
+	local kind = if duel then "Duel" else "Normal"
+	local history = state.History[kind]
+	local candidates = selectionPool(duel, #participants)
+	local entry = forced or MinigameManager.pick(candidates, history, rng)
+	local layout = entry.Definition.Info.Layout
+	if not table.find(candidates, entry) then
+		table.insert(candidates, entry) -- a forced pick outside the pool (tests)
 	end
-	return findEntry(winner.Id)
+	local names, resultIndex = {}, 1
+	for index, candidate in candidates do
+		table.insert(names, candidate.Definition.Info.Name)
+		if candidate == entry then
+			resultIndex = index
+		end
+	end
+	local start, steps = MinigameManager.rouletteSteps(#names, resultIndex, rng)
+	local startsAt = now() + 0.3 -- a beat so every client receives it before the first tick
+	-- The roulette runs over every game this round could have picked (every eligible game is
+	-- equally likely, whatever its layout), so the category is revealed with the result.
+	setPhase(Net.Phase.Select, {
+		Category = layout,
+		Title = if duel then CATEGORY_TITLES.Duel else "MINIGAME TIME!",
+		ResultTitle = CATEGORY_TITLES[layout] or "MINIGAME",
+		Candidates = names,
+		ResultIndex = resultIndex,
+		ResultId = entry.Id,
+		Start = start,
+		Steps = steps,
+		StartsAt = startsAt,
+		SpinEndsAt = startsAt + Config.SelectDuration - Config.SelectHold,
+		EndsAt = startsAt + Config.SelectDuration,
+	})
+	table.insert(history, 1, entry.Id)
+	history[3] = nil
+	task.wait(math.max(0, startsAt + Config.SelectDuration - now()))
+	return entry
+end
+
+-- Tutorial ready-up ----------------------------------------------------------------------
+
+local function markReady(participant)
+	local tutorial = state.Tutorial
+	if tutorial and tutorial:mark(participant, state.PhaseMessage.Phase, now()) then
+		broadcast(readyMessage(tutorial))
+	end
 end
 
 -- Teams ----------------------------------------------------------------------------------
@@ -9850,8 +10011,9 @@ function MinigameManager.runRound(participants, options)
 		end
 	end
 
-	-- 1. Vote (skipped when the caller already picked, e.g. a duel)
-	local entry = options.Entry or runVote(participants)
+	-- 1. Pick the minigame (the server decides; the roulette only shows it). options.Entry
+	-- forces the result (tests / harnesses); the roulette still lands on it.
+	local entry = runSelection(participants, options.Duel == true, options.Entry)
 	local definition = entry.Definition
 	local info = definition.Info
 	local described = describeMinigame(entry)
@@ -9891,14 +10053,35 @@ function MinigameManager.runRound(participants, options)
 		Connections = {},
 	}
 
-	-- 3. Instructions card; build the map and teleport while everyone reads it
+	-- 3. Tutorial: preview + controls + ready-up; build the map and teleport meanwhile.
+	-- READY unlocks after one preview loop; bots ready themselves; the round starts when
+	-- everyone still here is ready, or at the timeout (an idle player never blocks it).
+	local readyAt = now() + Config.TutorialMinDuration
 	local instructionsEnd = now() + Config.InstructionsDuration
+	local tutorial = ReadyState.new(participants, readyAt)
+	state.Tutorial = tutorial
+	ensureBodies(participants) -- so every portrait has an avatar to show
+	local tutorialParticipants = describeParticipants(participants)
+	for index, participant in participants do
+		tutorialParticipants[index].Character = participant:GetCharacter() -- avatar portraits
+	end
 	setPhase(Net.Phase.Instructions, {
 		Minigame = described,
-		Participants = describeParticipants(participants),
+		Participants = tutorialParticipants,
 		ArenaOrigin = arena.Origin,
+		ReadyAt = readyAt,
 		EndsAt = instructionsEnd,
 	})
+	broadcast(readyMessage(tutorial))
+	for _, participant in participants do
+		if participant.IsBot then
+			task.delay(Config.TutorialMinDuration + rng:NextNumber(Config.BotReadyDelay[1], Config.BotReadyDelay[2]), function()
+				if state.Tutorial == tutorial then
+					markReady(participant)
+				end
+			end)
+		end
+	end
 
 	local spawns = instance:Setup(arena, participants, round) or {}
 	ensureBodies(participants)
@@ -9908,7 +10091,13 @@ function MinigameManager.runRound(participants, options)
 		participant:Freeze()
 	end
 	broadcast(chipsMessage()) -- characters exist now, so spectating works from the start
-	task.wait(math.max(0, instructionsEnd - now()))
+	while now() < instructionsEnd and not (now() >= readyAt and tutorial:everyone()) do
+		task.wait(0.1)
+	end
+	if now() < instructionsEnd then
+		task.wait(0.6) -- everyone's ready: let the last READY show for a beat
+	end
+	state.Tutorial = nil
 
 	-- 4. Countdown
 	for number = Config.CountdownFrom, 1, -1 do
@@ -9994,9 +10183,9 @@ function MinigameManager.runRound(participants, options)
 	return results, rows
 end
 
--- Minigames the normal 4-player vote draws from (never Duel ones).
-function MinigameManager.voteMinigames()
-	return votePool()
+-- Minigames a normal 4-player round picks from (never Duel ones).
+function MinigameManager.roundMinigames()
+	return selectionPool(false, Config.PlayersPerMatch)
 end
 
 -- Loads the minigame registry without starting anything else (tests; init does this too).
@@ -10024,7 +10213,7 @@ function MinigameManager.runDuel(a, b)
 	if #duels == 0 then
 		return nil
 	end
-	local results = MinigameManager.runRound({ a, b }, { Entry = duels[rng:NextInteger(1, #duels)], NoCoins = true })
+	local results = MinigameManager.runRound({ a, b }, { Duel = true, NoCoins = true })
 	local first = {}
 	for _, result in results do
 		if result.Placement == 1 then
@@ -10036,7 +10225,7 @@ end
 
 -- Emergency stop if anything in runRound threw. Leaves the server ready for the next round.
 function MinigameManager.abort(message: string?)
-	state.Vote = nil
+	state.Tutorial = nil
 	finishRound()
 	broadcast({ Type = Net.Message.Toast, Text = message or "Round cancelled" })
 end
@@ -10060,7 +10249,7 @@ function MinigameManager.sendTo(player: Player, message)
 	stateRemote:FireClient(player, message)
 end
 
--- fn(player, payload) -> true if it handled the input. Runs after rate limiting, before votes/actions.
+-- fn(player, payload) -> true if it handled the input. Runs after rate limiting, before ready/actions.
 function MinigameManager.setInputHandler(fn: ((Player, any) -> boolean)?)
 	extraInputHandler = fn
 end
@@ -10139,10 +10328,10 @@ function MinigameManager.init()
 		end
 		local participant = state.ByPlayer[player]
 		if not participant then
-			return -- spectators (5th+ player) can't vote or act
+			return -- spectators (5th+ player) can't ready up or act
 		end
-		if kind == Net.Input.Vote then
-			castVote(participant, payload.Choice)
+		if kind == Net.Input.TutorialReady then
+			markReady(participant) -- yourself only; ReadyState checks the phase and the unlock time
 		elseif kind == Net.Input.Action and type(payload.Action) == "string" then
 			submitAction(participant, payload.Action)
 		elseif kind == Net.Input.ActionUsed and type(payload.Action) == "string" then
@@ -10162,9 +10351,8 @@ function MinigameManager.init()
 		end
 		participant.Left = true
 		state.ByPlayer[player] = nil
-		if state.Vote then
-			state.Vote.Votes[participant] = nil
-			broadcast(voteUpdateMessage(state.Vote))
+		if state.Tutorial then
+			broadcast(readyMessage(state.Tutorial)) -- they no longer block the start
 		end
 		onParticipantLost(participant, "Left")
 	end)
@@ -10179,7 +10367,7 @@ return MinigameManager
           <string name="Name">MinigameMode</string>
           <string name="Source"><![CDATA[--[[
 	MinigameMode
-	The "Minigames" match mode: no board, just back-to-back minigames (vote -> play ->
+	The "Minigames" match mode: no board, just back-to-back minigames (server pick -> tutorial -> play ->
 	results) for the chosen number of rounds. Most coins wins; ties share a place. Real
 	players get bank coins by placement, same as the board party.
 
@@ -10424,6 +10612,41 @@ Bullseye.Info = {
 	Description = "Stop the sliding marker as close to the middle as you can. 3 shots, faster each time. 1 vs 3: the solo player's score takes on the team's average!",
 	Duration = 40,
 	Layout = Config.Layouts.OneVsThree,
+	Tutorial = {
+		Objective = "Stop the marker in the middle.",
+		Rule = "3 shots, each faster. Solo player vs the team's average.",
+		Win = "Closest to the middle wins.",
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 11, 23), LookAt = Vector3.new(0, 3, 0) },
+			Actors = {
+				{ Start = Vector3.new(-6.5, 0, 3), Team = 1 },
+				{ Start = Vector3.new(0.5, 0, 3.5), Team = 2 },
+				{ Start = Vector3.new(4, 0, 3.5), Team = 2 },
+				{ Start = Vector3.new(7.5, 0, 3.5), Team = 2 },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(20, 1, 12), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(120, 196, 170) },
+				{ Id = "Bar", Shape = "Block", Size = Vector3.new(16, 0.6, 1.4), Position = Vector3.new(0, 4.5, -2), Color = Color3.fromRGB(255, 248, 228) },
+				{ Id = "Target", Shape = "Block", Size = Vector3.new(1.4, 0.7, 1.5), Position = Vector3.new(0, 4.5, -2), Color = Color3.fromRGB(240, 198, 96) },
+				{ Id = "Marker", Shape = "Block", Size = Vector3.new(0.4, 1.6, 1.7), Position = Vector3.new(-7, 4.5, -2), Color = Color3.fromRGB(226, 72, 70), Neon = true },
+			},
+			Steps = {
+				{ At = 0, Prop = "Marker", To = Vector3.new(7, 4.5, -2), Time = 0.7 },
+				{ At = 0.7, Prop = "Marker", To = Vector3.new(-7, 4.5, -2), Time = 0.7 },
+				{ At = 1.4, Prop = "Marker", To = Vector3.new(7, 4.5, -2), Time = 0.7 },
+				{ At = 1.75, Actor = 1, Caption = "STOP!" },
+				{ At = 1.75, Prop = "Marker", To = Vector3.new(0.3, 4.5, -2), Time = 0.05 },
+				{ At = 1.9, Prop = "Target", Pulse = true },
+				{ At = 2.4, Actor = 1, Caption = "NICE!" },
+				{ At = 3.1, Prop = "Marker", To = Vector3.new(-7, 4.5, -2), Time = 0.5 },
+				{ At = 3.6, Prop = "Marker", To = Vector3.new(7, 4.5, -2), Time = 0.5 },
+				{ At = 3.85, Actor = 2, Caption = "STOP!" },
+				{ At = 3.85, Prop = "Marker", To = Vector3.new(1.8, 4.5, -2), Time = 0.05 },
+				{ At = 4.6, Caption = "1 vs 3" },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 40, Distance = 30 },
 	Controls = {
 		Move = false,
@@ -10720,6 +10943,30 @@ BumperBout.Info = {
 	Description = "Shove your rival off the platform! Walk around and press DASH to lunge into them. The platform shrinks, so stay near the middle. Don't dash yourself off!",
 	Duration = BumperBout.ROUND_LIMIT,
 	Layout = Config.Layouts.Duel,
+	Tutorial = {
+		Objective = "Shove your rival off the platform.",
+		Rule = "The platform shrinks. Don't dash yourself off!",
+		Win = "Last one on the platform wins.",
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 12, 16), LookAt = Vector3.new(0, 0, 0) },
+			Actors = {
+				{ Start = Vector3.new(-3.5, 0, 0), Face = Vector3.new(4, 0, 0) },
+				{ Start = Vector3.new(3, 0, 0), Face = Vector3.new(-4, 0, 0) },
+			},
+			Props = {
+				{ Id = "Platform", Shape = "Cylinder", Upright = true, Size = Vector3.new(1, 15, 15), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(120, 196, 170) },
+			},
+			Steps = {
+				{ At = 0.5, Actor = 1, To = Vector3.new(-1, 0, 0), Time = 0.6 },
+				{ At = 1.1, Actor = 1, Caption = "DASH!" },
+				{ At = 1.1, Actor = 1, To = Vector3.new(1.8, 0, 0), Time = 0.25 },
+				{ At = 1.3, Actor = 2, To = Vector3.new(7.8, 0.5, 0), Time = 0.45 },
+				{ At = 1.75, Actor = 2, To = Vector3.new(9.5, -9, 0), Time = 0.8 },
+				{ At = 2.8, Caption = "KNOCKED OFF!" },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 50, Distance = 30, Follow = 0, Smooth = 20, TouchZoom = 1, TouchLookAhead = 4 },
 	Controls = {
 		Move = true,
@@ -11512,6 +11759,46 @@ FallingPlatforms.Info = {
 	Description = "Tiles crumble after you step on them and random ones drop out. Keep moving, don't fall!",
 	Duration = 75,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Stay on the platforms.",
+		Rule = "Tiles crumble after you step on them.",
+		Win = "Last player standing wins.",
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 14, 16), LookAt = Vector3.new(0, 0, 0) },
+			Actors = {
+				{ Start = Vector3.new(-4.2, 0, 4.2) },
+				{ Start = Vector3.new(4.2, 0, 0) },
+			},
+			Props = {
+				{ Id = "A1", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(-4.2, -0.5, -4.2), Color = Color3.fromRGB(120, 196, 170) },
+				{ Id = "A2", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(0, -0.5, -4.2), Color = Color3.fromRGB(150, 210, 185) },
+				{ Id = "A3", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(4.2, -0.5, -4.2), Color = Color3.fromRGB(120, 196, 170) },
+				{ Id = "B1", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(-4.2, -0.5, 0), Color = Color3.fromRGB(150, 210, 185) },
+				{ Id = "B2", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(120, 196, 170) },
+				{ Id = "B3", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(4.2, -0.5, 0), Color = Color3.fromRGB(150, 210, 185) },
+				{ Id = "C1", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(-4.2, -0.5, 4.2), Color = Color3.fromRGB(120, 196, 170) },
+				{ Id = "C2", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(0, -0.5, 4.2), Color = Color3.fromRGB(150, 210, 185) },
+				{ Id = "C3", Shape = "Block", Size = Vector3.new(4, 1, 4), Position = Vector3.new(4.2, -0.5, 4.2), Color = Color3.fromRGB(120, 196, 170) },
+			},
+			Steps = {
+				{ At = 0.3, Actor = 1, To = Vector3.new(0, 0, 4.2), Time = 0.8 },
+				{ At = 0.6, Prop = "C1", Color = Color3.fromRGB(226, 110, 90) },
+				{ At = 1.2, Prop = "C1", Visible = false },
+				{ At = 1.2, Actor = 1, To = Vector3.new(0, 0, 0), Time = 0.8 },
+				{ At = 0.8, Prop = "A3", Color = Color3.fromRGB(226, 110, 90) },
+				{ At = 1.6, Prop = "A3", Visible = false },
+				{ At = 1.6, Prop = "C2", Color = Color3.fromRGB(226, 110, 90) },
+				{ At = 2.2, Prop = "C2", Visible = false },
+				{ At = 2.2, Actor = 2, Jump = true },
+				{ At = 2.2, Actor = 2, To = Vector3.new(4.2, 0, 4.2), Time = 0.6 },
+				{ At = 2.4, Actor = 1, To = Vector3.new(-4.2, 0, -4.2), Time = 1 },
+				{ At = 3.0, Prop = "B2", Color = Color3.fromRGB(226, 110, 90) },
+				{ At = 3.6, Prop = "B2", Visible = false },
+				{ At = 3.8, Caption = "KEEP MOVING!" },
+			},
+		},
+	},
 	Camera = { Mode = "FollowBehind" },
 	Controls = { Move = true, Jump = true, WalkSpeed = 18 }, -- no actions, slightly zippier
 	ProgressLabel = "Survived",
@@ -11822,9 +12109,44 @@ local HotPotato = {}
 
 HotPotato.Info = {
 	Name = "Hot Potato",
-	Description = "Someone's holding a spicy potato 🥔🔥. Get close and pass it before it goes BOOM. Last one standing wins!",
+	Description = "Someone's holding a spicy potato. Get close and pass it before it goes BOOM. Last one standing wins!",
 	Duration = 90,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Pass the potato before it explodes.",
+		Rule = "Get close to someone and press PASS.",
+		Win = "Last player standing wins.",
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 16, 21), LookAt = Vector3.new(0, 1.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-5, 0, 2) },
+				{ Start = Vector3.new(1, 0, -3) },
+				{ Start = Vector3.new(5, 0, 3) },
+				{ Start = Vector3.new(-1, 0, 5) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Cylinder", Upright = true, Size = Vector3.new(1, 22, 22), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 182, 110) },
+				{ Id = "Potato", Shape = "Ball", Size = Vector3.new(1.6, 1.6, 1.6), Position = Vector3.new(-5, 6, 2), Color = Color3.fromRGB(196, 132, 74) },
+			},
+			Steps = {
+				{ At = 0, Prop = "Potato", Attach = 1 },
+				{ At = 0.2, Actor = 1, To = Vector3.new(-1.5, 0, -1), Time = 1 },
+				{ At = 1.3, Actor = 1, Caption = "PASS!" },
+				{ At = 1.3, Prop = "Potato", Attach = 2 },
+				{ At = 1.5, Actor = 2, To = Vector3.new(3.5, 0, 1), Time = 1 },
+				{ At = 1.6, Actor = 1, To = Vector3.new(-6, 0, 3), Time = 1 },
+				{ At = 2.7, Actor = 2, Caption = "PASS!" },
+				{ At = 2.7, Prop = "Potato", Attach = 3 },
+				{ At = 3.2, Prop = "Potato", Color = Color3.fromRGB(235, 90, 50) },
+				{ At = 3.4, Prop = "Potato", Pulse = true },
+				{ At = 3.9, Prop = "Potato", Pulse = true },
+				{ At = 4.5, Actor = 3, Caption = "BOOM!" },
+				{ At = 4.5, Prop = "Potato", Visible = false },
+				{ At = 4.5, Actor = 3, Jump = true },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 50, Distance = 38 },
 	Controls = {
 		Move = true,
@@ -12355,9 +12677,37 @@ local GATE_HEIGHT = 20
 
 IceDash.Info = {
 	Name = "Ice Dash",
-	Description = "Slide down the ice ❄! You move on your own, so just steer. Dodge bumpers and snow, don't slip off the edge. First to the flag wins!",
+	Description = "Slide down the ice! You move on your own, so just steer. Dodge bumpers and snow, don't slip off the edge. First to the flag wins!",
 	Duration = ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Steer down the ice to the flag.",
+		Rule = "You slide on your own. Don't slip off the edge.",
+		Win = "First to the flag wins.",
+		Controls = { { Label = "STEER", Actions = { "Left", "Right" } } },
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 10, 13), LookAt = Vector3.new(0, 0, -5) },
+			Actors = {
+				{ Start = Vector3.new(0, 0, 5), Face = Vector3.new(0, 0, -20) },
+			},
+			Props = {
+				{ Id = "Ice", Shape = "Block", Size = Vector3.new(9, 1, 22), Position = Vector3.new(0, -0.5, -4), Color = Color3.fromRGB(196, 232, 255) },
+				{ Id = "Bumper1", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(-2, 0.9, -1), Color = Color3.fromRGB(240, 120, 170) },
+				{ Id = "Bumper2", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(2, 0.9, -7), Color = Color3.fromRGB(240, 120, 170) },
+				{ Id = "Flag", Shape = "Block", Size = Vector3.new(3, 2, 0.3), Position = Vector3.new(0, 3, -13), Color = Color3.fromRGB(240, 198, 96) },
+			},
+			Steps = {
+				{ At = 0.2, Actor = 1, Caption = "RIGHT" },
+				{ At = 0.2, Actor = 1, To = Vector3.new(2, 0, -1), Time = 1.3 },
+				{ At = 1.5, Actor = 1, Caption = "LEFT" },
+				{ At = 1.5, Actor = 1, To = Vector3.new(-2, 0, -7), Time = 1.3 },
+				{ At = 2.8, Actor = 1, To = Vector3.new(0, 0, -12), Time = 1 },
+				{ At = 3.8, Prop = "Flag", Pulse = true },
+				{ At = 3.9, Caption = "FINISH!" },
+			},
+		},
+	},
 	Camera = { Mode = "FollowBehind", Height = 12, Distance = 22, Smooth = 12 },
 	Controls = {
 		Move = false, -- you slide on your own; you only steer
@@ -13018,9 +13368,42 @@ local WALK_SPEED = 18
 
 KernelCatch.Info = {
 	Name = "Kernel Catch",
-	Description = "It's raining popcorn 🍿! Stand on the shadows to catch kernels in your head bucket. Dodge the rocks or lose your snacks!",
+	Description = "It's raining popcorn! Stand on the shadows to catch kernels in your head bucket. Dodge the rocks or lose your snacks!",
 	Duration = ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Catch popcorn. Avoid rocks.",
+		Rule = "Stand on a shadow to catch what falls there.",
+		Win = "Most popcorn wins.",
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 13, 16), LookAt = Vector3.new(0, 1.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-2, 0, 3) },
+				{ Start = Vector3.new(-4, 0, -2) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(20, 1, 14), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 182, 110) },
+				{ Id = "Shadow1", Shape = "Cylinder", Upright = true, Size = Vector3.new(0.1, 3, 3), Position = Vector3.new(3, 0.05, 0), Color = Color3.fromRGB(60, 50, 40), Transparency = 0.45 },
+				{ Id = "Shadow2", Shape = "Cylinder", Upright = true, Size = Vector3.new(0.1, 3, 3), Position = Vector3.new(-4, 0.05, -2), Color = Color3.fromRGB(60, 50, 40), Transparency = 0.45, Hidden = true },
+				{ Id = "Popcorn", Shape = "Ball", Size = Vector3.new(1.2, 1.2, 1.2), Position = Vector3.new(3, 14, 0), Color = Color3.fromRGB(255, 244, 200) },
+				{ Id = "Rock", Shape = "Ball", Size = Vector3.new(1.6, 1.6, 1.6), Position = Vector3.new(-4, 14, -2), Color = Color3.fromRGB(120, 116, 110) },
+			},
+			Steps = {
+				{ At = 0.2, Actor = 1, To = Vector3.new(3, 0, 0), Time = 0.9 },
+				{ At = 0.8, Prop = "Popcorn", To = Vector3.new(3, 5.8, 0), Time = 0.7 },
+				{ At = 1.5, Prop = "Popcorn", Visible = false },
+				{ At = 1.5, Prop = "Shadow1", Visible = false },
+				{ At = 1.5, Actor = 1, Caption = "+1" },
+				{ At = 2.0, Prop = "Shadow2", Visible = true },
+				{ At = 2.4, Actor = 2, Caption = "ROCK!" },
+				{ At = 2.4, Actor = 2, To = Vector3.new(-7, 0, 1.5), Time = 0.7 },
+				{ At = 2.8, Prop = "Rock", To = Vector3.new(-4, 0.8, -2), Time = 0.6 },
+				{ At = 3.6, Prop = "Shadow2", Visible = false },
+				{ At = 3.8, Caption = "MOST POPCORN WINS" },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 42, Distance = 32 },
 	Controls = { Move = true, Jump = true, WalkSpeed = WALK_SPEED },
 	ProgressLabel = "Popcorn",
@@ -13502,9 +13885,49 @@ local MashDash = {}
 
 MashDash.Info = {
 	Name = "Mash Dash",
-	Description = "Mash to run! First one over the finish line wins it for their team. Tap as fast as you can! 👍",
+	Description = "Mash to run! First one over the finish line wins it for their team. Tap as fast as you can!",
 	Duration = 30,
 	Layout = Config.Layouts.TwoVsTwo,
+	Tutorial = {
+		Objective = "Mash to run to the finish line.",
+		Win = "First across the line wins it for their team.",
+		Preview = {
+			Loop = 5.5,
+			Camera = { Position = Vector3.new(0, 12, 17.5), LookAt = Vector3.new(0, 1, 0) },
+			Actors = {
+				{ Start = Vector3.new(-7, 0, -3.3), Team = 1 },
+				{ Start = Vector3.new(-7, 0, -1.1), Team = 1 },
+				{ Start = Vector3.new(-7, 0, 1.1), Team = 2 },
+				{ Start = Vector3.new(-7, 0, 3.3), Team = 2 },
+			},
+			Props = {
+				{ Id = "Lane1", Shape = "Block", Size = Vector3.new(18, 1, 2), Position = Vector3.new(0, -0.5, -3.3), Color = Color3.fromRGB(232, 116, 116) },
+				{ Id = "Lane2", Shape = "Block", Size = Vector3.new(18, 1, 2), Position = Vector3.new(0, -0.5, -1.1), Color = Color3.fromRGB(240, 140, 140) },
+				{ Id = "Lane3", Shape = "Block", Size = Vector3.new(18, 1, 2), Position = Vector3.new(0, -0.5, 1.1), Color = Color3.fromRGB(110, 160, 235) },
+				{ Id = "Lane4", Shape = "Block", Size = Vector3.new(18, 1, 2), Position = Vector3.new(0, -0.5, 3.3), Color = Color3.fromRGB(135, 180, 245) },
+				{ Id = "Finish", Shape = "Block", Size = Vector3.new(0.6, 0.2, 9), Position = Vector3.new(7, 0.1, 0), Color = Color3.fromRGB(255, 248, 228) },
+			},
+			Steps = {
+				{ At = 0.3, Actor = 1, Caption = "MASH!" },
+				{ At = 0.3, Actor = 1, To = Vector3.new(-3, 0, -3.3), Time = 0.9 },
+				{ At = 0.3, Actor = 2, To = Vector3.new(-4, 0, -1.1), Time = 0.9 },
+				{ At = 0.3, Actor = 3, To = Vector3.new(-5, 0, 1.1), Time = 0.9 },
+				{ At = 0.3, Actor = 4, To = Vector3.new(-4.5, 0, 3.3), Time = 0.9 },
+				{ At = 1.3, Actor = 1, Caption = "MASH!" },
+				{ At = 1.3, Actor = 1, To = Vector3.new(1.5, 0, -3.3), Time = 0.9 },
+				{ At = 1.3, Actor = 2, To = Vector3.new(-1, 0, -1.1), Time = 0.9 },
+				{ At = 1.3, Actor = 3, To = Vector3.new(-2, 0, 1.1), Time = 0.9 },
+				{ At = 1.3, Actor = 4, To = Vector3.new(-1.5, 0, 3.3), Time = 0.9 },
+				{ At = 2.3, Actor = 1, Caption = "MASH!" },
+				{ At = 2.3, Actor = 1, To = Vector3.new(7.5, 0, -3.3), Time = 1.1 },
+				{ At = 2.3, Actor = 2, To = Vector3.new(4, 0, -1.1), Time = 1.1 },
+				{ At = 2.3, Actor = 3, To = Vector3.new(2.5, 0, 1.1), Time = 1.1 },
+				{ At = 2.3, Actor = 4, To = Vector3.new(3.5, 0, 3.3), Time = 1.1 },
+				{ At = 3.4, Prop = "Finish", Pulse = true },
+				{ At = 3.5, Caption = "TEAM WINS!" },
+			},
+		},
+	},
 	Camera = { Mode = "SideView", Distance = 55, Height = 10 },
 	Controls = {
 		Move = false, -- lane-locked: the server moves you
@@ -13670,6 +14093,46 @@ PatternRecall.Info = {
 	Description = "Watch the pads flash, then repeat the colours in order with the buttons. One mistake and you're out. It gets longer every round!",
 	Duration = 75,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Watch the pads, then repeat the colours.",
+		Rule = "One mistake and you're out. It gets longer every time.",
+		Win = "Last player standing wins.",
+		Controls = { { Label = "COLOURS", Actions = { "Red", "Blue", "Green", "Yellow" } } },
+		Preview = {
+			Loop = 7,
+			Camera = { Position = Vector3.new(0, 10, 15), LookAt = Vector3.new(0, 1, -1) },
+			Actors = {
+				{ Start = Vector3.new(-2, 0, 3.5) },
+				{ Start = Vector3.new(2, 0, 3.5) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(18, 1, 12), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(70, 80, 110) },
+				{ Id = "Red", Shape = "Block", Size = Vector3.new(2.6, 0.6, 2.6), Position = Vector3.new(-4.5, 0.3, -2), Color = Color3.fromRGB(150, 60, 60) },
+				{ Id = "Blue", Shape = "Block", Size = Vector3.new(2.6, 0.6, 2.6), Position = Vector3.new(-1.5, 0.3, -2), Color = Color3.fromRGB(60, 90, 160) },
+				{ Id = "Green", Shape = "Block", Size = Vector3.new(2.6, 0.6, 2.6), Position = Vector3.new(1.5, 0.3, -2), Color = Color3.fromRGB(60, 140, 80) },
+				{ Id = "Yellow", Shape = "Block", Size = Vector3.new(2.6, 0.6, 2.6), Position = Vector3.new(4.5, 0.3, -2), Color = Color3.fromRGB(170, 150, 60) },
+			},
+			Steps = {
+				{ At = 0.4, Prop = "Red", Color = Color3.fromRGB(255, 90, 90) },
+				{ At = 0.4, Prop = "Red", Pulse = true },
+				{ At = 0.9, Prop = "Red", Color = Color3.fromRGB(150, 60, 60) },
+				{ At = 1.1, Prop = "Green", Color = Color3.fromRGB(100, 230, 120) },
+				{ At = 1.1, Prop = "Green", Pulse = true },
+				{ At = 1.6, Prop = "Green", Color = Color3.fromRGB(60, 140, 80) },
+				{ At = 1.8, Prop = "Blue", Color = Color3.fromRGB(100, 150, 255) },
+				{ At = 1.8, Prop = "Blue", Pulse = true },
+				{ At = 2.3, Prop = "Blue", Color = Color3.fromRGB(60, 90, 160) },
+				{ At = 2.9, Caption = "YOUR TURN" },
+				{ At = 3.6, Actor = 1, Caption = "RED" },
+				{ At = 3.6, Prop = "Red", Pulse = true },
+				{ At = 4.3, Actor = 1, Caption = "GREEN" },
+				{ At = 4.3, Prop = "Green", Pulse = true },
+				{ At = 5.0, Actor = 1, Caption = "BLUE" },
+				{ At = 5.0, Prop = "Blue", Pulse = true },
+				{ At = 5.7, Caption = "CORRECT!" },
+			},
+		},
+	},
 	Camera = { Mode = "AngledOverhead", Height = 34, Distance = 26 },
 	Controls = {
 		Move = false,
@@ -13953,9 +14416,46 @@ local BOT_STUMBLE_PAUSE = { 0.5, 1.3 } -- seconds a stumble costs (or a wasted s
 
 PoleShimmy.Info = {
 	Name = "Pole Shimmy",
-	Description = "Alternate LEFT and RIGHT to shimmy up your pole! Keep a steady rhythm to climb faster. First to ring the bell wins 🔔",
+	Description = "Alternate LEFT and RIGHT to shimmy up your pole! Keep a steady rhythm to climb faster. First to ring the bell wins!",
 	Duration = ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Alternate LEFT and RIGHT to climb.",
+		Rule = "A steady rhythm climbs fastest.",
+		Win = "First to ring the bell wins.",
+		Controls = { { Label = "LEFT / RIGHT", Actions = { "Left", "Right" } } },
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 10, 32), LookAt = Vector3.new(0, 7.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-3, 0, 0.9), Face = Vector3.new(-3, 0, -5) },
+				{ Start = Vector3.new(3, 0, 0.9), Face = Vector3.new(3, 0, -5) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(16, 1, 8), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 160, 200) },
+				{ Id = "Pole1", Shape = "Cylinder", Upright = true, Size = Vector3.new(15, 1.2, 1.2), Position = Vector3.new(-3, 7.5, 0), Color = Color3.fromRGB(130, 130, 140) },
+				{ Id = "Pole2", Shape = "Cylinder", Upright = true, Size = Vector3.new(15, 1.2, 1.2), Position = Vector3.new(3, 7.5, 0), Color = Color3.fromRGB(130, 130, 140) },
+				{ Id = "Bell1", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(-3, 15.6, 0), Color = Color3.fromRGB(240, 198, 96) },
+				{ Id = "Bell2", Shape = "Ball", Size = Vector3.new(1.8, 1.8, 1.8), Position = Vector3.new(3, 15.6, 0), Color = Color3.fromRGB(240, 198, 96) },
+			},
+			Steps = {
+				{ At = 0.3, Actor = 1, Caption = "LEFT" },
+				{ At = 0.3, Actor = 1, To = Vector3.new(-3, 2.2, 0.9), Time = 0.4 },
+				{ At = 0.8, Actor = 1, Caption = "RIGHT" },
+				{ At = 0.8, Actor = 1, To = Vector3.new(-3, 4.4, 0.9), Time = 0.4 },
+				{ At = 1.3, Actor = 1, Caption = "LEFT" },
+				{ At = 1.3, Actor = 1, To = Vector3.new(-3, 6.6, 0.9), Time = 0.4 },
+				{ At = 1.8, Actor = 1, Caption = "RIGHT" },
+				{ At = 1.8, Actor = 1, To = Vector3.new(-3, 8.8, 0.9), Time = 0.4 },
+				{ At = 0.5, Actor = 2, To = Vector3.new(3, 1.5, 0.9), Time = 0.5 },
+				{ At = 1.2, Actor = 2, To = Vector3.new(3, 3, 0.9), Time = 0.5 },
+				{ At = 1.9, Actor = 2, To = Vector3.new(3, 4.5, 0.9), Time = 0.5 },
+				{ At = 2.3, Actor = 1, To = Vector3.new(-3, 10.6, 0.9), Time = 0.5 },
+				{ At = 2.9, Prop = "Bell1", Pulse = true },
+				{ At = 3.0, Caption = "DING!" },
+			},
+		},
+	},
 	Camera = { Mode = "SideView", Distance = 26, Height = 3, Smooth = 7, FollowY = true },
 	Controls = {
 		Move = false,
@@ -14333,6 +14833,31 @@ QuickDraw.Info = {
 	Description = "Wait for the light to turn green, then press DRAW first. Too early and you lose the point! First to 2.",
 	Duration = 40,
 	Layout = Config.Layouts.Duel,
+	Tutorial = {
+		Objective = "Press DRAW when the light turns green.",
+		Rule = "Too early and you lose the point.",
+		Win = "First to 2 points wins.",
+		Preview = {
+			Loop = 5,
+			Camera = { Position = Vector3.new(0, 7, 15), LookAt = Vector3.new(0, 2.5, 0) },
+			Actors = {
+				{ Start = Vector3.new(-4, 0, 0), Face = Vector3.new(4, 0, 0) },
+				{ Start = Vector3.new(4, 0, 0), Face = Vector3.new(-4, 0, 0) },
+			},
+			Props = {
+				{ Id = "Floor", Shape = "Block", Size = Vector3.new(16, 1, 8), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(226, 182, 110) },
+				{ Id = "Light", Shape = "Ball", Size = Vector3.new(2, 2, 2), Position = Vector3.new(0, 6.5, -2), Color = Color3.fromRGB(226, 72, 70), Neon = true },
+			},
+			Steps = {
+				{ At = 0.4, Caption = "WAIT..." },
+				{ At = 2.4, Prop = "Light", Color = Color3.fromRGB(110, 230, 120) },
+				{ At = 2.4, Prop = "Light", Pulse = true },
+				{ At = 2.7, Actor = 1, Caption = "DRAW!" },
+				{ At = 2.7, Actor = 1, Jump = true },
+				{ At = 3.4, Caption = "POINT!" },
+			},
+		},
+	},
 	Camera = { Mode = "SideView", Distance = 36, Height = 6 },
 	Controls = {
 		Move = false,
@@ -14565,6 +15090,40 @@ TrailTangle.Info = {
 	Description = "You ride on your own and leave a solid trail. Turn LEFT or RIGHT to dodge the edge and every trail. Trap the others; last rider wins! It speeds up, so plan ahead.",
 	Duration = TrailTangle.ROUND_DURATION,
 	Layout = Config.Layouts.FFA,
+	Tutorial = {
+		Objective = "Turn to dodge every trail and the edge.",
+		Rule = "You ride on your own and leave a solid trail.",
+		Win = "Last rider wins.",
+		Controls = { { Label = "TURN", Actions = { "Left", "Right" } } },
+		Preview = {
+			Loop = 6,
+			Camera = { Position = Vector3.new(0, 18, 12), LookAt = Vector3.new(0, 0, 0) },
+			Actors = {
+				{ Start = Vector3.new(-6, 0, 6), Face = Vector3.new(-6, 0, -10) },
+				{ Start = Vector3.new(6, 0, -6), Face = Vector3.new(6, 0, 10) },
+			},
+			Props = {
+				{ Id = "Grid", Shape = "Block", Size = Vector3.new(16, 1, 16), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(40, 52, 76) },
+				{ Id = "TrailA", Shape = "Block", Size = Vector3.new(1, 0.4, 8), Position = Vector3.new(-6, 0.2, 2), Color = Color3.fromRGB(240, 198, 96), Neon = true, Hidden = true },
+				{ Id = "TrailB", Shape = "Block", Size = Vector3.new(8, 0.4, 1), Position = Vector3.new(-2, 0.2, -2), Color = Color3.fromRGB(240, 198, 96), Neon = true, Hidden = true },
+				{ Id = "TrailC", Shape = "Block", Size = Vector3.new(1, 0.4, 8), Position = Vector3.new(6, 0.2, -2), Color = Color3.fromRGB(120, 200, 255), Neon = true, Hidden = true },
+				{ Id = "TrailD", Shape = "Block", Size = Vector3.new(7, 0.4, 1), Position = Vector3.new(2.5, 0.2, 2), Color = Color3.fromRGB(120, 200, 255), Neon = true, Hidden = true },
+			},
+			Steps = {
+				{ At = 0.2, Actor = 1, To = Vector3.new(-6, 0, -2), Time = 1.4 },
+				{ At = 0.2, Actor = 2, To = Vector3.new(6, 0, 2), Time = 1.4 },
+				{ At = 1.0, Prop = "TrailA", Visible = true },
+				{ At = 1.0, Prop = "TrailC", Visible = true },
+				{ At = 1.7, Actor = 1, Caption = "RIGHT" },
+				{ At = 1.7, Actor = 1, To = Vector3.new(2, 0, -2), Time = 1.4 },
+				{ At = 1.7, Actor = 2, Caption = "LEFT" },
+				{ At = 1.7, Actor = 2, To = Vector3.new(-1, 0, 2), Time = 1.4 },
+				{ At = 2.6, Prop = "TrailB", Visible = true },
+				{ At = 2.6, Prop = "TrailD", Visible = true },
+				{ At = 3.6, Caption = "DON'T HIT A TRAIL" },
+			},
+		},
+	},
 	-- Steep, fixed view of the whole grid (no drift toward you). On phones it's a little
 	-- closer and aimed further ahead, so the grid fills the gap between the chips and the
 	-- bottom edge, between the LEFT and RIGHT buttons.
@@ -15211,7 +15770,7 @@ return TrailTangle
             <string name="Source"><![CDATA[--[[
 	_Template — copy this file to start a new minigame.
 	Files whose names start with "_" are ignored by the MinigameManager, so rename the copy
-	(e.g. "CoinRush") and it will show up in the vote automatically.
+	(e.g. "CoinRush") and it will join the random minigame pool automatically.
 
 	Lifecycle (all called by the MinigameManager on a fresh instance each round, so keep
 	per-round state on `self`):
@@ -15250,7 +15809,7 @@ local Template = {}
 
 Template.Info = {
 	Name = "My Minigame",
-	Description = "One or two sentences shown on the vote card and instructions screen.",
+	Description = "One or two sentences: the objective shown on the tutorial screen.",
 	Duration = 60, -- seconds; the round ends automatically when this runs out
 	Layout = Config.Layouts.FFA, -- FFA | OneVsThree ("1v3") | TwoVsTwo ("2v2")
 
@@ -15923,6 +16482,76 @@ return ProfileStore
       </Item>
       <Item class="ModuleScript" referent="75">
         <Properties>
+          <string name="Name">ReadyState</string>
+          <string name="Source"><![CDATA[--[[
+	ReadyState
+	Who is ready on the pre-minigame tutorial screen. Pure (no remotes, no clock of its own).
+
+	  local ready = ReadyState.new(participants, readyAt)
+	  ready:mark(participant, phase, time) -> true if it counted
+	      only in the Instructions phase, only for one of this round's participants, only once
+	      READY has unlocked (readyAt, with half a second of slack for clock drift)
+	  ready:everyone() -> true when everyone still in the round is ready (leavers never block)
+	  ready:ids() -> { [participantId] = true }   for the TutorialReady message
+	  ready:leftIds() -> { [participantId] = true }  participants who left (shown as LEFT)
+
+	The server marks the sender's own participant (the input carries no target), so nobody
+	can ready someone else; bots are marked by the server after a short delay.
+]]
+
+local ReadyState = {}
+ReadyState.__index = ReadyState
+
+ReadyState.SLACK = 0.5
+
+function ReadyState.new(participants, readyAt: number)
+	return setmetatable({ Participants = participants, ReadyAt = readyAt, Ready = {} }, ReadyState)
+end
+
+function ReadyState:mark(participant, phase: string, time: number): boolean
+	if phase ~= "Instructions" or time < self.ReadyAt - ReadyState.SLACK then
+		return false
+	end
+	if self.Ready[participant] or not table.find(self.Participants, participant) then
+		return false
+	end
+	self.Ready[participant] = true
+	return true
+end
+
+function ReadyState:everyone(): boolean
+	for _, participant in self.Participants do
+		if not participant.Left and not self.Ready[participant] then
+			return false
+		end
+	end
+	return true
+end
+
+function ReadyState:ids()
+	local ids = {}
+	for participant in self.Ready do
+		ids[participant.Id] = true
+	end
+	return ids
+end
+
+function ReadyState:leftIds()
+	local ids = {}
+	for _, participant in self.Participants do
+		if participant.Left then
+			ids[participant.Id] = true
+		end
+	end
+	return ids
+end
+
+return ReadyState
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="76">
+        <Properties>
           <string name="Name">ResultsUtil</string>
           <string name="Source"><![CDATA[--[[
 	ResultsUtil
@@ -16037,7 +16666,7 @@ return ResultsUtil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="76">
+      <Item class="ModuleScript" referent="77">
         <Properties>
           <string name="Name">RoundContext</string>
           <string name="Source"><![CDATA[--[[
@@ -16162,7 +16791,7 @@ return RoundContext
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="77">
+      <Item class="ModuleScript" referent="78">
         <Properties>
           <string name="Name">SeatClaims</string>
           <string name="Source"><![CDATA[--[[
@@ -16326,7 +16955,7 @@ return SeatClaims
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="78">
+      <Item class="ModuleScript" referent="79">
         <Properties>
           <string name="Name">Tutorial</string>
           <string name="Source"><![CDATA[--[[
@@ -16469,7 +17098,7 @@ return Tutorial
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="79">
+      <Item class="ModuleScript" referent="80">
         <Properties>
           <string name="Name">WaitingRoom</string>
           <string name="Source"><![CDATA[--[[
@@ -16616,19 +17245,19 @@ return WaitingRoom
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="80">
+  <Item class="StarterPlayer" referent="81">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="81">
+    <Item class="StarterPlayerScripts" referent="82">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="82">
+      <Item class="Folder" referent="83">
         <Properties>
           <string name="Name">PartyClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="83">
+        <Item class="ModuleScript" referent="84">
           <Properties>
             <string name="Name">CameraController</string>
             <string name="Source"><![CDATA[--[[
@@ -16852,7 +17481,7 @@ return CameraController
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="84">
+        <Item class="ModuleScript" referent="85">
           <Properties>
             <string name="Name">Controls</string>
             <string name="Source"><![CDATA[--[[
@@ -16973,7 +17602,7 @@ return Controls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="85">
+        <Item class="LocalScript" referent="86">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -17007,7 +17636,7 @@ local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
 local ShopScreen = require(UI:WaitForChild("ShopScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
-local VoteScreen = require(UI:WaitForChild("VoteScreen"))
+local RandomizerScreen = require(UI:WaitForChild("RandomizerScreen"))
 local YouMarker = require(UI:WaitForChild("YouMarker"))
 
 local player = Players.LocalPlayer
@@ -17069,16 +17698,14 @@ local screen = Theme.make("ScreenGui", {
 	Name = "PartyUI",
 	ResetOnSpawn = false,
 	IgnoreGuiInset = true,
-	DisplayOrder = 10, -- draw the vote / results cards over the mobile thumbstick and jump button
+	DisplayOrder = 10, -- draw the pick / tutorial / results screens over the mobile thumbstick and jump button
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = player:WaitForChild("PlayerGui"),
 })
 
 local hud = Hud.new(screen)
-local voteScreen = VoteScreen.new(screen, function(choice)
-	sendInput({ Kind = Net.Input.Vote, Choice = choice })
-end)
-local instructions = InstructionsCard.new(screen)
+local randomizer = RandomizerScreen.new(screen)
+local instructions = InstructionsCard.new(screen, sendInput)
 local results = ResultsScreen.new(screen)
 local chips = PlayerChips.new(screen)
 local progressBar = ProgressBar.new(screen)
@@ -17106,7 +17733,7 @@ onboarding = Onboarding.new({
 	Shop = shopScreen,
 	Screen = screen,
 	PlayerGui = playerGui,
-	Modals = { voteScreen.Root, instructions.Root, results.Root, standings.Root },
+	Modals = { randomizer.Root, instructions.Root, results.Root, standings.Root },
 })
 
 -- "YOU" over your own character while you're playing (only this client sees it).
@@ -17159,7 +17786,7 @@ pcall(function()
 	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(fitHudToScreen)
 end)
 
--- While a full-screen card (vote, instructions, results) is up, the mobile thumbstick and
+-- While a full-screen card (pick, tutorial, results) is up, the mobile thumbstick and
 -- jump button are switched off entirely, so they can never sit on top of the card.
 local function setCardOpen(open: boolean)
 	pcall(function()
@@ -17175,7 +17802,7 @@ shopScreen.OnOpenChanged = function(open)
 end
 
 local function hideOverlays()
-	voteScreen:hide()
+	randomizer:hide()
 	instructions:hide()
 	results:hide()
 	standings:hide()
@@ -17309,26 +17936,28 @@ phaseHandlers[Phase.Standings] = function(message)
 	standings:show(message, myId)
 end
 
-phaseHandlers[Phase.Vote] = function(message)
+-- The server's minigame pick, animated (nobody votes).
+phaseHandlers[Phase.Select] = function(message)
 	hideOverlays()
 	lobbyPanel.Showing = false
 	shopScreen:setAvailable(false)
-	boardView:hide()
+	boardView:hide() -- the board HUD never shows behind the pick or the tutorial
 	lobbyPanel:hide()
 	hud:setLobby(nil)
+	hud:setTimer(nil)
 	setCardOpen(true)
-	voteScreen:show(message.Choices, message.EndsAt)
+	randomizer:show(message)
 end
 
 phaseHandlers[Phase.Instructions] = function(message)
 	hideOverlays()
-	boardView:hide() -- duels from a board space skip the vote, so the board HUD goes here too
+	boardView:hide() -- a late joiner may land here straight from the board
 	hud:setLobby(nil)
 	setCardOpen(true)
-	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
+	instructions:show(message, myId)
 	beginRound(message)
 	if not amParticipant then
-		hud:setStatus("👀 Spectating this round")
+		hud:setStatus("Spectating this round")
 	end
 	refreshSpectator()
 end
@@ -17390,8 +18019,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 			hud:setBoardToasts(message.Phase == Phase.Board or message.Phase == Phase.Standings)
 			handler(message)
 		end
-	elseif message.Type == Net.Message.VoteUpdate then
-		voteScreen:updateCounts(message.Counts, message.Voters)
+	elseif message.Type == Net.Message.TutorialReady then
+		instructions:setReady(message.Ready, message.Left)
 	elseif message.Type == Net.Message.Status then
 		hud:setStatus(message.Text)
 	elseif message.Type == Net.Message.Toast then
@@ -17427,7 +18056,7 @@ end
 -- spectating, not knocked out); never while a full-screen card is up.
 local function youMarkerWanted(): boolean
 	local cardOpen = false
-	for _, card in { voteScreen.Root, instructions.Root, results.Root, standings.Root } do
+	for _, card in { randomizer.Root, instructions.Root, results.Root, standings.Root } do
 		cardOpen = cardOpen or card.Visible
 	end
 	return YouMarker.shouldShow({
@@ -17443,7 +18072,7 @@ end
 
 RunService.RenderStepped:Connect(function()
 	hud:update()
-	voteScreen:update()
+	randomizer:update()
 	instructions:update()
 	boardView:update()
 	lobbyPanel:update()
@@ -17460,11 +18089,11 @@ sendInput({ Kind = Net.Input.Ready })
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="86">
+        <Item class="Folder" referent="87">
           <Properties>
             <string name="Name">Minigames</string>
           </Properties>
-          <Item class="ModuleScript" referent="87">
+          <Item class="ModuleScript" referent="88">
             <Properties>
               <string name="Name">BumperBout</string>
               <string name="Source"><![CDATA[--[[
@@ -17580,7 +18209,7 @@ return BumperBoutClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="88">
+          <Item class="ModuleScript" referent="89">
             <Properties>
               <string name="Name">IceDash</string>
               <string name="Source"><![CDATA[--[[
@@ -17865,7 +18494,7 @@ return IceDashClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="89">
+          <Item class="ModuleScript" referent="90">
             <Properties>
               <string name="Name">PoleShimmy</string>
               <string name="Source"><![CDATA[--[[
@@ -18120,7 +18749,7 @@ return PoleShimmyClient
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="90">
+          <Item class="ModuleScript" referent="91">
             <Properties>
               <string name="Name">TrailTangle</string>
               <string name="Source"><![CDATA[--[[
@@ -18262,7 +18891,7 @@ return TrailTangleClient
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="91">
+        <Item class="ModuleScript" referent="92">
           <Properties>
             <string name="Name">Onboarding</string>
             <string name="Source"><![CDATA[--[[
@@ -18402,7 +19031,7 @@ end
 --[[
 	context = {
 	  Known, Flags = { [flag] = true }, Mode = "Touch" | "Mouse" | "Gamepad",
-	  Modal       a full-screen card (instructions, results, vote, standings) or the shop is up
+	  Modal       a full-screen card (minigame pick, tutorial, results, standings) or the shop is up
 	  Lobby       { StartVisible }                        START is on screen (host only)
 	  Board       { OrderRoll, Roll, Items = { { Name, Description } }, Coins,
 	                Prompt = { Kind, Price, Routes, Count }? }
@@ -18817,7 +19446,7 @@ return Onboarding
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="92">
+        <Item class="ModuleScript" referent="93">
           <Properties>
             <string name="Name">SceneAmbience</string>
             <string name="Source"><![CDATA[--[[
@@ -18907,11 +19536,11 @@ return SceneAmbience
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="93">
+        <Item class="Folder" referent="94">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="94">
+          <Item class="ModuleScript" referent="95">
             <Properties>
               <string name="Name">ActionBar</string>
               <string name="Source"><![CDATA[--[[
@@ -19061,7 +19690,7 @@ return ActionBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="95">
+          <Item class="ModuleScript" referent="96">
             <Properties>
               <string name="Name">ActivePlayerPortrait</string>
               <string name="Source"><![CDATA[--[[
@@ -19092,14 +19721,9 @@ ActivePlayerPortrait.NORMAL = Vector2.new(230, 290) -- design px (BoardView scal
 ActivePlayerPortrait.BIG = Vector2.new(360, 450)
 local TURN_IN = math.rad(28) -- yaw so the avatar faces right, toward the menu and board
 
--- Copies `character` into `viewport` (a fresh WorldModel, so layered clothing and accessories
--- render) and aims a camera at it. Returns the copy, or nil when there's nothing to copy yet.
-function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, framing: string): Model?
-	for _, child in viewport:GetChildren() do
-		if child:IsA("WorldModel") or child:IsA("Camera") then -- keep the frame's UIScale / corner
-			child:Destroy()
-		end
-	end
+-- A display-only copy of a character: anchored, no scripts, sounds, name tags or shields.
+-- nil when there's nothing to copy yet. (TutorialPreview uses it for its actors too.)
+function ActivePlayerPortrait.copy(character: Model?): Model?
 	if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") then
 		return nil
 	end
@@ -19120,6 +19744,21 @@ function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, 
 	local humanoid = copy:FindFirstChildOfClass("Humanoid")
 	if humanoid then
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+	return copy
+end
+
+-- Copies `character` into `viewport` (a fresh WorldModel, so layered clothing and accessories
+-- render) and aims a camera at it. Returns the copy, or nil when there's nothing to copy yet.
+function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, framing: string): Model?
+	for _, child in viewport:GetChildren() do
+		if child:IsA("WorldModel") or child:IsA("Camera") then -- keep the frame's UIScale / corner
+			child:Destroy()
+		end
+	end
+	local copy = ActivePlayerPortrait.copy(character)
+	if not copy then
+		return nil
 	end
 	copy:PivotTo(CFrame.Angles(0, TURN_IN, 0))
 	local world = make("WorldModel", { Parent = viewport })
@@ -19194,7 +19833,7 @@ return ActivePlayerPortrait
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="96">
+          <Item class="ModuleScript" referent="97">
             <Properties>
               <string name="Name">BoardDice</string>
               <string name="Source"><![CDATA[--[[
@@ -19520,7 +20159,7 @@ return BoardDice
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="97">
+          <Item class="ModuleScript" referent="98">
             <Properties>
               <string name="Name">BoardView</string>
               <string name="Source"><![CDATA[--[[
@@ -20273,8 +20912,8 @@ function BoardView:hide()
 	if not self.Visible then
 		return
 	end
+	self.Visible = false -- first: clearPanels' MAP reset calls refresh(), which must not re-show panels
 	clearPanels(self)
-	self.Visible = false
 	ContextActionService:UnbindAction(MAP_ACTION)
 	self.Dice:clear()
 	RunService:UnbindFromRenderStep(CAMERA_BIND)
@@ -20307,7 +20946,81 @@ return BoardView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="98">
+          <Item class="ModuleScript" referent="99">
+            <Properties>
+              <string name="Name">Canvas</string>
+              <string name="Source"><![CDATA[--[[
+	Canvas
+	Full-screen presentation helper for the minigame pick and tutorial screens: an opaque
+	sea-green backdrop (the board / arena setup never shows behind it) and a 1280x720 design
+	canvas, scaled to fit and centred in the space below Roblox's top bar.
+
+	  local root, canvas = Canvas.new(parent, name)
+	  Canvas.fit(root, canvas, height?)  call when shown and every frame (cheap); height = the
+	                                     canvas's design height (default 720; shorter = bigger)
+	  Canvas.wide(root)                  true on wide, short screens (landscape phones)
+]]
+
+local GuiService = game:GetService("GuiService")
+
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local Canvas = {}
+
+Canvas.SIZE = Vector2.new(1280, 720)
+
+function Canvas.new(parent: Instance, name: string)
+	local root = make("Frame", {
+		Name = name,
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1), -- the gradient below sets the colour
+		BorderSizePixel = 0,
+		Visible = false,
+		ZIndex = 5,
+		Parent = parent,
+	}, {
+		make("UIGradient", {
+			Rotation = 90,
+			Color = ColorSequence.new(Color3.fromRGB(44, 132, 118), Color3.fromRGB(18, 76, 70)),
+		}),
+	})
+	local canvas = make("Frame", {
+		Name = "Canvas",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(Canvas.SIZE.X, Canvas.SIZE.Y),
+		BackgroundTransparency = 1,
+		Parent = root,
+	})
+	make("UIScale", { Parent = canvas })
+	Canvas.fit(root, canvas)
+	return root, canvas
+end
+
+function Canvas.wide(root: GuiObject): boolean
+	local size = root.AbsoluteSize
+	return size.X / math.max(1, size.Y - GuiService:GetGuiInset().Y) > 1.95
+end
+
+function Canvas.fit(root: GuiObject, canvas: GuiObject, designHeight: number?)
+	local size = root.AbsoluteSize
+	local top = GuiService:GetGuiInset().Y
+	local height = math.max(1, size.Y - top)
+	local design = designHeight or Canvas.SIZE.Y
+	canvas.Size = UDim2.fromOffset(Canvas.SIZE.X, design)
+	local scale = math.min(size.X / Canvas.SIZE.X, height / design)
+	local uiScale = canvas:FindFirstChildOfClass("UIScale")
+	if uiScale and math.abs(uiScale.Scale - scale) > 0.001 then
+		uiScale.Scale = scale
+	end
+	canvas.Position = UDim2.fromOffset(size.X / 2, top + height / 2)
+end
+
+return Canvas
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="100">
             <Properties>
               <string name="Name">DicePrompt</string>
               <string name="Source"><![CDATA[--[[
@@ -20426,7 +21139,7 @@ return DicePrompt
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="99">
+          <Item class="ModuleScript" referent="101">
             <Properties>
               <string name="Name">GuidePointer</string>
               <string name="Source"><![CDATA[--[[
@@ -20839,7 +21552,7 @@ return GuidePointer
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="100">
+          <Item class="ModuleScript" referent="102">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--[[
@@ -21118,7 +21831,7 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="101">
+          <Item class="ModuleScript" referent="103">
             <Properties>
               <string name="Name">Icons</string>
               <string name="Source"><![CDATA[--[[
@@ -21290,7 +22003,7 @@ return Icons
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="102">
+          <Item class="ModuleScript" referent="104">
             <Properties>
               <string name="Name">InputHint</string>
               <string name="Source"><![CDATA[--[[
@@ -21389,99 +22102,52 @@ return InputHint
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="103">
+          <Item class="ModuleScript" referent="105">
             <Properties>
               <string name="Name">InstructionsCard</string>
               <string name="Source"><![CDATA[--[[
 	InstructionsCard
-	"How to play" card shown while the server builds the arena and teleports everyone:
-	name, layout, description, controls, and (for 1v3 / 2v2) who is on which team.
+	The pre-minigame tutorial screen (Instructions phase), on a 1280x720 canvas:
+
+	  title                    the minigame's name, with its layout ("2 vs 2")
+	  left  (~60%)             looping in-engine demonstration (TutorialPreview)
+	  under it                 objective, one rule, the win condition
+	  right                    CONTROLS: one line per control, with the atlas prompt for this
+	                           device (keyboard / Xbox / PlayStation / neutral pad / touch);
+	                           your team when the layout has teams
+	  bottom                   every participant's avatar with waiting / ready / bot / left,
+	                           and a big READY button (unlocks after one preview loop)
+
+	  local card = InstructionsCard.new(screen, send)
+	  card:show(message, myId)        the Instructions phase message
+	  card:setReady(readyIds, leftIds) from TutorialReady messages
+	  card:update()                    every frame
+	  card:hide()
+
+	The server decides when the round starts (everyone ready, or the timeout); READY only asks.
 ]]
 
+local ContextActionService = game:GetService("ContextActionService")
 local Workspace = game:GetService("Workspace")
 
+local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
+local Canvas = require(script.Parent.Canvas)
 local Icons = require(script.Parent.Icons)
 local InputHint = require(script.Parent.InputHint)
 local Theme = require(script.Parent.Theme)
+local TutorialPreview = require(script.Parent.TutorialPreview)
 local make = Theme.make
 
 local InstructionsCard = {}
 InstructionsCard.__index = InstructionsCard
 
-function InstructionsCard.new(screen: ScreenGui)
-	local self = setmetatable({}, InstructionsCard)
-	self.EndsAt = nil
+local READY_ACTION = "PartyTutorialReady"
+local LAYOUT_NAMES = { FFA = "FREE-FOR-ALL", ["2v2"] = "2 vs 2", ["1v3"] = "1 vs 3", Duel = "DUEL" }
+local TEAM_NAMES = { "RED TEAM", "BLUE TEAM" }
+local CREAM, GOLD, DEEP = Theme.Glass.Cream, Theme.Glass.Gold, Theme.Glass.Deep
 
-	self.Root = make("Frame", {
-		Name = "Instructions",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(0.7, 0.7),
-		BackgroundColor3 = Theme.Colors.Card,
-		Visible = false,
-		Parent = screen,
-	}, {
-		Theme.corner(22),
-		Theme.stroke(Theme.Colors.Accent, 4),
-		Theme.padding(18),
-		make("UISizeConstraint", { MaxSize = Vector2.new(720, 460) }),
-	})
+-- Legacy one-line controls summary (kept for logs and tests) ---------------------------------
 
-	self.Title = Theme.label({
-		Size = UDim2.fromScale(1, 0.18),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Accent,
-		Parent = self.Root,
-	}, 52)
-	self.Layout = Theme.label({
-		Position = UDim2.fromScale(0, 0.19),
-		Size = UDim2.fromScale(1, 0.08),
-		TextColor3 = Theme.Colors.Cool,
-		Parent = self.Root,
-	}, 22)
-	self.Description = Theme.label({
-		Position = UDim2.fromScale(0, 0.3),
-		Size = UDim2.fromScale(1, 0.28),
-		Parent = self.Root,
-	}, 26)
-	-- Controls: one row of [prompt icon] text items, centred (see controlParts).
-	self.Controls = make("Frame", {
-		Name = "Controls",
-		Position = UDim2.fromScale(0, 0.585),
-		Size = UDim2.fromScale(1, 0),
-		AutomaticSize = Enum.AutomaticSize.Y, -- a long row wraps onto a second line (icons stay >= 24 px)
-		BackgroundTransparency = 1,
-		Parent = self.Root,
-	}, {
-		make("UIListLayout", {
-			FillDirection = Enum.FillDirection.Horizontal,
-			HorizontalAlignment = Enum.HorizontalAlignment.Center,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 10), -- between items and between wrapped lines
-			SortOrder = Enum.SortOrder.LayoutOrder,
-			Wraps = true,
-		}),
-	})
-	self.Teams = Theme.label({
-		Position = UDim2.fromScale(0, 0.74),
-		Size = UDim2.fromScale(1, 0.12),
-		RichText = true,
-		Parent = self.Root,
-	}, 20)
-	self.Clock = Theme.label({
-		Position = UDim2.fromScale(0, 0.88),
-		Size = UDim2.fromScale(1, 0.12),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Muted,
-		Parent = self.Root,
-	}, 24)
-	return self
-end
-
--- The controls line as parts: { Icon = atlas name?, Overlay = atlas name?, Key = KeyCode name?,
--- Letter = native text drawn on the icon?, Text = what it says }. mode = InputHint.mode(): touch shows the tap prompt
--- and the button label only, a keyboard shows the key, a gamepad its controller button. Inputs
--- the atlas has no prompt for keep the old "[KEY]" text.
 function InstructionsCard.controlParts(controls, mode: string)
 	local parts = {}
 	if controls.Move and controls.Jump then
@@ -21519,133 +22185,435 @@ function InstructionsCard.controlsText(controls, mode: string): string
 	return table.concat(out, "    ")
 end
 
--- Draws the parts into the Controls row. light = the card is a light panel (outline / dark cells).
-local function renderControls(self, parts, light: boolean)
+-- Tutorial control lines -------------------------------------------------------------------
+
+--[[
+	The tutorial's control lines for this device: { { Label, Note?, Icons = { prompt } } }
+	where prompt = { Icon = atlas name, Overlay = atlas name?, Letter = native text on the icon? }
+	or { KeyText = "1" } for a key the atlas has no prompt for. Touch never shows key prompts.
+]]
+function InstructionsCard.controlLines(tutorialLines, controls, mode: string)
+	local byName = {}
+	for index, action in controls.Actions do
+		byName[action.Action] = { Action = action, Index = index }
+	end
+	local out = {}
+	for _, line in tutorialLines do
+		local prompts, seen = {}, {}
+		local function add(prompt)
+			local key = (prompt.Icon or "") .. (prompt.Letter or "") .. (prompt.KeyText or "")
+			if not seen[key] then
+				seen[key] = true
+				table.insert(prompts, prompt)
+			end
+		end
+		if line.NoMove then
+			add({ Icon = "Move", Overlay = "NoMove" })
+		elseif line.Move then
+			if mode == "Mouse" then
+				for _, key in { "KeyW", "KeyA", "KeyS", "KeyD" } do
+					add({ Icon = key })
+				end
+			else
+				add({ Icon = "Move" })
+			end
+		elseif line.Jump then
+			if mode == "Mouse" then
+				add({ Icon = "KeySpace" })
+			elseif mode == "Gamepad" then
+				local icon = InputHint.prompt("ButtonA")
+				add({ Icon = icon, Letter = if icon == "GamepadAction" then "A" else nil })
+			else
+				add({ Icon = "Tap" })
+			end
+		end
+		for _, actionName in line.Actions or {} do
+			local found = byName[actionName]
+			if not found then
+				continue
+			end
+			if mode == "Touch" then
+				add({ Icon = "Tap" })
+				continue
+			end
+			local name = if mode == "Gamepad" then InputHint.gamepadFor(found.Action, found.Index) else InputHint.keyFor(found.Action)
+			local icon = name and InputHint.prompt(name)
+			if icon then
+				add({ Icon = icon, Letter = if icon == "GamepadAction" then InputHint.keyName(name) else nil })
+			elseif name then
+				add({ KeyText = InputHint.keyName(name) })
+			end
+		end
+		table.insert(out, { Label = line.Label, Note = line.Note, Icons = prompts })
+	end
+	return out
+end
+
+-- Screen ------------------------------------------------------------------------------------
+
+local function label(props, parent)
+	local defaults = { BackgroundTransparency = 1, Font = Theme.TitleFont, TextColor3 = CREAM, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd }
+	for key, value in props do
+		defaults[key] = value
+	end
+	defaults.Parent = parent
+	return make("TextLabel", defaults)
+end
+
+local function setIcon(image: ImageLabel, props)
+	for key, value in props do
+		(image :: any)[key] = value
+	end
+end
+
+function InstructionsCard.new(screen: ScreenGui, send: ((any) -> ())?)
+	local self = setmetatable({ Send = send, Chips = {} }, InstructionsCard)
+	self.EndsAt = nil
+	self.Root, self.Canvas = Canvas.new(screen, "Instructions")
+	local c = self.Canvas
+
+	self.Title = label({ Position = UDim2.fromOffset(40, 16), Size = UDim2.fromOffset(560, 70), TextSize = 56 }, c)
+	self.Layout = label({
+		Position = UDim2.fromOffset(600, 30),
+		Size = UDim2.fromOffset(170, 44),
+		BackgroundColor3 = GOLD,
+		BackgroundTransparency = 0,
+		TextColor3 = DEEP,
+		TextSize = 26,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	}, c)
+	Theme.corner(14).Parent = self.Layout
+
+	-- Left: preview
+	self.PreviewHolder = make("Frame", {
+		Position = UDim2.fromOffset(40, 96),
+		Size = UDim2.fromOffset(730, 382),
+		BackgroundTransparency = 1,
+		Parent = c,
+	}, { Theme.corner(18), Theme.stroke(GOLD, 4) })
+	self.Preview = TutorialPreview.new(self.PreviewHolder)
+
+	-- Under it: objective + one short line
+	self.Description = label({ Position = UDim2.fromOffset(40, 486), Size = UDim2.fromOffset(730, 40), TextSize = 32 }, c)
+	self.Rule = label({ Position = UDim2.fromOffset(40, 528), Size = UDim2.fromOffset(730, 32), TextSize = 24, Font = Theme.BodyFont, TextColor3 = GOLD }, c)
+	self.Win = label({ Position = UDim2.fromOffset(40, 562), Size = UDim2.fromOffset(730, 32), TextSize = 24, Font = Theme.BodyFont }, c)
+
+	-- Right: controls
+	self.ControlsPanel = Theme.glass(make("Frame", {
+		Position = UDim2.fromOffset(796, 96),
+		Size = UDim2.fromOffset(444, 382),
+		Parent = c,
+	}), 20)
+	label({ Position = UDim2.fromOffset(20, 12), Size = UDim2.fromOffset(400, 36), Text = "CONTROLS", TextSize = 30, TextColor3 = GOLD }, self.ControlsPanel)
+	self.Controls = make("Frame", {
+		Name = "Controls",
+		Position = UDim2.fromOffset(16, 56),
+		Size = UDim2.fromOffset(412, 260),
+		BackgroundTransparency = 1,
+		Parent = self.ControlsPanel,
+	}, { make("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	self.Teams = label({ Position = UDim2.fromOffset(20, 332), Size = UDim2.fromOffset(404, 36), TextSize = 25, RichText = true }, self.ControlsPanel)
+
+	-- Bottom: readiness chips + READY
+	self.ChipRow = make("Frame", {
+		Position = UDim2.fromOffset(40, 604),
+		Size = UDim2.fromOffset(940, 104),
+		BackgroundTransparency = 1,
+		Parent = c,
+	}, { make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	self.ReadyButton = make("TextButton", {
+		Name = "TutorialReady",
+		Position = UDim2.fromOffset(996, 604),
+		Size = UDim2.fromOffset(244, 104), -- >= 44 pt tall at the smallest phone scale (~0.5)
+		BackgroundColor3 = GOLD,
+		AutoButtonColor = true,
+		Text = "",
+		Parent = c,
+	}, { Theme.corner(22), Theme.stroke(CREAM, 3) })
+	self.ReadyIcon = make("ImageLabel", {
+		Position = UDim2.fromOffset(16, 26),
+		Size = UDim2.fromOffset(52, 52),
+		BackgroundTransparency = 1,
+		Parent = self.ReadyButton,
+	})
+	self.ReadyText = label({
+		Position = UDim2.fromOffset(70, 0),
+		Size = UDim2.new(1, -80, 1, 0),
+		TextSize = 38,
+		TextColor3 = DEEP,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	}, self.ReadyButton)
+	self.ReadyButton.Activated:Connect(function()
+		self:ready()
+	end)
+	self.Clock = label({ Position = UDim2.fromOffset(796, 486), Size = UDim2.fromOffset(444, 40), TextSize = 28, TextColor3 = Theme.Colors.Muted, TextXAlignment = Enum.TextXAlignment.Right }, c)
+	self.BaseY = {}
+	for _, item in { self.Description, self.Rule, self.Win, self.Clock, self.ChipRow, self.ReadyButton } do
+		self.BaseY[item] = item.Position.Y.Offset
+	end
+	self.Compact = false
+	return self
+end
+
+local function teamsText(participants, myId: string): string
+	local mine
+	for _, participant in participants do
+		if participant.Id == myId then
+			mine = participant.Team
+		end
+	end
+	if not mine then
+		return ""
+	end
+	local mates = {}
+	for _, participant in participants do
+		if participant.Team == mine and participant.Id ~= myId then
+			table.insert(mates, participant.Name)
+		end
+	end
+	local colour = Theme.TeamColors[mine]:ToHex()
+	local with = if #mates > 0 then " with " .. table.concat(mates, ", ") else " (on your own)"
+	return ('<font color="#%s">%s</font>%s'):format(colour, TEAM_NAMES[mine] or "TEAM", with)
+end
+
+local function renderControls(self, lines)
 	for _, child in self.Controls:GetChildren() do
 		if child:IsA("GuiObject") then
 			child:Destroy()
 		end
 	end
-	local rowHeight = self.Root.AbsoluteSize.Y * 0.13 -- one line's share of the card
-	local iconSize = math.floor(math.clamp(rowHeight * 0.8, 24, 40))
-	local textSize = math.floor(math.clamp(rowHeight * 0.45, 14, 24))
-	local textColour = if light then Theme.Glass.Deep else Theme.Colors.Good
-	for order, part in parts do
-		local item = make("Frame", {
-			LayoutOrder = order,
-			Size = UDim2.fromOffset(0, iconSize),
+	for order, line in lines do
+		local row = make("Frame", { LayoutOrder = order, Size = UDim2.fromOffset(412, 62), BackgroundTransparency = 1, Parent = self.Controls })
+		label({ Position = UDim2.fromOffset(4, 0), Size = UDim2.fromOffset(200, if line.Note then 40 else 62), Text = line.Label, TextSize = 30 }, row)
+		if line.Note then
+			label({ Position = UDim2.fromOffset(4, 38), Size = UDim2.fromOffset(200, 24), Text = line.Note, TextSize = 22, Font = Theme.BodyFont, TextColor3 = GOLD }, row)
+		end
+		-- the prompts sit on a cream tile (a light panel: outline / dark-tinted cells)
+		local tile = make("Frame", {
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.fromOffset(412, 0),
+			Size = UDim2.fromOffset(0, 62),
 			AutomaticSize = Enum.AutomaticSize.X,
-			BackgroundTransparency = 1,
-			Parent = self.Controls,
+			BackgroundColor3 = CREAM,
+			Parent = row,
 		}, {
-			make("UIListLayout", {
-				FillDirection = Enum.FillDirection.Horizontal,
-				VerticalAlignment = Enum.VerticalAlignment.Center,
-				Padding = UDim.new(0, 6),
-				SortOrder = Enum.SortOrder.LayoutOrder,
-			}),
-			make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }),
+			Theme.corner(14),
+			make("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }),
+			make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
 		})
-		local props = part.Icon and Icons.image(part.Icon, nil, light)
-		if props then
-			local icon = make("ImageLabel", {
-				Name = "Icon_" .. part.Icon,
-				LayoutOrder = 1,
-				Size = UDim2.fromOffset(iconSize, iconSize),
-				BackgroundTransparency = 1,
-				ScaleType = Enum.ScaleType.Fit,
-				Parent = item,
-			})
-			for key, value in props do
-				(icon :: any)[key] = value
+		for index, prompt in line.Icons do
+			if prompt.KeyText then
+				make("TextLabel", {
+					LayoutOrder = index,
+					Size = UDim2.fromOffset(46, 46),
+					BackgroundColor3 = CREAM,
+					Font = Theme.TitleFont,
+					TextSize = 28,
+					TextColor3 = DEEP,
+					Text = prompt.KeyText,
+					Parent = tile,
+				}, { Theme.corner(10), Theme.stroke(DEEP, 3) })
+				continue
 			end
-			local overlay = part.Overlay and Icons.image(part.Overlay, nil, light)
+			local props = Icons.image(prompt.Icon, nil, true)
+			if not props then
+				continue
+			end
+			local icon = make("ImageLabel", { LayoutOrder = index, Size = UDim2.fromOffset(50, 50), BackgroundTransparency = 1, Parent = tile })
+			setIcon(icon, props)
+			local overlay = prompt.Overlay and Icons.image(prompt.Overlay, nil, true)
 			if overlay then
-				local layer = make("ImageLabel", { Name = "Overlay", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = icon })
-				for key, value in overlay do
-					(layer :: any)[key] = value
-				end
+				setIcon(make("ImageLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = icon }), overlay)
 			end
-			if part.Letter then
+			if prompt.Letter then
 				make("TextLabel", {
 					Size = UDim2.fromScale(1, 1),
 					BackgroundTransparency = 1,
 					Font = Theme.TitleFont,
-					TextScaled = true,
-					TextColor3 = Theme.Glass.Deep,
-					Text = part.Letter,
+					TextSize = 24,
+					TextColor3 = DEEP,
+					Text = prompt.Letter,
 					Parent = icon,
-				}, { make("UIPadding", { PaddingTop = UDim.new(0.22, 0), PaddingBottom = UDim.new(0.22, 0) }) })
+				})
 			end
 		end
-		make("TextLabel", {
-			LayoutOrder = 2,
-			Size = UDim2.fromOffset(0, iconSize),
-			AutomaticSize = Enum.AutomaticSize.X,
-			BackgroundTransparency = 1,
-			Font = Theme.BodyFont,
-			TextSize = textSize,
-			TextColor3 = textColour,
-			Text = part.Text,
-			Parent = item,
-		})
 	end
 end
 
-local function teamsText(participants, myId: string): string
-	local teams = { {}, {} }
-	for _, participant in participants do
-		if participant.Team then
-			local name = participant.Name
-			if participant.Id == myId then
-				name = "<b>YOU</b>"
-			end
-			table.insert(teams[participant.Team], name)
-		end
+local function chip(self, participant, myId)
+	local isMe = participant.Id == myId
+	local frame = Theme.glass(make("Frame", { Size = UDim2.fromOffset(226, 104), Parent = self.ChipRow }), 20)
+	local stroke = frame:FindFirstChildOfClass("UIStroke")
+	if participant.Team then
+		stroke.Color = Theme.TeamColors[participant.Team]
+		stroke.Thickness = 3
 	end
-	if #teams[1] == 0 then
-		return ""
+	if isMe then
+		stroke.Thickness = 5
+		stroke.Color = if participant.Team then Theme.TeamColors[participant.Team] else GOLD
 	end
-	local function hex(color: Color3)
-		return color:ToHex()
+	local portrait = make("ViewportFrame", {
+		Position = UDim2.fromOffset(10, 12),
+		Size = UDim2.fromOffset(80, 80),
+		BackgroundColor3 = DEEP,
+		Ambient = Color3.fromRGB(210, 210, 210),
+		LightColor = Color3.fromRGB(255, 244, 220),
+		Parent = frame,
+	}, { Theme.corner(999), Theme.stroke(if isMe then GOLD else CREAM, 2) })
+	if not ActivePlayerPortrait.mount(portrait, participant.Character, "Head") then
+		-- no avatar to show (not loaded yet): their initial instead of an empty circle
+		label({ Size = UDim2.fromScale(1, 1), Text = string.upper(string.sub(participant.Name or "?", 1, 1)), TextSize = 44, TextXAlignment = Enum.TextXAlignment.Center }, portrait)
 	end
-	return ('<font color="#%s">%s</font>   vs   <font color="#%s">%s</font>'):format(
-		hex(Theme.TeamColors[1]),
-		table.concat(teams[1], ", "),
-		hex(Theme.TeamColors[2]),
-		table.concat(teams[2], ", ")
-	)
+	label({ Position = UDim2.fromOffset(100, 14), Size = UDim2.fromOffset(118, 36), Text = if isMe then "YOU" else participant.Name, TextSize = 28 }, frame)
+	if participant.IsBot then
+		label({ Position = UDim2.fromOffset(160, 76), Size = UDim2.fromOffset(56, 22), Text = "BOT", TextSize = 18, TextColor3 = Theme.Colors.Muted, TextXAlignment = Enum.TextXAlignment.Right }, frame)
+	end
+	local status = label({ Position = UDim2.fromOffset(100, 50), Size = UDim2.fromOffset(118, 30), TextSize = 24, Font = Theme.BodyFont }, frame)
+	local check = make("ImageLabel", { Position = UDim2.fromOffset(62, 62), Size = UDim2.fromOffset(36, 36), BackgroundTransparency = 1, Visible = false, Parent = frame })
+	local props = Icons.image("Check", "Selected")
+	if props then
+		setIcon(check, props)
+	end
+	return { Frame = frame, Status = status, Check = check }
 end
 
-function InstructionsCard:show(minigame, participants, endsAt: number, myId: string)
-	self.EndsAt = endsAt
+-- Wide, short screens (landscape phones): a shorter preview and everything below it moved up,
+-- so the canvas (and its text) can scale up. COMPACT = design pixels saved.
+local COMPACT = 110
+local function applyLayout(self, compact: boolean)
+	if self.Compact == compact then
+		return
+	end
+	self.Compact = compact
+	local d = if compact then COMPACT else 0
+	self.PreviewHolder.Size = UDim2.fromOffset(730, 382 - d)
+	self.ControlsPanel.Size = UDim2.fromOffset(444, 382 - d)
+	self.Teams.Position = UDim2.fromOffset(20, 332 - d)
+	for item, base in self.BaseY do
+		item.Position = UDim2.fromOffset(item.Position.X.Offset, base - d)
+	end
+end
+
+function InstructionsCard:show(message, myId: string)
+	local minigame = message.Minigame
+	local tutorial = minigame.Tutorial or {}
+	self.Message = message
+	self.MyId = myId
+	self.EndsAt = message.EndsAt
+	self.ReadyAt = message.ReadyAt or 0
+	self.IsReady = false
 	self.Title.Text = minigame.Name
-	self.Layout.Text = ("%s  •  %d seconds"):format(minigame.Layout, minigame.Duration)
-	self.Description.Text = minigame.Description
-	local bg = self.Root.BackgroundColor3
-	local light = 0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B > 0.6
-	renderControls(self, InstructionsCard.controlParts(minigame.Controls, InputHint.mode()), light)
-	self.Teams.Text = teamsText(participants, myId)
+	self.Layout.Text = LAYOUT_NAMES[minigame.Layout] or minigame.Layout
+	self.Description.Text = tutorial.Objective or minigame.Description
+	-- no rule line: the win condition moves up into its place
+	self.Rule.Text = tutorial.Rule or tutorial.Win or ""
+	self.Win.Text = if tutorial.Rule then tutorial.Win or "" else ""
+	self.Teams.Text = teamsText(message.Participants or {}, myId)
+	self.Mode = InputHint.mode()
+	renderControls(self, InstructionsCard.controlLines(tutorial.Controls or {}, minigame.Controls, self.Mode))
+
+	self.Playing = false
+	for _, participant in message.Participants or {} do
+		self.Playing = self.Playing or participant.Id == myId
+	end
+	for _, child in self.ChipRow:GetChildren() do
+		if child:IsA("GuiObject") then
+			child:Destroy()
+		end
+	end
+	self.Chips = {}
+	for _, participant in message.Participants or {} do
+		self.Chips[participant.Id] = chip(self, participant, myId)
+	end
+	self:setReady({}, {}) -- the server sends the ready list right after the phase
+	self.Preview:play(tutorial.Preview, message.Participants)
 	self.Root.Visible = true
-	Theme.pop(self.Root)
+	ContextActionService:UnbindAction(READY_ACTION)
+	if self.Playing then
+		ContextActionService:BindAction(READY_ACTION, function(_, state)
+			if state == Enum.UserInputState.Begin then
+				self:ready()
+			end
+			return Enum.ContextActionResult.Sink
+		end, false, Enum.KeyCode.Space, Enum.KeyCode.Return, Enum.KeyCode.ButtonA)
+	end
+	self:update()
+end
+
+function InstructionsCard:ready()
+	if not self.Playing or self.IsReady or Workspace:GetServerTimeNow() < self.ReadyAt then
+		return
+	end
+	self.IsReady = true
+	Theme.tick(0.35, 1.1)
+	if self.Send then
+		self.Send({ Kind = "TutorialReady" })
+	end
+	self:update()
+end
+
+-- Ready / left ids from the server.
+function InstructionsCard:setReady(ready, left)
+	local readyIds, leftIds = ready or {}, left or {}
+	if self.MyId and readyIds[self.MyId] then
+		self.IsReady = true
+	end
+	for id, c in self.Chips do
+		local isReady, gone = readyIds[id] == true, leftIds[id] == true
+		c.Check.Visible = isReady
+		c.Status.Text = if gone then "LEFT" elseif isReady then "READY" else "WAITING"
+		c.Status.TextColor3 = if gone then Theme.Glass.Disabled elseif isReady then GOLD else Theme.Colors.Muted
+		c.Frame.BackgroundTransparency = if isReady then 0.05 else 0.35
+	end
 end
 
 function InstructionsCard:update()
-	if self.Root.Visible and self.EndsAt then
-		local remaining = math.max(0, math.ceil(self.EndsAt - Workspace:GetServerTimeNow()))
-		self.Clock.Text = ("Get ready... %d"):format(remaining)
+	if not (self.Root.Visible and self.EndsAt) then
+		return
 	end
+	applyLayout(self, Canvas.wide(self.Root))
+	Canvas.fit(self.Root, self.Canvas, if self.Compact then 720 - COMPACT else 720)
+	local now = Workspace:GetServerTimeNow()
+	self.Clock.Text = ("Starts in %d"):format(math.max(0, math.ceil(self.EndsAt - now)))
+	-- READY: hidden for spectators; locked until the preview has played once
+	local button = self.ReadyButton
+	button.Visible = self.Playing == true
+	local locked = now < self.ReadyAt
+	local prompt = if self.Mode == "Touch" then "Tap" elseif self.Mode == "Gamepad" then (InputHint.prompt("ButtonA") or "GamepadAction") else "KeySpace"
+	local props = Icons.image(prompt, nil, true)
+	local showIcon = props ~= nil and not self.IsReady and not locked
+	self.ReadyIcon.Visible = showIcon
+	if props then
+		setIcon(self.ReadyIcon, props)
+	end
+	-- the label takes the whole button when there's no prompt icon
+	self.ReadyText.Position = UDim2.fromOffset(if showIcon then 70 else 10, 0)
+	self.ReadyText.Size = UDim2.new(1, if showIcon then -80 else -20, 1, 0)
+	if self.IsReady then
+		self.ReadyText.Text = "READY!"
+		button.BackgroundColor3 = Color3.fromRGB(150, 200, 170)
+	elseif locked then
+		self.ReadyText.Text = ("READY IN %d"):format(math.ceil(self.ReadyAt - now))
+		button.BackgroundColor3 = Theme.Glass.Disabled
+	else
+		self.ReadyText.Text = "READY"
+		button.BackgroundColor3 = GOLD
+	end
+	button.AutoButtonColor = not (self.IsReady or locked)
 end
 
 function InstructionsCard:hide()
 	self.Root.Visible = false
+	self.EndsAt = nil
+	self.Preview:stop()
+	ContextActionService:UnbindAction(READY_ACTION)
 end
 
 return InstructionsCard
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="104">
+          <Item class="ModuleScript" referent="106">
             <Properties>
               <string name="Name">LobbyPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -22043,7 +23011,7 @@ return LobbyPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="105">
+          <Item class="ModuleScript" referent="107">
             <Properties>
               <string name="Name">PlayerChips</string>
               <string name="Source"><![CDATA[--[[
@@ -22158,7 +23126,7 @@ return PlayerChips
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="106">
+          <Item class="ModuleScript" referent="108">
             <Properties>
               <string name="Name">PlayerStandingsStrip</string>
               <string name="Source"><![CDATA[--[[
@@ -22354,7 +23322,7 @@ return PlayerStandingsStrip
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="107">
+          <Item class="ModuleScript" referent="109">
             <Properties>
               <string name="Name">ProgressBar</string>
               <string name="Source"><![CDATA[--[[
@@ -22491,7 +23459,181 @@ return ProgressBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="108">
+          <Item class="ModuleScript" referent="110">
+            <Properties>
+              <string name="Name">RandomizerScreen</string>
+              <string name="Source"><![CDATA[--[[
+	RandomizerScreen
+	The minigame pick, shown as a roulette: every game this round could pick in a list, one
+	highlighted at a time, speeding through and slowing onto the minigame the server already
+	chose; the header then names its category ("2 vs 2 MINIGAME"; duels say DUEL from the
+	start). No input, no votes.
+
+	  local screen = RandomizerScreen.new(parent)
+	  screen:show(message)   the Select phase message (Candidates, Start, Steps, StartsAt, ...)
+	  screen:update()        every frame
+	  screen:hide()
+
+	Where the highlight is depends only on server time and the server's Start / Steps, so every
+	client shows the same thing, and a client that joins late picks it up mid-spin.
+]]
+
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Canvas = require(script.Parent.Canvas)
+local Theme = require(script.Parent.Theme)
+local make = Theme.make
+
+local RandomizerScreen = {}
+RandomizerScreen.__index = RandomizerScreen
+
+local VISIBLE = 7 -- rows on screen (5 on landscape phones); longer lists scroll around the highlight
+local PHONE_VISIBLE = 5
+local ROW_H, GAP = 68, 12
+local ACTIVE = Color3.fromRGB(226, 78, 122) -- saturated party accent
+local EASE = 2.4 -- higher = slows down harder at the end
+
+-- Rows moved so far at fraction u (0..1) of the spin: fast first, easing onto the last row.
+function RandomizerScreen.moved(steps: number, u: number): number
+	u = math.clamp(u, 0, 1)
+	return math.floor((1 - (1 - u) ^ EASE) * steps + 1e-6)
+end
+
+function RandomizerScreen.new(parent: Instance)
+	local self = setmetatable({}, RandomizerScreen)
+	self.Root, self.Canvas = Canvas.new(parent, "Randomizer")
+	self.Title = make("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromOffset(640, 34),
+		Size = UDim2.fromOffset(1100, 70),
+		BackgroundTransparency = 1,
+		Font = Theme.TitleFont,
+		TextSize = 60,
+		TextColor3 = Theme.Glass.Gold,
+		Parent = self.Canvas,
+	}, { make("UIStroke", { Color = Theme.Glass.Deep, Thickness = 3 }) })
+	make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromOffset(640, 112),
+		Size = UDim2.fromOffset(1000, 4),
+		BackgroundColor3 = Theme.Glass.Gold,
+		BackgroundTransparency = 0.3,
+		BorderSizePixel = 0,
+		Parent = self.Canvas,
+	})
+	self.List = make("Frame", {
+		Position = UDim2.fromOffset(190, 140),
+		Size = UDim2.fromOffset(900, VISIBLE * ROW_H + (VISIBLE - 1) * GAP),
+		BackgroundTransparency = 1,
+		Parent = self.Canvas,
+	})
+	self.Rows = {}
+	for i = 1, VISIBLE do
+		local row = make("Frame", {
+			Position = UDim2.fromOffset(0, (i - 1) * (ROW_H + GAP)),
+			Size = UDim2.fromOffset(900, ROW_H),
+			BackgroundColor3 = Theme.Glass.Cream,
+			BackgroundTransparency = 0.82,
+			Parent = self.List,
+		}, { Theme.corner(16) })
+		local stroke = Theme.stroke(Theme.Glass.Gold, 3)
+		stroke.Transparency = 1
+		stroke.Parent = row
+		local label = make("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Font = Theme.TitleFont,
+			TextSize = 38,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			TextColor3 = Theme.Glass.Cream,
+			TextTransparency = 0.35,
+			Parent = row,
+		})
+		self.Rows[i] = { Frame = row, Label = label, Stroke = stroke, Scale = make("UIScale", { Parent = row }) }
+	end
+	return self
+end
+
+function RandomizerScreen:show(message)
+	self.Message = message
+	self.Title.Text = message.Title or "MINIGAME"
+	self.LastIndex = nil
+	self.Revealed = false
+	-- Short lists sit centred; long ones use every row and scroll.
+	local count = #message.Candidates
+	self.Window = if Canvas.wide(self.Root) then PHONE_VISIBLE else VISIBLE
+	self.Shown = math.min(self.Window, count)
+	local top = (self.Window - self.Shown) * (ROW_H + GAP) / 2
+	for i, row in self.Rows do
+		row.Frame.Visible = i <= self.Shown
+		row.Frame.Position = UDim2.fromOffset(0, top + (i - 1) * (ROW_H + GAP))
+	end
+	self.Root.Visible = true
+	self:update()
+end
+
+function RandomizerScreen:hide()
+	self.Root.Visible = false
+	self.Message = nil
+end
+
+-- Which candidate is highlighted now (1-based), and whether the spin has finished.
+function RandomizerScreen:current(): (number, boolean)
+	local m = self.Message
+	local count = #m.Candidates
+	local u = (Workspace:GetServerTimeNow() - m.StartsAt) / math.max(0.1, m.SpinEndsAt - m.StartsAt)
+	local moved = RandomizerScreen.moved(m.Steps, u)
+	return (m.Start - 1 + moved) % count + 1, u >= 1
+end
+
+function RandomizerScreen:update()
+	local m = self.Message
+	if not (m and self.Root.Visible) then
+		return
+	end
+	Canvas.fit(self.Root, self.Canvas, 160 + self.Window * (ROW_H + GAP))
+	local count = #m.Candidates
+	local index, done = self:current()
+	if done then
+		index = m.ResultIndex -- the server's pick, whatever this client's clock says
+	end
+	-- Rows: a window of names around the highlight (all of them when the list is short).
+	local first = if count <= self.Window then 1 else index - math.floor(self.Window / 2)
+	for i = 1, self.Shown do
+		local candidate = (first + i - 2) % count + 1
+		local row = self.Rows[i]
+		local active = candidate == index
+		row.Label.Text = m.Candidates[candidate]
+		row.Frame.BackgroundColor3 = if active then ACTIVE else Theme.Glass.Cream
+		row.Frame.BackgroundTransparency = if active then 0 else 0.82
+		row.Stroke.Transparency = if active then 0 else 1
+		row.Label.TextTransparency = if active then 0 else 0.35
+		row.Label.TextSize = if active then 42 else 38
+	end
+	if index ~= self.LastIndex and not done then
+		self.LastIndex = index
+		Theme.tick(0.18, 1.3)
+	end
+	if done and not self.Revealed then
+		self.Revealed = true
+		self.Title.Text = m.ResultTitle or self.Title.Text -- "2 vs 2 MINIGAME" arrives with the pick
+		Theme.tick(0.5, 0.75) -- confirm
+		for i = 1, self.Shown do
+			local row = self.Rows[i]
+			if row.Frame.BackgroundTransparency == 0 then
+				row.Scale.Scale = 1
+				TweenService:Create(row.Scale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 1, true), { Scale = 1.07 }):Play()
+			end
+		end
+	end
+end
+
+return RandomizerScreen
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="111">
             <Properties>
               <string name="Name">ResultsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -22610,7 +23752,7 @@ return ResultsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="109">
+          <Item class="ModuleScript" referent="112">
             <Properties>
               <string name="Name">ShopScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -23024,7 +24166,7 @@ return ShopScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="110">
+          <Item class="ModuleScript" referent="113">
             <Properties>
               <string name="Name">SpectatorBar</string>
               <string name="Source"><![CDATA[--[[
@@ -23113,7 +24255,7 @@ return SpectatorBar
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="111">
+          <Item class="ModuleScript" referent="114">
             <Properties>
               <string name="Name">StandingsScreen</string>
               <string name="Source"><![CDATA[--[[
@@ -23284,7 +24426,7 @@ return StandingsScreen
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="112">
+          <Item class="ModuleScript" referent="115">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -23357,10 +24499,13 @@ function Theme.itemGlyph(id: string?): string
 end
 
 -- A short, quiet UI tick (Roblox's built-in slider sound: no uploaded asset needed).
-function Theme.tick(volume: number?)
+-- shortcut: placeholder sound (Roblox's built-in slider tick) for every UI cue, pitched by
+-- `speed`; replace with approved original sounds in the audio pass.
+function Theme.tick(volume: number?, speed: number?)
 	local sound = Instance.new("Sound")
 	sound.SoundId = "rbxasset://sounds/volume_slider.ogg"
 	sound.Volume = volume or 0.25
+	sound.PlaybackSpeed = speed or 1
 	sound.Parent = game:GetService("SoundService")
 	game:GetService("SoundService"):PlayLocalSound(sound)
 	game:GetService("Debris"):AddItem(sound, 2)
@@ -23477,7 +24622,7 @@ return Theme
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="113">
+          <Item class="ModuleScript" referent="116">
             <Properties>
               <string name="Name">TurnMenu</string>
               <string name="Source"><![CDATA[--[[
@@ -23938,7 +25083,7 @@ return TurnMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="114">
+          <Item class="ModuleScript" referent="117">
             <Properties>
               <string name="Name">TurnProgress</string>
               <string name="Source"><![CDATA[--[[
@@ -23996,7 +25141,7 @@ return TurnProgress
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="115">
+          <Item class="ModuleScript" referent="118">
             <Properties>
               <string name="Name">TurnStartBanner</string>
               <string name="Source"><![CDATA[--[[
@@ -24109,180 +25254,338 @@ return TurnStartBanner
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="116">
+          <Item class="ModuleScript" referent="119">
             <Properties>
-              <string name="Name">VoteScreen</string>
+              <string name="Name">TutorialPreview</string>
               <string name="Source"><![CDATA[--[[
-	VoteScreen
-	Full-screen overlay with up to 3 minigame cards. Clicking a card sends a vote input;
-	the counts/voter names shown are whatever the server broadcasts (never local guesses).
+	TutorialPreview
+	Plays a minigame's tutorial preview (Info.Tutorial.Preview, validated by the server's
+	MinigameInfo) in a ViewportFrame: a tiny staged loop of the round's real avatars and
+	simple props. Purely local and isolated: nothing here touches live gameplay.
+
+	  local preview = TutorialPreview.new(parent)    fills `parent`
+	  preview:play(spec, participants)                spec nil = the generic preview
+	  preview:stop()
+	  preview.Loops                                   loops completed since play()
+
+	Step vocabulary (all data): Actor/Prop + To (+Time) move, Jump, Visible, Attach (prop rides
+	on an actor's head; 0 lets go), Color, Pulse, Caption. Props may be Upright (cylinders
+	stand up) or Hidden at the start; actors may Face a point. Everything resets each loop.
 ]]
 
-local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
+local ActivePlayerPortrait = require(script.Parent.ActivePlayerPortrait)
 local Theme = require(script.Parent.Theme)
 local make = Theme.make
 
-local VoteScreen = {}
-VoteScreen.__index = VoteScreen
+local TutorialPreview = {}
+TutorialPreview.__index = TutorialPreview
 
-function VoteScreen.new(screen: ScreenGui, onVote: (number) -> ())
-	local self = setmetatable({}, VoteScreen)
-	self.OnVote = onVote
-	self.Cards = {}
-	self.Selected = nil
-	self.EndsAt = nil
+local JUMP_TIME, JUMP_HEIGHT = 0.5, 2.6
+local PULSE_TIME = 0.35
+local CAPTION_TIME = 0.9
+local TEAM_RING = { Color3.fromRGB(232, 96, 96), Color3.fromRGB(90, 150, 240) }
 
-	self.Root = make("Frame", {
-		Name = "VoteScreen",
+-- Shown when a minigame has no (valid) preview: everyone on a stage, hopping, "GET READY!".
+local function genericSpec(count: number)
+	local actors, steps = {}, {}
+	for i = 1, math.max(1, count) do
+		local x = (i - (count + 1) / 2) * 3.4
+		table.insert(actors, { Start = Vector3.new(x, 0, 0) })
+		table.insert(steps, { At = 0.6 + i * 0.45, Actor = i, Jump = true })
+	end
+	table.insert(steps, { At = 0.3, Caption = "GET READY!" })
+	return {
+		Loop = 4,
+		Camera = { Position = Vector3.new(0, 7, 15), LookAt = Vector3.new(0, 2.2, 0) },
+		Actors = actors,
+		Props = {
+			{ Id = "Stage", Shape = "Cylinder", Upright = true, Size = Vector3.new(1, 18, 18), Position = Vector3.new(0, -0.5, 0), Color = Color3.fromRGB(120, 196, 170) },
+		},
+		Steps = steps,
+	}
+end
+TutorialPreview.genericSpec = genericSpec
+
+-- A simple block figure for actors without an avatar to copy.
+local function dummy(colour: Color3): Model
+	local model = Instance.new("Model")
+	local function part(name, size, offset, shape)
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Size = size
+		p.Shape = shape or Enum.PartType.Block
+		p.Color = colour
+		p.Anchored = true
+		p.Material = Enum.Material.SmoothPlastic
+		p.CFrame = CFrame.new(offset)
+		p.Parent = model
+		return p
+	end
+	local torso = part("Torso", Vector3.new(2, 2, 1), Vector3.new(0, 3, 0))
+	part("Head", Vector3.new(1.3, 1.3, 1.3), Vector3.new(0, 4.7, 0), Enum.PartType.Ball).Color = Color3.fromRGB(255, 226, 190)
+	part("LeftLeg", Vector3.new(0.9, 2, 1), Vector3.new(-0.5, 1, 0))
+	part("RightLeg", Vector3.new(0.9, 2, 1), Vector3.new(0.5, 1, 0))
+	part("LeftArm", Vector3.new(0.8, 1.9, 0.9), Vector3.new(-1.45, 3, 0))
+	part("RightArm", Vector3.new(0.8, 1.9, 0.9), Vector3.new(1.45, 3, 0))
+	model.PrimaryPart = torso
+	return model
+end
+
+function TutorialPreview.new(parent: GuiObject)
+	local self = setmetatable({ Loops = 0 }, TutorialPreview)
+	self.Frame = make("ViewportFrame", {
+		Name = "Preview",
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Theme.Colors.Overlay,
-		BackgroundTransparency = 0.25,
-		Visible = false,
-		Parent = screen,
-	})
-	self.Title = Theme.label({
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.06),
-		Size = UDim2.fromScale(0.9, 0.1),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Accent,
-		TextStrokeTransparency = 0.4,
-		Text = "VOTE FOR THE NEXT MINIGAME!",
-		Parent = self.Root,
-	}, 56)
-	self.Clock = Theme.label({
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.16),
-		Size = UDim2.fromScale(0.5, 0.06),
-		Font = Theme.TitleFont,
-		Parent = self.Root,
-	}, 32)
-	self.Row = make("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.58),
-		Size = UDim2.fromScale(0.92, 0.6),
-		BackgroundTransparency = 1,
-		Parent = self.Root,
-	}, {
-		make("UIListLayout", {
-			FillDirection = Enum.FillDirection.Horizontal,
-			HorizontalAlignment = Enum.HorizontalAlignment.Center,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0.02, 0),
-			SortOrder = Enum.SortOrder.LayoutOrder,
-		}),
-		make("UISizeConstraint", { MaxSize = Vector2.new(1100, 460) }),
-	})
+		BackgroundColor3 = Color3.fromRGB(176, 222, 236),
+		Ambient = Color3.fromRGB(190, 190, 190),
+		LightColor = Color3.fromRGB(255, 244, 222),
+		LightDirection = Vector3.new(-0.6, -1, -0.4),
+		Parent = parent,
+	}, { Theme.corner(18) })
+	self.Captions = make("Frame", { Name = "Captions", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 3, Parent = parent })
 	return self
 end
 
-local function buildCard(self, index: number, choice)
-	local card = make("TextButton", {
-		Name = "Card" .. index,
-		LayoutOrder = index,
-		Size = UDim2.fromScale(0.31, 1),
-		BackgroundColor3 = Theme.Colors.Card,
-		AutoButtonColor = true,
-		Text = "",
-		Parent = self.Row,
-	}, { Theme.corner(18), Theme.padding(12) })
-	local stroke = Theme.stroke(Theme.Colors.CardLight, 4)
-	stroke.Parent = card
+local function lerpEase(a, b, u: number)
+	local e = 1 - (1 - u) * (1 - u)
+	return a:Lerp(b, e)
+end
 
-	Theme.label({
-		Size = UDim2.fromScale(1, 0.2),
-		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Accent,
-		Text = choice.Name,
-		Parent = card,
-	}, 36)
-	Theme.label({
-		Position = UDim2.fromScale(0, 0.21),
-		Size = UDim2.fromScale(1, 0.09),
-		TextColor3 = Theme.Colors.Cool,
-		Text = ("%s%s"):format(choice.Layout, if choice.Duration then ("  •  %ds"):format(choice.Duration) else ""),
-		Parent = card,
-	}, 20)
-	Theme.label({
-		Position = UDim2.fromScale(0, 0.33),
-		Size = UDim2.fromScale(1, 0.37),
-		TextColor3 = Theme.Colors.Muted,
-		Font = Theme.BodyFont,
-		Text = choice.Description,
-		TextYAlignment = Enum.TextYAlignment.Top,
-		Parent = card,
-	}, 20)
-	local voters = Theme.label({
-		Position = UDim2.fromScale(0, 0.72),
-		Size = UDim2.fromScale(1, 0.12),
-		TextColor3 = Theme.Colors.Text,
-		Text = "",
-		Parent = card,
-	}, 18)
-	local count = Theme.label({
-		Position = UDim2.fromScale(0, 0.86),
-		Size = UDim2.fromScale(1, 0.14),
-		Font = Theme.TitleFont,
-		Text = "0 votes",
-		Parent = card,
-	}, 28)
+-- World point -> position inside the ViewportFrame (Camera.FieldOfView is vertical).
+local function project(camera: Camera, point: Vector3, size: Vector2): UDim2?
+	local rel = camera.CFrame:PointToObjectSpace(point)
+	if rel.Z >= -0.1 then
+		return nil
+	end
+	local tanY = math.tan(math.rad(camera.FieldOfView) / 2)
+	local aspect = size.X / math.max(1, size.Y)
+	local x = (rel.X / -rel.Z) / (tanY * aspect)
+	local y = (rel.Y / -rel.Z) / tanY
+	return UDim2.fromScale(0.5 + x / 2, 0.5 - y / 2)
+end
 
-	card.Activated:Connect(function()
-		self.Selected = index
-		self:_refreshSelection()
-		self.OnVote(index)
+function TutorialPreview:stop()
+	if self.Connection then
+		self.Connection:Disconnect()
+		self.Connection = nil
+	end
+	for _, child in self.Frame:GetChildren() do
+		if child:IsA("WorldModel") or child:IsA("Camera") then
+			child:Destroy()
+		end
+	end
+	for _, child in self.Captions:GetChildren() do
+		child:Destroy()
+	end
+end
+
+function TutorialPreview:play(spec, participants)
+	self:stop()
+	participants = participants or {}
+	spec = spec or genericSpec(#participants)
+	self.Loops = 0
+	local world = make("WorldModel", { Parent = self.Frame })
+	local camera = make("Camera", { FieldOfView = 42, CFrame = CFrame.lookAt(spec.Camera.Position, spec.Camera.LookAt), Parent = self.Frame })
+	self.Frame.CurrentCamera = camera
+
+	-- Props
+	local props = {}
+	for _, info in spec.Props or {} do
+		local part = Instance.new("Part")
+		part.Shape = if info.Shape == "Ball" then Enum.PartType.Ball elseif info.Shape == "Cylinder" then Enum.PartType.Cylinder else Enum.PartType.Block
+		part.Size = info.Size
+		part.Color = info.Color
+		part.Material = if info.Neon then Enum.Material.Neon else Enum.Material.SmoothPlastic
+		part.Anchored = true
+		part.Parent = world
+		props[info.Id] = { Part = part, Info = info, Turn = if info.Upright then CFrame.Angles(0, 0, math.rad(90)) else CFrame.new() }
+	end
+
+	-- Actors: the round's avatars (copies), block figures for the rest.
+	local actors = {}
+	for index, info in spec.Actors do
+		local participant = participants[index]
+		local model = participant and ActivePlayerPortrait.copy(participant.Character)
+		if not model then
+			model = dummy(if info.Team then TEAM_RING[info.Team] else Color3.fromRGB(200, 200, 210))
+		end
+		model.Parent = world
+		local box, size = model:GetBoundingBox()
+		local lift = model:GetPivot().Position.Y - (box.Position.Y - size.Y / 2) -- pivot above the feet
+		local ring
+		if info.Team then
+			ring = Instance.new("Part")
+			ring.Shape = Enum.PartType.Cylinder
+			ring.Size = Vector3.new(0.12, 3.2, 3.2)
+			ring.Color = TEAM_RING[info.Team]
+			ring.Material = Enum.Material.Neon
+			ring.Anchored = true
+			ring.Parent = world
+		end
+		actors[index] = { Model = model, Info = info, Lift = lift, Height = size.Y, Ring = ring }
+	end
+
+	local function caption(text: string, actorIndex: number?)
+		local label = make("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Size = UDim2.fromOffset(220, 44),
+			BackgroundTransparency = 1,
+			Font = Theme.TitleFont,
+			TextSize = 34,
+			TextColor3 = Theme.Glass.Cream,
+			Text = text,
+			Parent = self.Captions,
+		}, { make("UIStroke", { Color = Theme.Glass.Deep, Thickness = 3 }) })
+		return { Label = label, Actor = actorIndex, Start = 0 }
+	end
+
+	local run -- per-loop state
+	local function reset()
+		run = { Applied = {}, Moves = {}, Jumps = {}, Pulses = {}, Attach = {}, Captions = {}, Pos = {}, PropPos = {} }
+		for _, child in self.Captions:GetChildren() do
+			child:Destroy()
+		end
+		for id, prop in props do
+			prop.Part.Color = prop.Info.Color
+			prop.Part.Size = prop.Info.Size
+			prop.Part.Transparency = if prop.Info.Hidden then 1 else (prop.Info.Transparency or 0)
+			run.PropPos[id] = prop.Info.Position
+		end
+		for index, actor in actors do
+			run.Pos[index] = actor.Info.Start
+		end
+	end
+
+	local function apply(step, t: number)
+		if step.Actor and step.To then
+			run.Moves["a" .. step.Actor] = { From = run.Pos[step.Actor], To = step.To, Start = t, Time = step.Time or 0.6 }
+		elseif step.Prop and step.To then
+			run.Moves["p" .. step.Prop] = { From = run.PropPos[step.Prop], To = step.To, Start = t, Time = step.Time or 0.6 }
+			run.Attach[step.Prop] = nil
+		end
+		if step.Actor and step.Jump then
+			run.Jumps[step.Actor] = t
+		end
+		if step.Prop then
+			local prop = props[step.Prop]
+			if step.Visible ~= nil then
+				prop.Part.Transparency = if step.Visible then (prop.Info.Transparency or 0) else 1
+			end
+			if step.Color then
+				prop.Part.Color = step.Color
+			end
+			if step.Pulse then
+				run.Pulses[step.Prop] = t
+			end
+			if step.Attach ~= nil then
+				run.Attach[step.Prop] = if step.Attach == 0 then nil else step.Attach
+			end
+		end
+		if step.Caption then
+			local c = caption(step.Caption, step.Actor)
+			c.Start = t
+			table.insert(run.Captions, c)
+		end
+	end
+
+	reset()
+	local started = os.clock()
+	local lastLoop = 0
+	self.Connection = RunService.RenderStepped:Connect(function()
+		local elapsed = os.clock() - started
+		local loop = math.floor(elapsed / spec.Loop)
+		if loop ~= lastLoop then
+			lastLoop = loop
+			self.Loops = loop
+			reset()
+		end
+		local t = elapsed - loop * spec.Loop
+		for index, step in spec.Steps or {} do
+			if not run.Applied[index] and step.At <= t then
+				run.Applied[index] = true
+				apply(step, t)
+			end
+		end
+		-- moves
+		for key, move in run.Moves do
+			local u = math.clamp((t - move.Start) / math.max(0.01, move.Time), 0, 1)
+			local position = lerpEase(move.From, move.To, u)
+			local kind, id = string.sub(key, 1, 1), string.sub(key, 2)
+			if kind == "a" then
+				run.Pos[tonumber(id)] = position
+			else
+				run.PropPos[id] = position
+			end
+			if u >= 1 then
+				run.Moves[key] = nil
+			end
+		end
+		-- actors
+		for index, actor in actors do
+			local position = run.Pos[index]
+			local jumpAt = run.Jumps[index]
+			local hop = 0
+			if jumpAt then
+				local u = (t - jumpAt) / JUMP_TIME
+				hop = if u < 1 then 4 * JUMP_HEIGHT * u * (1 - u) else 0
+			end
+			local bob = math.sin(elapsed * 3 + index) * 0.05
+			local face = actor.Info.Face or Vector3.new(spec.Camera.Position.X, position.Y, spec.Camera.Position.Z)
+			local move = run.Moves["a" .. index]
+			if move and not actor.Info.Face then
+				face = position + (move.To - move.From) * Vector3.new(1, 0, 1)
+			end
+			local from = position + Vector3.new(0, actor.Lift + hop + bob, 0)
+			local look = Vector3.new(face.X, from.Y, face.Z)
+			actor.Model:PivotTo(if (look - from).Magnitude > 0.05 then CFrame.lookAt(from, look) else CFrame.new(from))
+			if actor.Ring then
+				actor.Ring.CFrame = CFrame.new(position + Vector3.new(0, 0.07, 0)) * CFrame.Angles(0, 0, math.rad(90))
+			end
+		end
+		-- props
+		for id, prop in props do
+			local position = run.PropPos[id]
+			local rider = run.Attach[id]
+			if rider and actors[rider] then
+				position = run.Pos[rider] + Vector3.new(0, actors[rider].Height + 0.9, 0)
+				run.PropPos[id] = position
+			end
+			local pulseAt = run.Pulses[id]
+			local grow = 1
+			if pulseAt then
+				local u = (t - pulseAt) / PULSE_TIME
+				grow = if u < 1 then 1 + 0.35 * math.sin(math.pi * u) else 1
+			end
+			prop.Part.Size = prop.Info.Size * grow
+			prop.Part.CFrame = CFrame.new(position) * prop.Turn
+		end
+		-- captions: over their actor's head, or high in the middle
+		local size = self.Frame.AbsoluteSize
+		for _, c in run.Captions do
+			local u = (t - c.Start) / CAPTION_TIME
+			if u >= 1 then
+				c.Label.Visible = false
+				continue
+			end
+			local at = if c.Actor and actors[c.Actor] then project(camera, run.Pos[c.Actor] + Vector3.new(0, actors[c.Actor].Height + 1.6, 0), size) else UDim2.fromScale(0.5, 0.22)
+			c.Label.Visible = at ~= nil
+			if at then
+				-- keep it inside the preview (heads near the top edge would push it out)
+				at = UDim2.fromScale(math.clamp(at.X.Scale, 0.15, 0.85), math.clamp(at.Y.Scale, 0.16, 0.95))
+				c.Label.Position = at - UDim2.fromOffset(0, u * 14)
+				c.Label.TextTransparency = math.max(0, (u - 0.6) / 0.4)
+			end
+		end
 	end)
-
-	return { Button = card, Stroke = stroke, Count = count, Voters = voters }
 end
 
-function VoteScreen:_refreshSelection()
-	for index, card in self.Cards do
-		local selected = index == self.Selected
-		card.Stroke.Color = if selected then Theme.Colors.Accent else Theme.Colors.CardLight
-		card.Button.BackgroundColor3 = if selected then Theme.Colors.CardLight else Theme.Colors.Card
-	end
-end
-
-function VoteScreen:show(choices, endsAt: number)
-	for _, card in self.Cards do
-		card.Button:Destroy()
-	end
-	self.Cards = {}
-	self.Selected = nil
-	self.EndsAt = endsAt
-	for index, choice in choices do
-		self.Cards[index] = buildCard(self, index, choice)
-	end
-	self.Root.Visible = true
-	Theme.pop(self.Row)
-end
-
-function VoteScreen:updateCounts(counts, voters)
-	for index, card in self.Cards do
-		local count = counts[index] or 0
-		card.Count.Text = if count == 1 then "1 vote" else ("%d votes"):format(count)
-		card.Voters.Text = table.concat(voters[index] or {}, ", ")
-	end
-end
-
-function VoteScreen:update()
-	if self.Root.Visible and self.EndsAt then
-		local remaining = math.max(0, math.ceil(self.EndsAt - Workspace:GetServerTimeNow()))
-		self.Clock.Text = ("⏱ %d"):format(remaining)
-	end
-end
-
-function VoteScreen:hide()
-	self.Root.Visible = false
-end
-
-return VoteScreen
+return TutorialPreview
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="117">
+          <Item class="ModuleScript" referent="120">
             <Properties>
               <string name="Name">YouMarker</string>
               <string name="Source"><![CDATA[--[[
@@ -24366,7 +25669,7 @@ end
 
 --[[
 	Should the marker show? state = {
-	  CardOpen     a full-screen card (vote, instructions, results, standings) is up
+	  CardOpen     a full-screen card (minigame pick, tutorial, results, standings) is up
 	  Phase        current Net.Phase name
 	  InRound      a minigame is on for this client
 	  Participant  you play this minigame (not a spectator)
@@ -24456,18 +25759,18 @@ return YouMarker
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="118">
+  <Item class="Workspace" referent="121">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Model" referent="119">
+    <Item class="Model" referent="122">
       <Properties>
         <string name="Name">PartyLobby</string>
         <bool name="NeedsPivotMigration">false</bool>
       </Properties>
-      <Item class="Part" referent="120">
+      <Item class="Part" referent="123">
         <Properties>
           <string name="Name">Floor</string>
           <bool name="Anchored">true</bool>
@@ -24487,7 +25790,7 @@ return YouMarker
           <token name="TopSurface">0</token>
         </Properties>
       </Item>
-      <Item class="SpawnLocation" referent="121">
+      <Item class="SpawnLocation" referent="124">
         <Properties>
           <string name="Name">LobbySpawn</string>
           <bool name="Anchored">true</bool>
