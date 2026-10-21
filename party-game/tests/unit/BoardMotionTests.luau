@@ -226,11 +226,11 @@ test("intro schedule: seat order, about 7-10 s, skipping only after everyone app
 		ok(plan.ArriveAt[i] > plan.ArriveAt[i - 1], "arrivals follow seat order")
 	end
 	local times = Config.Board.Intro
-	ok(times.Establish >= 1 and times.Establish <= 1.5, "establishing 1-1.5 s")
-	ok(times.Each >= 1 and times.Each <= 1.4, "each arrival 1-1.4 s")
+	ok(times.Establish >= 2 and times.Establish <= 3.2, "sky dive-in 2-3.2 s")
+	ok(times.Each >= 1.2 and times.Each <= 1.8, "each arrival 1.2-1.8 s")
 	ok(math.abs(times.Out - 0.4) < 1e-6, "transition 0.4 s")
 	local total = plan.EndsAt - 100
-	ok(total >= 7 and total <= 10, ("total %.1f s"):format(total))
+	ok(total >= 9 and total <= 11, ("total %.1f s (about 10)"):format(total))
 	ok(plan.GroupAt >= plan.ArriveAt[4], "the group shot comes after the last arrival")
 	-- board overrides
 	local quick = IntroPlan.schedule(4, true, { Each = 1 }, 0)
@@ -251,6 +251,47 @@ test("intro schedule: seat order, about 7-10 s, skipping only after everyone app
 	ok(ReadyState.new({}, 0, "Intro"):everyone(), "bots only: nobody to wait for")
 	-- the tutorial ready-up is unchanged
 	ok(ReadyState.new({ a }, 0):mark(a, "Instructions", 1), "default phase still Instructions")
+end)
+
+test("client intro: always ends (on schedule, or as soon as the server moves on) and frees the keys", function()
+	local module = StarterPlayer.StarterPlayerScripts:FindFirstChild("BoardIntro", true)
+	ok(module, "BoardIntro not mapped")
+	local BoardIntro = require(module)
+	local screen = Instance.new("ScreenGui")
+	local sent = {}
+	local intro = BoardIntro.new(screen, function(payload)
+		table.insert(sent, payload.Kind)
+	end)
+	local now = workspace:GetServerTimeNow()
+	local function message()
+		return {
+			Type = "BoardIntro",
+			Seats = { { Id = "bot_a", Name = "A", IsBot = true, ArriveAt = now, Destination = CFrame.new() } },
+			StartsAt = now - 1,
+			GroupAt = now - 0.5,
+			EndsAt = now + 60,
+			Out = 0.4,
+		}
+	end
+	local ContextActionService = game:GetService("ContextActionService")
+	local function bound()
+		return ContextActionService:GetBoundActionInfo("PartyBoardIntroSkip").inputTypes ~= nil
+	end
+	intro:play(message())
+	ok(intro.Active, "plays")
+	intro:wrapUp() -- the server is already rolling for turn order
+	ok(intro.Message.EndsAt <= workspace:GetServerTimeNow() + 0.41, "wraps up within the 0.4 s blend")
+	intro.Message.EndsAt = now - 1
+	intro:update(1 / 60)
+	ok(not intro.Active, "ends once its time is up")
+	ok(not bound(), "Space / A are free again for ROLL")
+	-- Done from the server ends it the same way
+	intro:play(message())
+	intro:play({ Type = "BoardIntro", Done = true })
+	ok(intro.Message.EndsAt <= workspace:GetServerTimeNow() + 0.41, "Done blends out")
+	intro:finish()
+	ok(not intro.Active and not bound(), "finish frees everything")
+	screen:Destroy()
 end)
 
 test("stacking: four distinct, stable slots per space on every board", function()
