@@ -661,7 +661,7 @@ local function rollForTurnOrder()
 			table.insert(current.OrderRolls[seat], rolls[seat])
 		end
 		publish()
-		task.wait(1.5)
+		task.wait(2.4) -- every seat's die is thrown and lands on the client (BoardView order dice)
 		return rolls
 	end
 

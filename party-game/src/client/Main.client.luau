@@ -468,10 +468,10 @@ local function youMarkerWanted(): boolean
 end
 
 RunService.RenderStepped:Connect(function(dt)
+	boardView:update(dt) -- first: board pieces and the intro must keep running whatever else does
 	hud:update()
 	randomizer:update()
 	instructions:update()
-	boardView:update(dt)
 	lobbyPanel:update()
 	onboarding:update()
 	youMarker:setActive(youMarkerWanted())

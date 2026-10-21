@@ -241,6 +241,13 @@ function BoardView:setLayout(message)
 	self.Centre = if count > 0 then sum / count else Vector3.zero
 end
 
+-- One die per seat for the turn-order roll (they're all in the air at once).
+function BoardView:orderDie(id: string)
+	self.OrderDice = self.OrderDice or {}
+	self.OrderDice[id] = self.OrderDice[id] or BoardDice.new()
+	return self.OrderDice[id]
+end
+
 local function seatById(state, id)
 	for _, seat in (state and state.Seats) or {} do
 		if seat.Id == id then
@@ -256,8 +263,26 @@ end
 
 function BoardView:setState(message)
 	self.State = message
+	-- The server is past the intro (turn order, a turn...): never keep the HUD hidden for it.
+	if message.Stage ~= "Intro" and self.Opening.Active then
+		self.Opening:wrapUp()
+	end
 	if not self.Visible then
 		return
+	end
+	-- Turn order: every seat throws a real die; the number lands when the server's roll arrives.
+	if message.Stage == "OrderRoll" then
+		for _, seat in message.Seats do
+			local rolls = seat.OrderRolls
+			if rolls and #rolls > 0 then
+				self:orderDie(seat.Id):reveal(seat.Character, { rolls[#rolls] }, #rolls, seat.Id ~= myId)
+			end
+		end
+	elseif message.Stage ~= "OrderDone" and self.OrderDice then
+		for _, dice in self.OrderDice do
+			dice:clear()
+		end
+		self.OrderDice = nil
 	end
 	-- Thrown dice: everyone sees the active piece throw; the roller's own throw already started.
 	if message.Stage == "Moving" and message.RollId and message.DiceFaces then
@@ -434,10 +459,12 @@ function BoardView:roll()
 	end
 	local state = self.State
 	-- Your own turn: the throw starts on the press, the number lands when the server's roll
-	-- arrives. (Turn-order rolls stay instant.)
+	-- arrives. Turn-order rolls throw this seat's order die the same way.
 	if state and state.Stage == "Roll" and state.TurnId == myId then
 		self.Dice:throw(Players.LocalPlayer.Character, state.Dice or 1)
 		self.Portrait:hide()
+	elseif state and state.Stage == "OrderRoll" then
+		self:orderDie(myId):throw(Players.LocalPlayer.Character, 1)
 	end
 	self.Send({ Kind = "Roll" })
 end
