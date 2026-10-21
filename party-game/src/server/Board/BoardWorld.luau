@@ -5,6 +5,9 @@
 
 	  local world = BoardWorld.build(board, spaceTypes, origin)
 	  world:spaceCFrame(id, slot, facingId?)  where a piece stands (slot 1..4 share a tile)
+	  world:movePath(from, fromId, toId, to) the visible route of one move segment (BoardMove)
+	  BoardWorld.moveTime(points, stairs, step, isBot)  seconds that segment takes
+	  world:introSpec()                      the board-opening intro anchors in world space, or nil
 	  world:setCollectible(id, label)        move the collectible marker
 	  world:destroy()
 	  BoardWorld.clearStale()                remove boards left in the Workspace (see below)
@@ -189,6 +192,101 @@ function BoardWorld:spaceCFrame(id: number, slot: number?, facingId: number?): C
 		return CFrame.lookAt(position, look)
 	end
 	return CFrame.new(position)
+end
+
+-- The visible route of one move segment, as HumanoidRootPart positions from `from` to `to` (the
+-- piece's slot on `toId`). Presentation only: Match has already decided the move. Uses the
+-- edge's Via waypoints when the board has them; otherwise medallion boards run edge to edge
+-- and climb every stair step, and tile boards go straight. Returns the points and whether the
+-- segment is a stair climb.
+function BoardWorld:movePath(from: Vector3, fromId: number, toId: number, to: Vector3): ({ Vector3 }, boolean)
+	local lift = Vector3.new(0, ROOT_HEIGHT, 0)
+	local medallions = self.Board.Style == "Medallion"
+	local points, stairs = { from }, false
+	local space = self.Board.Spaces[fromId]
+	local via = space and space.Via and space.Via[toId]
+	local a, b = self.Tops[fromId], self.Tops[toId]
+	if via then
+		local surface = Vector3.new(0, if medallions then MedallionKit.TOP else TILE_HEIGHT, 0)
+		for _, at in via do
+			table.insert(points, self.WorldAt(at) + surface + lift)
+		end
+	elseif medallions and a and b and space and table.find(space.Next, toId) then
+		local flat = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+		if flat.Magnitude > MedallionKit.DIAMETER then
+			local radius = MedallionKit.DIAMETER / 2 - 0.4
+			local exit, entry = a + flat.Unit * radius, b - flat.Unit * radius
+			table.insert(points, exit + lift)
+			local rise = b.Y - a.Y
+			if math.abs(rise) >= 1.5 then
+				stairs = true
+				local count = MedallionKit.stairCount(rise)
+				for i = 1, count do
+					local t = (i - 0.5) / count
+					local y = a.Y + rise * (if rise > 0 then i / count else (i - 1) / count)
+					local centre = exit:Lerp(entry, t)
+					table.insert(points, Vector3.new(centre.X, y, centre.Z) + lift)
+				end
+			end
+			table.insert(points, entry + lift)
+		end
+	end
+	table.insert(points, to)
+	return points, stairs
+end
+
+-- Seconds one segment takes: path length at MoveSpeed inside the normal or stair band, faster
+-- for later steps of a long roll and for bots, all scaled by HopTime (tests run it fast).
+function BoardWorld.moveTime(points: { Vector3 }, stairs: boolean, step: number, isBot: boolean): number
+	local board = Config.Board
+	local length = 0
+	for i = 2, #points do
+		length += (points[i] - points[i - 1]).Magnitude
+	end
+	local band = if stairs then board.StairTime else board.MoveTime
+	local seconds = math.clamp(length / board.MoveSpeed, band[1], band[2])
+	seconds *= math.max(board.MoveRampMin, 1 - board.MoveRamp * (step - 1))
+	if isBot then
+		seconds *= board.BotMoveScale
+	end
+	return seconds * board.HopTime / 0.35
+end
+
+--[[
+	The board-opening introduction in world space, from the board's declarative Intro data
+	(grid points { x, z, height } like At), or nil when the board has none:
+	  Establish = { Camera, Look }   the landmark shot
+	  Arrival = { Camera, Look }     the entrance, held while each participant arrives
+	  Entry = { points }             where arrivals appear, then walk through (the last point
+	                                 leads to the piece's slot on Start)
+	  Group = { Camera, Look }       everyone on the start space
+	  Effect = "Sunbeam" | "Moonbeam" | "Walk"
+	  Times = { Establish = 1.3, Each = 1.25, ... } overrides Config.Board.Intro
+]]
+function BoardWorld:introSpec()
+	local intro = self.Board.Intro
+	if not intro then
+		return nil
+	end
+	local surface = Vector3.new(0, if self.Board.Style == "Medallion" then MedallionKit.TOP else TILE_HEIGHT, 0)
+	local function at(point)
+		return self.WorldAt(point) + surface
+	end
+	local function shot(data)
+		return { Camera = at(data.Camera), Look = at(data.Look) }
+	end
+	local entry = {}
+	for _, point in intro.Entry do
+		table.insert(entry, at(point) + Vector3.new(0, ROOT_HEIGHT, 0))
+	end
+	return {
+		Establish = shot(intro.Establish),
+		Arrival = shot(intro.Arrival),
+		Group = shot(intro.Group),
+		Entry = entry,
+		Effect = intro.Effect or "Walk",
+		Times = intro.Times,
+	}
 end
 
 -- True if a piece at `position` is clearly not standing on space `id` (knocked off, fell

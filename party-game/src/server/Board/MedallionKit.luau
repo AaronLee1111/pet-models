@@ -203,6 +203,11 @@ function MedallionKit.space(parent: Instance, position: Vector3, typeKey: string
 end
 
 -- Path segment from one medallion's edge to the next, sloping with the height change.
+-- Steps in a stair run that climbs `rise` studs (~0.8 studs each, never fewer than 3).
+function MedallionKit.stairCount(rise: number): number
+	return math.max(3, math.ceil(math.abs(rise) / 0.8))
+end
+
 function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, name: string, area: string?)
 	local flat = Vector3.new(toTop.X - fromTop.X, 0, toTop.Z - fromTop.Z)
 	local direction = flat.Unit
@@ -243,7 +248,7 @@ function MedallionKit.path(parent: Instance, fromTop: Vector3, toTop: Vector3, n
 		slope.Transparency = 1
 		slope.CanCollide = false
 		local run = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
-		local count = math.max(3, math.ceil(math.abs(rise) / 0.8))
+		local count = MedallionKit.stairCount(rise)
 		local depth = run.Magnitude / count
 		local low = math.min(a.Y, b.Y) - 0.5
 		for i = 1, count do

@@ -52,6 +52,8 @@ Net.Message = {
 	Inventory = "Inventory", -- to one player: owned cosmetics, what's equipped, bank coins
 	ShopResult = "ShopResult", -- to one player: { Ok, ItemId, Text } after a lobby shop purchase
 	Tutorial = "Tutorial", -- to one player: { Flags = { [flag] = true } } guided first actions done
+	BoardMove = "BoardMove", -- a piece crossing one route segment: { Id, Points, Face, StartsAt, Duration }
+	BoardIntro = "BoardIntro", -- board-opening introduction schedule ({ Done = true } ends it early)
 }
 
 -- Client -> server input kinds (payload.Kind).
@@ -70,6 +72,7 @@ Net.Input = {
 	ActionUsed = "ActionUsed", -- a minigame action that the minigame's client code sent itself
 	-- (tutorial only; the server checks you're playing). Studio-only: "ResetTutorial".
 	ResetTutorial = "ResetTutorial",
+	IntroSkip = "IntroSkip", -- board intro: speed up the group shot (after everyone has arrived)
 }
 
 local function getFolder(): Instance

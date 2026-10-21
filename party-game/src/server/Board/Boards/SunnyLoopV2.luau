@@ -32,6 +32,15 @@ return {
 	Scene = "SkyGarden", -- environment dressing (vertical slice: the orchard)
 	Presentation = "Diorama", -- close turn camera + thrown dice
 	Start = 1,
+	-- Board-opening intro (BoardWorld:introSpec): the sundial, then each participant rides a
+	-- sunbeam down under the Sun Gate (between 29 and 1) and walks to their slot on Start.
+	Intro = {
+		Establish = { Camera = { 0.1, -4.3, 26 }, Look = { 0.1, -1.1, 5 } },
+		Arrival = { Camera = { 0.2, -5.85, 12 }, Look = { 0.25, -4.45, 2.5 } }, -- due south: clear of gate posts and lamps
+		Entry = { { 0.58, -4.43, 16 }, { 0.58, -4.43, 0 } },
+		Group = { Camera = { 0.05, -6.15, 10 }, Look = { 0.05, -4.6, 2.5 } },
+		Effect = "Sunbeam",
+	},
 	CrownSpaces = { 9, 17, 22, 26, 28, 31, 39 },
 	Gates = {
 		{ Id = "SundialBridge", From = 12, To = 33, Open = true, Toll = 3 },

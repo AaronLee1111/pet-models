@@ -97,7 +97,19 @@ Config.Board = {
 	DieSides = 6,
 	RollTimeout = 12, -- a player who doesn't roll in time rolls automatically
 	ChoiceTimeout = 10, -- unanswered prompts take their default option
-	HopTime = 0.35, -- seconds per space moved
+	HopTime = 0.35, -- reference seconds per space; every movement time below scales with HopTime / 0.35
+	-- Smooth movement (BoardWorld:movePath + client BoardMotion): seconds per segment come from
+	-- the path length at MoveSpeed, clamped; stairs get their own band. Later steps of a long
+	-- roll speed up (MoveRamp per step, down to MoveRampMin); bots move a bit faster.
+	MoveSpeed = 28, -- studs per second
+	MoveTime = { 0.3, 0.5 },
+	StairTime = { 0.45, 0.7 },
+	MoveRamp = 0.035,
+	MoveRampMin = 0.75,
+	BotMoveScale = 0.85,
+	StepPause = 0.1, -- the landing beat on each space
+	-- Board-opening introduction (round 1 only): seconds. Boards may override in Intro.Times.
+	Intro = { Lead = 0.5, Establish = 1.3, Each = 1.25, Group = 1.1, Out = 0.4, NoSpec = 1.2 },
 	-- Thrown-dice presentation (boards with Presentation = "Diorama"): seconds from the roll to
 	-- the first hop, so everyone sees the die fly, land and show its number.
 	DiceReveal = 1.9,

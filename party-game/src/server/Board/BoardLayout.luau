@@ -83,6 +83,17 @@ function BoardLayout.validate(data, spaceTypes): string?
 				return ("space %d points to missing space %s"):format(space.Id, tostring(nextId))
 			end
 		end
+		-- Via: visual-only movement waypoints per edge ({ x, z, height } like At); never routes.
+		for toId, points in space.Via or {} do
+			if not table.find(space.Next, toId) or type(points) ~= "table" then
+				return ("space %d has Via for %s, which is not one of its Next"):format(space.Id, tostring(toId))
+			end
+			for _, at in points do
+				if type(at) ~= "table" or type(at[1]) ~= "number" or type(at[2]) ~= "number" then
+					return ("space %d Via %s: waypoints are { x, z, height }"):format(space.Id, tostring(toId))
+				end
+			end
+		end
 	end
 	if not byId[data.Start] then
 		return "Start is not a space"
@@ -140,6 +151,27 @@ function BoardLayout.validate(data, spaceTypes): string?
 			return ("space %d never leads back to Start"):format(space.Id)
 		end
 	end
+	-- Intro (optional): shots are { Camera, Look } grid points, Entry a non-empty point list.
+	local intro = data.Intro
+	if intro ~= nil then
+		local function point(at)
+			return type(at) == "table" and type(at[1]) == "number" and type(at[2]) == "number"
+		end
+		for _, key in { "Establish", "Arrival", "Group" } do
+			local shot = intro[key]
+			if type(shot) ~= "table" or not point(shot.Camera) or not point(shot.Look) then
+				return "Intro." .. key .. " needs Camera and Look points"
+			end
+		end
+		if type(intro.Entry) ~= "table" or #intro.Entry == 0 then
+			return "Intro.Entry needs at least one point"
+		end
+		for _, at in intro.Entry do
+			if not point(at) then
+				return "Intro.Entry points are { x, z, height }"
+			end
+		end
+	end
 	return nil
 end
 
@@ -160,6 +192,7 @@ function BoardLayout.load(data, spaceTypes)
 		Style = data.Style,
 		Scene = data.Scene,
 		Presentation = data.Presentation,
+		Intro = data.Intro, -- board-opening introduction anchors (BoardWorld:introSpec)
 		Spaces = {},
 		Order = {},
 	}, Board)

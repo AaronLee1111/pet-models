@@ -31,6 +31,14 @@ return {
 	DisplayName = "Sunny Loop", -- shown to players
 	-- Beginner board: one loop, one toll shortcut, a single Switch, few Chaos spaces.
 	Start = 1,
+	-- Board-opening intro (BoardWorld:introSpec): everyone walks in from the bottom-left corner.
+	Intro = {
+		Establish = { Camera = { 4, -4.5, 55 }, Look = { 4, 2.5, 0 } },
+		Arrival = { Camera = { -0.4, -2.8, 13 }, Look = { -0.4, -0.3, 3 } },
+		Entry = { { -1.4, -1.1, 0 } },
+		Group = { Camera = { 0, -2.5, 15 }, Look = { 0, 0, 2.5 } },
+		Effect = "Walk",
+	},
 	CrownSpaces = { 7, 10, 13, 15, 20, 23, 26 },
 	Gates = {
 		{ Id = "Shortcut", From = 5, To = 27, Open = true, Toll = 3 },
