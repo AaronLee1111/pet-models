@@ -68,10 +68,13 @@ function Theme.itemGlyph(id: string?): string
 end
 
 -- A short, quiet UI tick (Roblox's built-in slider sound: no uploaded asset needed).
-function Theme.tick(volume: number?)
+-- shortcut: placeholder sound (Roblox's built-in slider tick) for every UI cue, pitched by
+-- `speed`; replace with approved original sounds in the audio pass.
+function Theme.tick(volume: number?, speed: number?)
 	local sound = Instance.new("Sound")
 	sound.SoundId = "rbxasset://sounds/volume_slider.ogg"
 	sound.Volume = volume or 0.25
+	sound.PlaybackSpeed = speed or 1
 	sound.Parent = game:GetService("SoundService")
 	game:GetService("SoundService"):PlayLocalSound(sound)
 	game:GetService("Debris"):AddItem(sound, 2)

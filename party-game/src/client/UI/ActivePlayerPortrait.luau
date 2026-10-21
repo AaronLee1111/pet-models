@@ -26,14 +26,9 @@ ActivePlayerPortrait.NORMAL = Vector2.new(230, 290) -- design px (BoardView scal
 ActivePlayerPortrait.BIG = Vector2.new(360, 450)
 local TURN_IN = math.rad(28) -- yaw so the avatar faces right, toward the menu and board
 
--- Copies `character` into `viewport` (a fresh WorldModel, so layered clothing and accessories
--- render) and aims a camera at it. Returns the copy, or nil when there's nothing to copy yet.
-function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, framing: string): Model?
-	for _, child in viewport:GetChildren() do
-		if child:IsA("WorldModel") or child:IsA("Camera") then -- keep the frame's UIScale / corner
-			child:Destroy()
-		end
-	end
+-- A display-only copy of a character: anchored, no scripts, sounds, name tags or shields.
+-- nil when there's nothing to copy yet. (TutorialPreview uses it for its actors too.)
+function ActivePlayerPortrait.copy(character: Model?): Model?
 	if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") then
 		return nil
 	end
@@ -54,6 +49,21 @@ function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, 
 	local humanoid = copy:FindFirstChildOfClass("Humanoid")
 	if humanoid then
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+	return copy
+end
+
+-- Copies `character` into `viewport` (a fresh WorldModel, so layered clothing and accessories
+-- render) and aims a camera at it. Returns the copy, or nil when there's nothing to copy yet.
+function ActivePlayerPortrait.mount(viewport: ViewportFrame, character: Model?, framing: string): Model?
+	for _, child in viewport:GetChildren() do
+		if child:IsA("WorldModel") or child:IsA("Camera") then -- keep the frame's UIScale / corner
+			child:Destroy()
+		end
+	end
+	local copy = ActivePlayerPortrait.copy(character)
+	if not copy then
+		return nil
 	end
 	copy:PivotTo(CFrame.Angles(0, TURN_IN, 0))
 	local world = make("WorldModel", { Parent = viewport })

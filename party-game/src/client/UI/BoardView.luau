@@ -748,8 +748,8 @@ function BoardView:hide()
 	if not self.Visible then
 		return
 	end
+	self.Visible = false -- first: clearPanels' MAP reset calls refresh(), which must not re-show panels
 	clearPanels(self)
-	self.Visible = false
 	ContextActionService:UnbindAction(MAP_ACTION)
 	self.Dice:clear()
 	RunService:UnbindFromRenderStep(CAMERA_BIND)

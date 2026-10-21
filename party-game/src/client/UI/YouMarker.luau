@@ -79,7 +79,7 @@ end
 
 --[[
 	Should the marker show? state = {
-	  CardOpen     a full-screen card (vote, instructions, results, standings) is up
+	  CardOpen     a full-screen card (minigame pick, tutorial, results, standings) is up
 	  Phase        current Net.Phase name
 	  InRound      a minigame is on for this client
 	  Participant  you play this minigame (not a spectator)

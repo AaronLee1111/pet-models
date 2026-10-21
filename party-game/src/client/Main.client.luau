@@ -29,7 +29,7 @@ local ResultsScreen = require(UI:WaitForChild("ResultsScreen"))
 local ShopScreen = require(UI:WaitForChild("ShopScreen"))
 local SpectatorBar = require(UI:WaitForChild("SpectatorBar"))
 local StandingsScreen = require(UI:WaitForChild("StandingsScreen"))
-local VoteScreen = require(UI:WaitForChild("VoteScreen"))
+local RandomizerScreen = require(UI:WaitForChild("RandomizerScreen"))
 local YouMarker = require(UI:WaitForChild("YouMarker"))
 
 local player = Players.LocalPlayer
@@ -91,16 +91,14 @@ local screen = Theme.make("ScreenGui", {
 	Name = "PartyUI",
 	ResetOnSpawn = false,
 	IgnoreGuiInset = true,
-	DisplayOrder = 10, -- draw the vote / results cards over the mobile thumbstick and jump button
+	DisplayOrder = 10, -- draw the pick / tutorial / results screens over the mobile thumbstick and jump button
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = player:WaitForChild("PlayerGui"),
 })
 
 local hud = Hud.new(screen)
-local voteScreen = VoteScreen.new(screen, function(choice)
-	sendInput({ Kind = Net.Input.Vote, Choice = choice })
-end)
-local instructions = InstructionsCard.new(screen)
+local randomizer = RandomizerScreen.new(screen)
+local instructions = InstructionsCard.new(screen, sendInput)
 local results = ResultsScreen.new(screen)
 local chips = PlayerChips.new(screen)
 local progressBar = ProgressBar.new(screen)
@@ -128,7 +126,7 @@ onboarding = Onboarding.new({
 	Shop = shopScreen,
 	Screen = screen,
 	PlayerGui = playerGui,
-	Modals = { voteScreen.Root, instructions.Root, results.Root, standings.Root },
+	Modals = { randomizer.Root, instructions.Root, results.Root, standings.Root },
 })
 
 -- "YOU" over your own character while you're playing (only this client sees it).
@@ -181,7 +179,7 @@ pcall(function()
 	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(fitHudToScreen)
 end)
 
--- While a full-screen card (vote, instructions, results) is up, the mobile thumbstick and
+-- While a full-screen card (pick, tutorial, results) is up, the mobile thumbstick and
 -- jump button are switched off entirely, so they can never sit on top of the card.
 local function setCardOpen(open: boolean)
 	pcall(function()
@@ -197,7 +195,7 @@ shopScreen.OnOpenChanged = function(open)
 end
 
 local function hideOverlays()
-	voteScreen:hide()
+	randomizer:hide()
 	instructions:hide()
 	results:hide()
 	standings:hide()
@@ -331,26 +329,28 @@ phaseHandlers[Phase.Standings] = function(message)
 	standings:show(message, myId)
 end
 
-phaseHandlers[Phase.Vote] = function(message)
+-- The server's minigame pick, animated (nobody votes).
+phaseHandlers[Phase.Select] = function(message)
 	hideOverlays()
 	lobbyPanel.Showing = false
 	shopScreen:setAvailable(false)
-	boardView:hide()
+	boardView:hide() -- the board HUD never shows behind the pick or the tutorial
 	lobbyPanel:hide()
 	hud:setLobby(nil)
+	hud:setTimer(nil)
 	setCardOpen(true)
-	voteScreen:show(message.Choices, message.EndsAt)
+	randomizer:show(message)
 end
 
 phaseHandlers[Phase.Instructions] = function(message)
 	hideOverlays()
-	boardView:hide() -- duels from a board space skip the vote, so the board HUD goes here too
+	boardView:hide() -- a late joiner may land here straight from the board
 	hud:setLobby(nil)
 	setCardOpen(true)
-	instructions:show(message.Minigame, message.Participants, message.EndsAt, myId)
+	instructions:show(message, myId)
 	beginRound(message)
 	if not amParticipant then
-		hud:setStatus("👀 Spectating this round")
+		hud:setStatus("Spectating this round")
 	end
 	refreshSpectator()
 end
@@ -412,8 +412,8 @@ stateRemote.OnClientEvent:Connect(function(message)
 			hud:setBoardToasts(message.Phase == Phase.Board or message.Phase == Phase.Standings)
 			handler(message)
 		end
-	elseif message.Type == Net.Message.VoteUpdate then
-		voteScreen:updateCounts(message.Counts, message.Voters)
+	elseif message.Type == Net.Message.TutorialReady then
+		instructions:setReady(message.Ready, message.Left)
 	elseif message.Type == Net.Message.Status then
 		hud:setStatus(message.Text)
 	elseif message.Type == Net.Message.Toast then
@@ -449,7 +449,7 @@ end
 -- spectating, not knocked out); never while a full-screen card is up.
 local function youMarkerWanted(): boolean
 	local cardOpen = false
-	for _, card in { voteScreen.Root, instructions.Root, results.Root, standings.Root } do
+	for _, card in { randomizer.Root, instructions.Root, results.Root, standings.Root } do
 		cardOpen = cardOpen or card.Visible
 	end
 	return YouMarker.shouldShow({
@@ -465,7 +465,7 @@ end
 
 RunService.RenderStepped:Connect(function()
 	hud:update()
-	voteScreen:update()
+	randomizer:update()
 	instructions:update()
 	boardView:update()
 	lobbyPanel:update()

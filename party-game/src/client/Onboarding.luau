@@ -135,7 +135,7 @@ end
 --[[
 	context = {
 	  Known, Flags = { [flag] = true }, Mode = "Touch" | "Mouse" | "Gamepad",
-	  Modal       a full-screen card (instructions, results, vote, standings) or the shop is up
+	  Modal       a full-screen card (minigame pick, tutorial, results, standings) or the shop is up
 	  Lobby       { StartVisible }                        START is on screen (host only)
 	  Board       { OrderRoll, Roll, Items = { { Name, Description } }, Coins,
 	                Prompt = { Kind, Price, Routes, Count }? }
