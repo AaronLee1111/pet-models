@@ -1,0 +1,136 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v003",
+  "stage": "review-3 (Swap Ticket)",
+  "builds_on": {
+    "scripts": [
+      "source/build_item_kit.py",
+      "source/build_dice_family_v002.py"
+    ],
+    "manifests": [
+      "manifest.json",
+      "manifest_v002.json"
+    ]
+  },
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "maps": {
+      "Color": "textures/PGK_Atlas_v002_Color.png",
+      "Roughness": "textures/PGK_Atlas_v002_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_v002_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_v002_Emissive.png"
+    },
+    "new_cells": [],
+    "note": "uses the v002 atlas unchanged (cells CREAM, GOLD, GOLD_SATIN, COBALT, TEAL, CORAL_ENAMEL); dark navy is not in the atlas, COBALT stands in"
+  },
+  "material": "PGK_KitAtlas (one material slot, v002 maps)",
+  "items": {
+    "SwapTicket": {
+      "collection": "PGK_SwapTicket",
+      "root": "SwapTicket_Root",
+      "pivot": {
+        "root_location_m": [
+          0,
+          0,
+          0
+        ],
+        "bbox_centre_offset_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "note": "root and mesh origin at the geometric (bounding-box) centre; spin about world Z, hover along world Z; X-symmetric so a Z spin does not wobble"
+      },
+      "meshes": {
+        "SwapTicket": {
+          "export_name": "SwapTicket",
+          "triangles": 5996,
+          "vertices": 3036,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CORAL_ENAMEL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0112,
+            0.9433
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "shells": 19,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles_total": 5996,
+      "mesh_count": 1,
+      "bounds_m": [
+        1.106,
+        0.1275,
+        0.6751
+      ],
+      "bounds_studs": [
+        3.95,
+        0.46,
+        2.41
+      ],
+      "coplanar_overlap_pairs": 0,
+      "mesh_intersections": {},
+      "shells": 19,
+      "construction_note": "one production mesh; every decorative shell is seated 12 mm into the panel it sits on (kit convention, no floating parts, no separate intersecting meshes)",
+      "fbx": "export/SwapTicket_v003.fbx"
+    }
+  },
+  "blend": "source/PartyGameItemKit_SwapTicket_v003.blend",
+  "review_helpers": {
+    "collections": [
+      "Review_Helpers",
+      "Reference_DiceFamily",
+      "Review_Stage"
+    ],
+    "excluded_from_exports": true
+  },
+  "renders": [
+    "renders/v003_swap_ticket/01_turnaround_front_back_side.png",
+    "renders/v003_swap_ticket/02_front_three_quarter_hero.png",
+    "renders/v003_swap_ticket/03_back_three_quarter.png",
+    "renders/v003_swap_ticket/04_shop_pedestals_with_dice_family.png",
+    "renders/v003_swap_ticket/05_r15_scale_comparison.png",
+    "renders/v003_swap_ticket/06_gameplay_distance_comparison.png",
+    "renders/v003_swap_ticket/07_material_bevel_closeup.png",
+    "renders/v003_swap_ticket/08_pivot_visualisation.png",
+    "renders/v003_swap_ticket/09_wireframe_triangle_count.png",
+    "renders/v003_swap_ticket/10_neutral_contact_sheet.png"
+  ],
+  "validation": {
+    "SwapTicket": true
+  },
+  "missing_files": [],
+  "renders_expected": 10,
+  "renders_missing": 0,
+  "v001_v002_files_checked": 46,
+  "v001_v002_files_unchanged": true,
+  "v001_v002_files_changed": []
+}

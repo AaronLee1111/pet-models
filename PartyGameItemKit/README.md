@@ -210,6 +210,63 @@ So dice can separate, tumble on their own pivots and reunite without passing thr
 - The Lucky medallion's leaf lobes are 7-sided to stay under 8k triangles. They are crisp at shop distance; at gameplay distance the Lucky Die reads by its emerald and mint colours and gold glow rather than the leaf shape.
 - Item names and effects still come only from the brief. The vault and the game's item definitions were not available to this cloud session.
 
+## Review stage 3: Swap Ticket (v003)
+
+Built by `source/build_swap_ticket_v003.py`, which imports the v001 and v002 build scripts as libraries and doesn't re-run them. All 46 v001/v002 files are hash-checked before and after the build and are byte-identical (`manifest_v003.json → v001_v002_files_unchanged: true`).
+
+| | |
+|---|---|
+| FBX | `export/SwapTicket_v003.fbx` |
+| Hierarchy | `SwapTicket_Root` → `SwapTicket` (one mesh, 19 closed shells) |
+| Triangles | 5,996 (target 4,000–6,000; hard max 8,000) |
+| Size | 3.95 W × 0.46 D × 2.41 H studs (1.106 × 0.128 × 0.675 m) |
+| Pivot | Root and mesh origin at the bounding-box centre; spin or hover about world Z |
+| Material | One slot, `PGK_KitAtlas`, using the **v002 atlas unchanged**; no new cells |
+
+**Construction:** this is an all-new mesh built with the kit's existing tools (outline sweeps, bevelled profiles, dome rivets, box-projected atlas UVs).
+
+- **Body:** a single bevelled sweep, 8 cm thick, following a ticket outline:
+  - rounded corners
+  - concave top and bottom edges
+  - three smooth scallops on each short side (the perforation)
+
+  The sweep profile is a rolled gold trim wrapping both faces, then a cobalt band, then a raised cream panel on each side. The short ends lean back 2 cm, so the ticket bows toward the viewer.
+- **Front, in enamel relief 2.2–3.4 cm above the panel:**
+  - a teal arrow arcing over the top to the right and a coral arrow arcing underneath to the left (point-symmetric twins)
+  - gold-bezelled cobalt medallions at each end, with a teal pawn (left) and a coral pawn (right)
+  - four gold rivets
+- **Back:** a low-relief cream copy of the two arrows (82% size) and four rivets. The colourful front versus the plain back makes the facing obvious.
+- **Seating:** every decorative shell is seated 12 mm into the panel, so nothing floats and no meshes intersect. This is the same convention as the dice pips.
+
+**Validation** (`validation/fbx_roundtrip_v003.json`):
+
+- FBX round trip passes:
+  - hierarchy and names match
+  - size within 2 mm
+  - root-to-geometric-centre distance 0.0 mm
+  - one UV layer, inside 0.011–0.943
+  - one material slot, local transform identity
+  - no helpers exported
+- Geometry: 0 open edges, 0 inside-out shells, 0 degenerate triangles, 0 same-facing coplanar overlaps.
+
+**Renders** in `renders/v003_swap_ticket/`:
+1. `01_turnaround_front_back_side.png`
+2. `02_front_three_quarter_hero.png`
+3. `03_back_three_quarter.png`
+4. `04_shop_pedestals_with_dice_family.png`
+5. `05_r15_scale_comparison.png`
+6. `06_gameplay_distance_comparison.png`
+7. `07_material_bevel_closeup.png`
+8. `08_pivot_visualisation.png`
+9. `09_wireframe_triangle_count.png`
+10. `10_neutral_contact_sheet.png`
+
+**Compromises:**
+
+- **No dark navy.** The atlas is full, and adding a cell would mean resizing or replacing a region that v001/v002 items use. The kit's COBALT is used for the contrast band and medallion insets, so it reads brighter than the navy in the concept.
+- **Pawn figures.** The players are generic board-game pawns (round head on a tapered base) rather than the concept's person icons.
+- **One mesh.** With the decorations as separate meshes, the "no floating parts" and "no intersecting meshes" requirements would conflict. A single mesh with seated shells satisfies both.
+
 ## Open items for the reviewer
 
 - This session ran in a cloud container, so the macOS paths in the brief (`/Users/aaronlee/...`) were not reachable. That includes the required reading (`UI & Visual Style.md`, `Roblox Dev Home.md`, `Party Games.md`), the LihFolk notes and the party-game repository. The item names and effects here are taken **only** from the brief (Party Dice Block, Coin Shield, Warp Token; future Double/Triple/Lucky/controlled-roll dice). No gameplay was invented, but the names still need checking against the real item definitions before the remaining set is modelled.

@@ -1,0 +1,55 @@
+{
+  "version": "v003",
+  "items": {
+    "SwapTicket": {
+      "file": "export/SwapTicket_v003.fbx",
+      "bytes": 1199804,
+      "importer": "Blender 5.2.3 LTS FBX importer",
+      "hierarchy": {
+        "SwapTicket": "SwapTicket_Root",
+        "SwapTicket_Root": null
+      },
+      "root_matches": true,
+      "names_match": true,
+      "mesh_count": 1,
+      "helpers_present": [],
+      "meshes": {
+        "SwapTicket": {
+          "parent": "SwapTicket_Root",
+          "triangles": 5996,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0112,
+            0.9433
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_transform_identity": true
+        }
+      },
+      "world_bounds_m": [
+        1.106,
+        0.1275,
+        0.6751
+      ],
+      "source_bounds_m": [
+        1.106,
+        0.1275,
+        0.6751
+      ],
+      "bounds_match_2mm": true,
+      "root_to_geometric_centre_m": 0.0,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "root_pivot_within_2mm": true,
+      "pass": true
+    }
+  }
+}
