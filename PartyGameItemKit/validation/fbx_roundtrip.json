@@ -1,0 +1,211 @@
+{
+  "importer": "Blender 5.2.3 LTS FBX importer",
+  "items": {
+    "PartyDiceBlock": {
+      "file": "export/PartyDiceBlock_v001.fbx",
+      "bytes": 1187932,
+      "objects": {
+        "PartyDiceBlock_Body": {
+          "type": "MESH",
+          "parent": "PartyDiceBlock"
+        },
+        "PartyDiceBlock_Faces": {
+          "type": "MESH",
+          "parent": "PartyDiceBlock"
+        },
+        "PartyDiceBlock_Pips": {
+          "type": "MESH",
+          "parent": "PartyDiceBlock"
+        },
+        "PartyDiceBlock": {
+          "type": "EMPTY",
+          "parent": null
+        }
+      },
+      "root_count": 1,
+      "helpers_present": [],
+      "triangles": {
+        "PartyDiceBlock_Body": 2844,
+        "PartyDiceBlock_Faces": 2028,
+        "PartyDiceBlock_Pips": 2988
+      },
+      "triangles_total": 7860,
+      "triangles_match_source": true,
+      "uv_layers": {
+        "PartyDiceBlock_Body": [
+          "UVMap"
+        ],
+        "PartyDiceBlock_Faces": [
+          "UVMap"
+        ],
+        "PartyDiceBlock_Pips": [
+          "UVMap"
+        ]
+      },
+      "materials": [
+        "PGK_KitAtlas"
+      ],
+      "embedded_images": [
+        "PGK_Atlas_Color",
+        "PGK_Atlas_Metalness",
+        "PGK_Atlas_Roughness"
+      ],
+      "world_bounds_m": [
+        0.9897,
+        0.9897,
+        0.997
+      ],
+      "source_bounds_m": [
+        0.9897,
+        0.9897,
+        0.997
+      ],
+      "bounds_match": true,
+      "mesh_local_transforms_identity": true,
+      "root_world_rotation_deg": [
+        -0.0,
+        0.0,
+        0.0
+      ],
+      "root_world_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "custom_normals": true,
+      "pass": true
+    },
+    "CoinShield": {
+      "file": "export/CoinShield_v001.fbx",
+      "bytes": 1131356,
+      "objects": {
+        "CoinShield_Body": {
+          "type": "MESH",
+          "parent": "CoinShield"
+        },
+        "CoinShield_Coin": {
+          "type": "MESH",
+          "parent": "CoinShield"
+        },
+        "CoinShield": {
+          "type": "EMPTY",
+          "parent": null
+        }
+      },
+      "root_count": 1,
+      "helpers_present": [],
+      "triangles": {
+        "CoinShield_Body": 2536,
+        "CoinShield_Coin": 1780
+      },
+      "triangles_total": 4316,
+      "triangles_match_source": true,
+      "uv_layers": {
+        "CoinShield_Body": [
+          "UVMap"
+        ],
+        "CoinShield_Coin": [
+          "UVMap"
+        ]
+      },
+      "materials": [
+        "PGK_KitAtlas"
+      ],
+      "embedded_images": [
+        "PGK_Atlas_Color",
+        "PGK_Atlas_Metalness",
+        "PGK_Atlas_Roughness"
+      ],
+      "world_bounds_m": [
+        0.8348,
+        0.2933,
+        1.0252
+      ],
+      "source_bounds_m": [
+        0.8348,
+        0.2933,
+        1.0252
+      ],
+      "bounds_match": true,
+      "mesh_local_transforms_identity": true,
+      "root_world_rotation_deg": [
+        -0.0,
+        0.0,
+        0.0
+      ],
+      "root_world_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "custom_normals": true,
+      "pass": true
+    },
+    "WarpToken": {
+      "file": "export/WarpToken_v001.fbx",
+      "bytes": 1147004,
+      "objects": {
+        "WarpToken_Portal": {
+          "type": "MESH",
+          "parent": "WarpToken"
+        },
+        "WarpToken_Ring": {
+          "type": "MESH",
+          "parent": "WarpToken"
+        },
+        "WarpToken": {
+          "type": "EMPTY",
+          "parent": null
+        }
+      },
+      "root_count": 1,
+      "helpers_present": [],
+      "triangles": {
+        "WarpToken_Portal": 904,
+        "WarpToken_Ring": 3924
+      },
+      "triangles_total": 4828,
+      "triangles_match_source": true,
+      "uv_layers": {
+        "WarpToken_Portal": [
+          "UVMap"
+        ],
+        "WarpToken_Ring": [
+          "UVMap"
+        ]
+      },
+      "materials": [
+        "PGK_KitAtlas"
+      ],
+      "embedded_images": [
+        "PGK_Atlas_Color",
+        "PGK_Atlas_Metalness",
+        "PGK_Atlas_Roughness"
+      ],
+      "world_bounds_m": [
+        0.92,
+        0.1745,
+        0.92
+      ],
+      "source_bounds_m": [
+        0.92,
+        0.1745,
+        0.92
+      ],
+      "bounds_match": true,
+      "mesh_local_transforms_identity": true,
+      "root_world_rotation_deg": [
+        -0.0,
+        0.0,
+        0.0
+      ],
+      "root_world_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "custom_normals": true,
+      "pass": true
+    }
+  }
+}

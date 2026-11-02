@@ -1,0 +1,352 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v001",
+  "stage": "review-1",
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "size": 1024,
+    "cell_px": 256,
+    "gutter_px": 10,
+    "projection_half_extent_m": 0.56,
+    "texel_density_px_per_m": 210.7,
+    "texel_density_px_per_stud": 59.0,
+    "cells": {
+      "GOLD": {
+        "index": 0,
+        "col": 0,
+        "row": 0,
+        "projection": "box",
+        "reserved": false
+      },
+      "GOLD_SATIN": {
+        "index": 1,
+        "col": 1,
+        "row": 0,
+        "projection": "box",
+        "reserved": false
+      },
+      "CREAM": {
+        "index": 2,
+        "col": 2,
+        "row": 0,
+        "projection": "box",
+        "reserved": false
+      },
+      "PEARL": {
+        "index": 3,
+        "col": 3,
+        "row": 0,
+        "projection": "box",
+        "reserved": false
+      },
+      "COBALT": {
+        "index": 4,
+        "col": 0,
+        "row": 1,
+        "projection": "box",
+        "reserved": false
+      },
+      "TEAL": {
+        "index": 5,
+        "col": 1,
+        "row": 1,
+        "projection": "box",
+        "reserved": false
+      },
+      "VIOLET": {
+        "index": 6,
+        "col": 2,
+        "row": 1,
+        "projection": "box",
+        "reserved": false
+      },
+      "FIELD": {
+        "index": 7,
+        "col": 3,
+        "row": 1,
+        "projection": "front",
+        "reserved": false
+      },
+      "CORAL": {
+        "index": 8,
+        "col": 0,
+        "row": 2,
+        "projection": "box",
+        "reserved": false
+      },
+      "AQUA": {
+        "index": 9,
+        "col": 1,
+        "row": 2,
+        "projection": "box",
+        "reserved": false
+      },
+      "PORTAL": {
+        "index": 10,
+        "col": 2,
+        "row": 2,
+        "projection": "front",
+        "reserved": false
+      },
+      "CORE": {
+        "index": 11,
+        "col": 3,
+        "row": 2,
+        "projection": "front",
+        "reserved": false
+      },
+      "RUBY": {
+        "index": 12,
+        "col": 0,
+        "row": 3,
+        "projection": "box",
+        "reserved": true
+      },
+      "EMERALD": {
+        "index": 13,
+        "col": 1,
+        "row": 3,
+        "projection": "box",
+        "reserved": true
+      },
+      "SUN": {
+        "index": 14,
+        "col": 2,
+        "row": 3,
+        "projection": "box",
+        "reserved": true
+      },
+      "ROSE": {
+        "index": 15,
+        "col": 3,
+        "row": 3,
+        "projection": "box",
+        "reserved": true
+      }
+    },
+    "maps": {
+      "Color": "textures/PGK_Atlas_Color.png",
+      "Roughness": "textures/PGK_Atlas_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_Emissive.png"
+    }
+  },
+  "material": "PGK_KitAtlas (one material, one SurfaceAppearance per MeshPart)",
+  "items": {
+    "PartyDiceBlock": {
+      "collection": "PGK_PartyDiceBlock",
+      "root": "PartyDiceBlock",
+      "pivot": "Dice: centre pivot for tumbling on any axis",
+      "meshes": {
+        "PartyDiceBlock_Body": {
+          "triangles": 2844,
+          "vertices": 1488,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "CORAL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN"
+          ],
+          "shells": 39,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "PartyDiceBlock_Faces": {
+          "triangles": 2028,
+          "vertices": 1032,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "COBALT",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "TEAL"
+          ],
+          "shells": 15,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "PartyDiceBlock_Pips": {
+          "triangles": 2988,
+          "vertices": 1536,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL"
+          ],
+          "shells": 21,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles": 7860,
+      "mesh_count": 3,
+      "bounds_m": [
+        0.9897,
+        0.9897,
+        0.997
+      ],
+      "bounds_studs": [
+        3.53,
+        3.53,
+        3.56
+      ],
+      "bbox_centre_offset_from_pivot_m": [
+        0.0,
+        0.0,
+        0.0036
+      ],
+      "coplanar_overlap_pairs": 0,
+      "fbx": "export/PartyDiceBlock_v001.fbx"
+    },
+    "CoinShield": {
+      "collection": "PGK_CoinShield",
+      "root": "CoinShield",
+      "pivot": "Shield: centre of the coin boss, spin about world Z",
+      "meshes": {
+        "CoinShield_Body": {
+          "triangles": 2536,
+          "vertices": 1308,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "AQUA",
+            "CREAM",
+            "FIELD",
+            "GOLD",
+            "GOLD_SATIN"
+          ],
+          "shells": 20,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "CoinShield_Coin": {
+          "triangles": 1780,
+          "vertices": 896,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "AQUA",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN"
+          ],
+          "shells": 4,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles": 4316,
+      "mesh_count": 2,
+      "bounds_m": [
+        0.8348,
+        0.2933,
+        1.0252
+      ],
+      "bounds_studs": [
+        2.98,
+        1.05,
+        3.66
+      ],
+      "bbox_centre_offset_from_pivot_m": [
+        0.0,
+        -0.0234,
+        -0.0101
+      ],
+      "coplanar_overlap_pairs": 0,
+      "fbx": "export/CoinShield_v001.fbx"
+    },
+    "WarpToken": {
+      "collection": "PGK_WarpToken",
+      "root": "WarpToken",
+      "pivot": "Token: portal centre, spin about world Z; Portal part can counter-spin about local Y",
+      "meshes": {
+        "WarpToken_Ring": {
+          "triangles": 3924,
+          "vertices": 2040,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "AQUA",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "PORTAL",
+            "VIOLET"
+          ],
+          "shells": 39,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "WarpToken_Portal": {
+          "triangles": 904,
+          "vertices": 462,
+          "material": "PGK_KitAtlas",
+          "atlas_cells": [
+            "CORE",
+            "GOLD",
+            "GOLD_SATIN",
+            "TEAL"
+          ],
+          "shells": 5,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles": 4828,
+      "mesh_count": 2,
+      "bounds_m": [
+        0.92,
+        0.1745,
+        0.92
+      ],
+      "bounds_studs": [
+        3.29,
+        0.62,
+        3.29
+      ],
+      "bbox_centre_offset_from_pivot_m": [
+        0.0,
+        0.0063,
+        0.0
+      ],
+      "coplanar_overlap_pairs": 0,
+      "fbx": "export/WarpToken_v001.fbx"
+    }
+  },
+  "review_helpers": {
+    "collection": "Review_Helpers",
+    "objects": [
+      "ShopPedestal_-1.8",
+      "ShopPedestal_+0.0",
+      "ShopPedestal_+1.8",
+      "R15_Reference"
+    ],
+    "excluded_from_exports": true,
+    "pedestal": "4.5 studs diameter x 1.6 studs tall",
+    "r15": "5.2 studs tall blocky R15 proportions"
+  },
+  "blend": "source/PartyGameItemKit_v001.blend",
+  "renders": [
+    "renders/01_items_on_shop_pedestals.png",
+    "renders/02_dice_front_three_quarter.png",
+    "renders/03_dice_tumbling_silhouette.png",
+    "renders/04_coin_shield_front_side_three_quarter.png",
+    "renders/05_warp_token_front_side_three_quarter.png",
+    "renders/06_r15_scale_comparison.png",
+    "renders/07_material_closeup.png",
+    "renders/08_wireframe_triangle_counts.png",
+    "renders/09_gameplay_distance_preview.png",
+    "renders/10_neutral_contact_sheet.png"
+  ]
+}
