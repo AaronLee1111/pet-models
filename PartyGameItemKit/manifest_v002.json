@@ -1,0 +1,796 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v002",
+  "stage": "review-2 (dice family)",
+  "builds_on": {
+    "script": "source/build_item_kit.py",
+    "manifest": "manifest.json"
+  },
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "size": 1024,
+    "cell_px": 256,
+    "gutter_px": 10,
+    "projection_half_extent_m": 0.56,
+    "texel_density_px_per_m": 210.7,
+    "texel_density_px_per_stud": 59.0,
+    "cells": {
+      "GOLD": {
+        "index": 0,
+        "col": 0,
+        "row": 0,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "GOLD_SATIN": {
+        "index": 1,
+        "col": 1,
+        "row": 0,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "CREAM": {
+        "index": 2,
+        "col": 2,
+        "row": 0,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "PEARL": {
+        "index": 3,
+        "col": 3,
+        "row": 0,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "COBALT": {
+        "index": 4,
+        "col": 0,
+        "row": 1,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "TEAL": {
+        "index": 5,
+        "col": 1,
+        "row": 1,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "VIOLET": {
+        "index": 6,
+        "col": 2,
+        "row": 1,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "FIELD": {
+        "index": 7,
+        "col": 3,
+        "row": 1,
+        "projection": "front",
+        "new_in_v002": false
+      },
+      "CORAL": {
+        "index": 8,
+        "col": 0,
+        "row": 2,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "AQUA": {
+        "index": 9,
+        "col": 1,
+        "row": 2,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "PORTAL": {
+        "index": 10,
+        "col": 2,
+        "row": 2,
+        "projection": "front",
+        "new_in_v002": false
+      },
+      "CORE": {
+        "index": 11,
+        "col": 3,
+        "row": 2,
+        "projection": "front",
+        "new_in_v002": false
+      },
+      "CORAL_ENAMEL": {
+        "index": 12,
+        "col": 0,
+        "row": 3,
+        "projection": "box",
+        "new_in_v002": true
+      },
+      "EMERALD": {
+        "index": 13,
+        "col": 1,
+        "row": 3,
+        "projection": "box",
+        "new_in_v002": false
+      },
+      "MINT": {
+        "index": 14,
+        "col": 2,
+        "row": 3,
+        "projection": "box",
+        "new_in_v002": true
+      },
+      "GOLD_GLOW": {
+        "index": 15,
+        "col": 3,
+        "row": 3,
+        "projection": "box",
+        "new_in_v002": true
+      }
+    },
+    "maps": {
+      "Color": "textures/PGK_Atlas_v002_Color.png",
+      "Roughness": "textures/PGK_Atlas_v002_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_v002_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_v002_Emissive.png"
+    },
+    "consistency": {
+      "Color": {
+        "size": [
+          1024,
+          1024
+        ],
+        "v001_cells_identical": true
+      },
+      "Roughness": {
+        "size": [
+          1024,
+          1024
+        ],
+        "v001_cells_identical": true
+      },
+      "Metalness": {
+        "size": [
+          1024,
+          1024
+        ],
+        "v001_cells_identical": true
+      },
+      "Emissive": {
+        "size": [
+          1024,
+          1024
+        ],
+        "v001_cells_identical": true
+      }
+    }
+  },
+  "material": "PGK_KitAtlas (one material per mesh, v002 atlas maps)",
+  "family_die": {
+    "construction": "v001 Party Dice Block recipe",
+    "optimisation": "bevel 3 segs, bezel/rim corners 3 segs, pips 10 segs (centre-1 pip 14), corner caps 10 segs",
+    "v001_party_dice_tris": 7860
+  },
+  "items": {
+    "DoubleDice": {
+      "collection": "PGK_DoubleDice",
+      "root": "DoubleDice_Root",
+      "pivots": {
+        "Die_A": {
+          "location_m": [
+            -0.25,
+            0.34,
+            0.25
+          ],
+          "location_studs": [
+            -0.893,
+            1.214,
+            0.893
+          ],
+          "rest_rotation_deg": {
+            "z": 12,
+            "x": -6,
+            "face": 0
+          },
+          "enamel": "COBALT",
+          "note": "object origin = die centre; rotation and scale applied to the mesh"
+        },
+        "Die_B": {
+          "location_m": [
+            0.25,
+            -0.34,
+            -0.25
+          ],
+          "location_studs": [
+            0.893,
+            -1.214,
+            -0.893
+          ],
+          "rest_rotation_deg": {
+            "z": -14,
+            "x": 6,
+            "face": -90
+          },
+          "enamel": "TEAL",
+          "note": "object origin = die centre; rotation and scale applied to the mesh"
+        }
+      },
+      "export_names": {
+        "DoubleDice_Die_A": "Die_A",
+        "DoubleDice_Die_B": "Die_B",
+        "DoubleDice_Connector": "Connector"
+      },
+      "meshes": {
+        "DoubleDice_Die_A": {
+          "export_name": "Die_A",
+          "triangles": 6556,
+          "vertices": 3404,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CORAL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.048,
+            0.9516
+          ],
+          "origin_m": [
+            -0.25,
+            0.34,
+            0.25
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            2.67,
+            2.7,
+            2.53
+          ],
+          "shells": 75,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "DoubleDice_Die_B": {
+          "export_name": "Die_B",
+          "triangles": 6556,
+          "vertices": 3404,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CORAL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.047,
+            0.9527
+          ],
+          "origin_m": [
+            0.25,
+            -0.34,
+            -0.25
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            2.71,
+            2.74,
+            2.53
+          ],
+          "shells": 75,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "DoubleDice_Connector": {
+          "export_name": "Connector",
+          "triangles": 1080,
+          "vertices": 560,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "AQUA",
+            "GOLD",
+            "GOLD_SATIN"
+          ],
+          "uv_bounds": [
+            0.0169,
+            0.9791
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            3.82,
+            0.5,
+            3.61
+          ],
+          "shells": 10,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles_total": 14192,
+      "mesh_count": 3,
+      "max_triangles_per_mesh": 6556,
+      "bounds_m": [
+        1.2526,
+        1.4412,
+        1.2073
+      ],
+      "bounds_studs": [
+        4.47,
+        5.15,
+        4.31
+      ],
+      "bbox_centre_offset_from_root_m": [
+        0.0029,
+        -0.0023,
+        0.0
+      ],
+      "coplanar_overlap_pairs": 0,
+      "mesh_intersections": {
+        "DoubleDice_Die_A x DoubleDice_Die_B": 0,
+        "DoubleDice_Die_A x DoubleDice_Connector": 0,
+        "DoubleDice_Die_B x DoubleDice_Connector": 0
+      },
+      "min_clearance_m": {
+        "DoubleDice_Die_A - DoubleDice_Die_B": 0.082,
+        "DoubleDice_Connector - DoubleDice_Die_A": 0.0693,
+        "DoubleDice_Connector - DoubleDice_Die_B": 0.0829
+      },
+      "fbx": "export/DoubleDice_v002.fbx"
+    },
+    "TripleDice": {
+      "collection": "PGK_TripleDice",
+      "root": "TripleDice_Root",
+      "pivots": {
+        "Die_A": {
+          "location_m": [
+            0.0,
+            0.03,
+            0.5
+          ],
+          "location_studs": [
+            0.0,
+            0.107,
+            1.786
+          ],
+          "rest_rotation_deg": {
+            "z": 0,
+            "x": -8,
+            "face": 0
+          },
+          "enamel": "COBALT",
+          "note": "object origin = die centre; rotation and scale applied to the mesh"
+        },
+        "Die_B": {
+          "location_m": [
+            -0.38,
+            0.0,
+            -0.25
+          ],
+          "location_studs": [
+            -1.357,
+            0.0,
+            -0.893
+          ],
+          "rest_rotation_deg": {
+            "z": 8,
+            "x": -4,
+            "face": -90
+          },
+          "enamel": "CORAL_ENAMEL",
+          "note": "object origin = die centre; rotation and scale applied to the mesh"
+        },
+        "Die_C": {
+          "location_m": [
+            0.38,
+            0.0,
+            -0.25
+          ],
+          "location_studs": [
+            1.357,
+            0.0,
+            -0.893
+          ],
+          "rest_rotation_deg": {
+            "z": -8,
+            "x": -4,
+            "face": 90
+          },
+          "enamel": "TEAL",
+          "note": "object origin = die centre; rotation and scale applied to the mesh"
+        }
+      },
+      "export_names": {
+        "TripleDice_Die_A": "Die_A",
+        "TripleDice_Die_B": "Die_B",
+        "TripleDice_Die_C": "Die_C",
+        "TripleDice_Connectors": "Connectors"
+      },
+      "meshes": {
+        "TripleDice_Die_A": {
+          "export_name": "Die_A",
+          "triangles": 6556,
+          "vertices": 3404,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CORAL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0555,
+            0.9445
+          ],
+          "origin_m": [
+            0.0,
+            0.03,
+            0.5
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            2.28,
+            2.41,
+            2.41
+          ],
+          "shells": 75,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "TripleDice_Die_B": {
+          "export_name": "Die_B",
+          "triangles": 6556,
+          "vertices": 3404,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "CORAL",
+            "CORAL_ENAMEL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0556,
+            0.9444
+          ],
+          "origin_m": [
+            -0.38,
+            0.0,
+            -0.25
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            2.41,
+            2.42,
+            2.32
+          ],
+          "shells": 75,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "TripleDice_Die_C": {
+          "export_name": "Die_C",
+          "triangles": 6556,
+          "vertices": 3404,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CORAL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0556,
+            0.9444
+          ],
+          "origin_m": [
+            0.38,
+            0.0,
+            -0.25
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            2.41,
+            2.42,
+            2.32
+          ],
+          "shells": 75,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "TripleDice_Connectors": {
+          "export_name": "Connectors",
+          "triangles": 1896,
+          "vertices": 984,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "CORAL",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0245,
+            0.9733
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            3.54,
+            0.5,
+            3.65
+          ],
+          "shells": 18,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles_total": 21564,
+      "mesh_count": 4,
+      "max_triangles_per_mesh": 6556,
+      "bounds_m": [
+        1.4349,
+        0.8088,
+        1.4128
+      ],
+      "bounds_studs": [
+        5.12,
+        2.89,
+        5.05
+      ],
+      "bbox_centre_offset_from_root_m": [
+        0.0,
+        0.0656,
+        0.1311
+      ],
+      "coplanar_overlap_pairs": 0,
+      "mesh_intersections": {
+        "TripleDice_Die_A x TripleDice_Die_B": 0,
+        "TripleDice_Die_A x TripleDice_Die_C": 0,
+        "TripleDice_Die_A x TripleDice_Connectors": 0,
+        "TripleDice_Die_B x TripleDice_Die_C": 0,
+        "TripleDice_Die_B x TripleDice_Connectors": 0,
+        "TripleDice_Die_C x TripleDice_Connectors": 0
+      },
+      "min_clearance_m": {
+        "TripleDice_Die_A - TripleDice_Die_B": 0.1252,
+        "TripleDice_Die_A - TripleDice_Die_C": 0.1263,
+        "TripleDice_Die_B - TripleDice_Die_C": 0.0851,
+        "TripleDice_Connectors - TripleDice_Die_A": 0.0539,
+        "TripleDice_Connectors - TripleDice_Die_B": 0.0607,
+        "TripleDice_Connectors - TripleDice_Die_C": 0.0632
+      },
+      "fbx": "export/TripleDice_v002.fbx"
+    },
+    "LuckyDie": {
+      "collection": "PGK_LuckyDie",
+      "root": "LuckyDie_Root",
+      "pivots": {
+        "Die": {
+          "location_m": [
+            0,
+            0,
+            0
+          ],
+          "location_studs": [
+            0,
+            0,
+            0
+          ],
+          "rest_rotation_deg": {
+            "z": 0,
+            "x": 0,
+            "face": 0
+          },
+          "enamel": "EMERALD",
+          "note": "single die, pivot at its centre (same as Party Dice Block)"
+        }
+      },
+      "export_names": {
+        "LuckyDie_Die": "LuckyDie"
+      },
+      "meshes": {
+        "LuckyDie_Die": {
+          "export_name": "LuckyDie",
+          "triangles": 7876,
+          "vertices": 4164,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "CREAM",
+            "EMERALD",
+            "GOLD",
+            "GOLD_GLOW",
+            "GOLD_SATIN",
+            "MINT",
+            "PEARL"
+          ],
+          "uv_bounds": [
+            0.0228,
+            0.9772
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bounds_studs": [
+            3.55,
+            3.55,
+            3.57
+          ],
+          "shells": 125,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "triangles_total": 7876,
+      "mesh_count": 1,
+      "max_triangles_per_mesh": 7876,
+      "bounds_m": [
+        0.9936,
+        0.9936,
+        0.9989
+      ],
+      "bounds_studs": [
+        3.55,
+        3.55,
+        3.57
+      ],
+      "bbox_centre_offset_from_root_m": [
+        0.0,
+        0.0,
+        0.0026
+      ],
+      "coplanar_overlap_pairs": 0,
+      "mesh_intersections": {},
+      "min_clearance_m": {},
+      "fbx": "export/LuckyDie_v002.fbx"
+    }
+  },
+  "review_helpers": {
+    "collections": [
+      "Review_Helpers",
+      "Reference_PartyDiceBlock_v001"
+    ],
+    "excluded_from_exports": true
+  },
+  "blend": "source/PartyGameItemKit_DiceFamily_v002.blend",
+  "renders": [
+    "renders/v002_dice_family/01_dice_family_together.png",
+    "renders/v002_dice_family/02_doubledice_front_back_side.png",
+    "renders/v002_dice_family/03_tripledice_front_back_side.png",
+    "renders/v002_dice_family/04_luckydie_front_back_side.png",
+    "renders/v002_dice_family/05_pivot_visualisation.png",
+    "renders/v002_dice_family/06_shop_pedestal_comparison.png",
+    "renders/v002_dice_family/07_r15_scale_comparison.png",
+    "renders/v002_dice_family/08_gameplay_distance_comparison.png",
+    "renders/v002_dice_family/09_material_closeup.png",
+    "renders/v002_dice_family/10_wireframe_triangle_counts.png",
+    "renders/v002_dice_family/11_party_dice_beside_family.png",
+    "renders/v002_dice_family/12_neutral_contact_sheet.png"
+  ],
+  "validation": {
+    "DoubleDice": true,
+    "TripleDice": true,
+    "LuckyDie": true
+  },
+  "missing_files": [],
+  "missing_renders": 0,
+  "v001_files_unchanged": true,
+  "v001_files_changed": []
+}

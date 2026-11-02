@@ -1,0 +1,225 @@
+{
+  "importer": "Blender 5.2.3 LTS FBX importer",
+  "version": "v002",
+  "items": {
+    "DoubleDice": {
+      "file": "export/DoubleDice_v002.fbx",
+      "bytes": 1568604,
+      "root": "DoubleDice_Root",
+      "root_matches": true,
+      "meshes": {
+        "Connector": {
+          "parent": "DoubleDice_Root",
+          "triangles": 1080,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        },
+        "Die_A": {
+          "parent": "DoubleDice_Root",
+          "triangles": 6556,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            -0.25,
+            0.34,
+            0.25
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        },
+        "Die_B": {
+          "parent": "DoubleDice_Root",
+          "triangles": 6556,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.25,
+            -0.34,
+            -0.25
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        }
+      },
+      "mesh_count": 3,
+      "mesh_count_matches": true,
+      "names_match": true,
+      "helpers_present": [],
+      "triangles_total": 14192,
+      "world_bounds_m": [
+        1.2526,
+        1.4412,
+        1.2073
+      ],
+      "bounds_match": true,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "pass": true
+    },
+    "TripleDice": {
+      "file": "export/TripleDice_v002.fbx",
+      "bytes": 1812572,
+      "root": "TripleDice_Root",
+      "root_matches": true,
+      "meshes": {
+        "Connectors": {
+          "parent": "TripleDice_Root",
+          "triangles": 1896,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        },
+        "Die_A": {
+          "parent": "TripleDice_Root",
+          "triangles": 6556,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.03,
+            0.5
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        },
+        "Die_B": {
+          "parent": "TripleDice_Root",
+          "triangles": 6556,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            -0.38,
+            0.0,
+            -0.25
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        },
+        "Die_C": {
+          "parent": "TripleDice_Root",
+          "triangles": 6556,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.38,
+            0.0,
+            -0.25
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        }
+      },
+      "mesh_count": 4,
+      "mesh_count_matches": true,
+      "names_match": true,
+      "helpers_present": [],
+      "triangles_total": 21564,
+      "world_bounds_m": [
+        1.4349,
+        0.8088,
+        1.4128
+      ],
+      "bounds_match": true,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "pass": true
+    },
+    "LuckyDie": {
+      "file": "export/LuckyDie_v002.fbx",
+      "bytes": 1198380,
+      "root": "LuckyDie_Root",
+      "root_matches": true,
+      "meshes": {
+        "LuckyDie": {
+          "parent": "LuckyDie_Root",
+          "triangles": 7876,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pivot_matches_source": true,
+          "local_rotation_scale_identity": true
+        }
+      },
+      "mesh_count": 1,
+      "mesh_count_matches": true,
+      "names_match": true,
+      "helpers_present": [],
+      "triangles_total": 7876,
+      "world_bounds_m": [
+        0.9936,
+        0.9936,
+        0.9989
+      ],
+      "bounds_match": true,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "pass": true
+    }
+  }
+}

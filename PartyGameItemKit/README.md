@@ -103,6 +103,113 @@ These reuse the dice construction with no new modelling of the base:
 
 Recolouring is a UV offset into another cell (or a duplicated cell), so the kit stays on one atlas.
 
+## Review stage 2: dice family (v002)
+
+Built by `source/build_dice_family_v002.py`, which imports `build_item_kit.py` as a library. It does **not** re-run the v001 build. Every v001 file (sources, FBXs, atlas, manifest, round-trip report, renders) is hash-checked at the end of each v002 build and is byte-identical (`manifest_v002.json → v001_files_unchanged: true`).
+
+### Items
+
+| Item | FBX hierarchy | Triangles per mesh | Total | Size (studs, W × D × H) |
+|---|---|---|---|---|
+| Double Dice | `DoubleDice_Root` → `Die_A`, `Die_B`, `Connector` | 6,556 / 6,556 / 1,080 | 14,192 | 4.47 × 5.15 × 4.31 |
+| Triple Dice | `TripleDice_Root` → `Die_A`, `Die_B`, `Die_C`, `Connectors` | 6,556 ×3 / 1,896 | 21,564 | 5.12 × 2.89 × 5.05 |
+| Lucky Die | `LuckyDie_Root` → `LuckyDie` | 7,876 | 7,876 | 3.55 × 3.55 × 3.57 |
+
+- Every die mesh is under 8,000 triangles, and no mesh is near the 20,000 limit. Triple Dice exceeds 20k only as a package of four valid meshes.
+- One material slot per mesh. UVs are inside 0–1.
+- Each Blender object is named `<Item>_<Part>` (for example `DoubleDice_Die_A`). The export renames them to the hierarchy names above, which are what the FBX contains.
+
+### Reused vs new geometry
+
+- **Family die (new, optimised):** the exact v001 Party Dice Block recipe and dimensions (bevelled gold cube, gold bezel, cream rim, inset enamel, pearl pips in gold bezels, star under the centre pips, 12 coral edge gems, 8 cream corner caps), with fewer segments:
+  - bevel: 3 segments
+  - bezel and rim corners: 3 segments
+  - pips: 10 segments (the big 1-pip keeps 14)
+  - corner caps: 10 segments
+
+  This takes the die from 7,860 to 6,556 triangles (−17%). The die is built once per enamel colour and placed in Double and Triple. The v001 Party Dice Block export is untouched.
+- **Lucky Die:** the family die at the Party Dice scale (0.90) with premium options:
+  - a taller, wider gold bezel (+1.2 cm high, +1.3 cm wide)
+  - emerald enamel and mint stars
+  - mint edge gems, plus faceted mint gems replacing the cream corner caps
+  - a gold **fortune medallion** set into the bottom of every face frame, with four emerald leaf lobes. It is an original motif: no text, nothing copied.
+  - two glowing gold flourishes along the cream rim on each face
+  - 9-segment pips to stay under 8k
+- **New connectors:**
+  - Double: two tapered gold orbit arcs with aqua diamond nodes.
+  - Triple: a three-arc gold ring just behind the dice, with coral nodes, a teal-and-gold star hub with a pearl, and one bar up to the ring top. A three-spoke hub was avoided because it reads as a car logo.
+  - The arc spans are computed from the real die geometry, so the connectors never touch a die.
+
+### Pivots
+
+All dice and connector objects carry **translation only**. Rotation and scale are applied into the mesh, so each object origin is the die's tumble pivot.
+
+| Item | Root pivot | Die pivots (m, root space; 1 stud = 0.28 m) | Rest pose baked into mesh |
+|---|---|---|---|
+| Double Dice | Midpoint of the two dice (bbox centre ±3 mm) | A (−0.25, 0.34, 0.25), B (0.25, −0.34, −0.25) | A Rz 12° Rx −6° (5 forward); B Rz −14° Rx 6° + face turn −90° (3 forward) |
+| Triple Dice | Triangle centroid (bbox centre is 13 cm higher because of the top die) | A (0, 0.03, 0.50), B (−0.38, 0, −0.25), C (0.38, 0, −0.25) | A Rx −8°; B Rz 8° Rx −4° (coral, 3 forward); C Rz −8° Rx −4° (turquoise, 4 forward) |
+| Lucky Die | Die centre (same as Party Dice Block) | (0, 0, 0) | none |
+
+Clearances are measured vertex-to-surface between meshes:
+
+- Double: die–die 8.2 cm, connector–die ≥ 6.9 cm.
+- Triple: die–die ≥ 8.5 cm, connector–die ≥ 5.4 cm.
+- Mesh-pair intersections: 0.
+
+So dice can separate, tumble on their own pivots and reunite without passing through the connectors at rest.
+
+### Atlas v002
+
+`textures/PGK_Atlas_v002_{Color,Roughness,Metalness,Emissive,Legend}.png`: same 1024² size, 256 px cells, gutter, projection and texel density (210.7 px/m, 59 px/stud).
+
+- Cells 0–11 and EMERALD are regenerated from the v001 code and seeds, and are **pixel-identical** to the v001 atlas (checked for all four maps).
+- The reserved v001 row is now used:
+
+  | row 3 | col 0 | col 1 | col 2 | col 3 |
+  |---|---|---|---|---|
+  | v001 | RUBY *(reserved)* | EMERALD *(reserved)* | SUN *(reserved)* | ROSE *(reserved)* |
+  | v002 | **CORAL_ENAMEL** | EMERALD | **MINT** gem (emissive ≈ 0.45) | **GOLD_GLOW** (metal, emissive 0.35) |
+
+- Turquoise uses the existing TEAL cell, and the turquoise die's centre stars use COBALT for contrast.
+- v001 items never sample row 3, so the v002 maps are a drop-in replacement for the whole kit. One SurfaceAppearance set covers all six items.
+
+### Validation (`manifest_v002.json`, `validation/fbx_roundtrip_v002.json`)
+
+| Check | Result |
+|---|---|
+| FBX round trip, all three files | **Pass**: hierarchy and names, mesh count, per-mesh triangles, bounds within 2 mm, pivots within 2 mm, local rotation and scale identity, one UV layer in 0–1, one material slot, no helpers |
+| Inside-out shells | 0 |
+| Open edges | 0 |
+| Degenerate triangles | 0 |
+| Coplanar overlaps | 0 |
+| Mesh intersections | 0 |
+| Missing files / renders | 0 |
+| Atlas v001 cells identical | yes |
+| v001 files unchanged | yes |
+
+### Renders (`renders/v002_dice_family/`)
+
+1. `01_dice_family_together.png`
+2. `02_doubledice_front_back_side.png`
+3. `03_tripledice_front_back_side.png`
+4. `04_luckydie_front_back_side.png`
+5. `05_pivot_visualisation.png`
+6. `06_shop_pedestal_comparison.png`
+7. `07_r15_scale_comparison.png`
+8. `08_gameplay_distance_comparison.png`
+9. `09_material_closeup.png`
+10. `10_wireframe_triangle_counts.png`
+11. `11_party_dice_beside_family.png`
+12. `12_neutral_contact_sheet.png`
+
+### Known compromises
+
+- The family die keeps the v001 construction exactly. The teal corner inlays and wider cream frame from the concept turnarounds are **not** added, because the brief said not to revise the Party Dice Block. Add them to the family die and the Party Dice Block together in a later pass if wanted.
+- Double Dice is offset in depth (5.15 studs deep) so the two dice never intersect. From the front, Die_B covers part of Die_A's lower-right corner, as in the concept.
+- The Triple ring sits behind the dice. From the front only the arcs between the dice show, but from the back the ring crosses the dice faces.
+- The Lucky medallion's leaf lobes are 7-sided to stay under 8k triangles. They are crisp at shop distance; at gameplay distance the Lucky Die reads by its emerald and mint colours and gold glow rather than the leaf shape.
+- Item names and effects still come only from the brief. The vault and the game's item definitions were not available to this cloud session.
+
 ## Open items for the reviewer
 
 - This session ran in a cloud container, so the macOS paths in the brief (`/Users/aaronlee/...`) were not reachable. That includes the required reading (`UI & Visual Style.md`, `Roblox Dev Home.md`, `Party Games.md`), the LihFolk notes and the party-game repository. The item names and effects here are taken **only** from the brief (Party Dice Block, Coin Shield, Warp Token; future Double/Triple/Lucky/controlled-roll dice). No gameplay was invented, but the names still need checking against the real item definitions before the remaining set is modelled.
