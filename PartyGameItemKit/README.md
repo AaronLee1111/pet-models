@@ -267,6 +267,64 @@ Built by `source/build_swap_ticket_v003.py`, which imports the v001 and v002 bui
 - **Pawn figures.** The players are generic board-game pawns (round head on a tapered base) rather than the concept's person icons.
 - **One mesh.** With the decorations as separate meshes, the "no floating parts" and "no intersecting meshes" requirements would conflict. A single mesh with seated shells satisfies both.
 
+## Review stage 4: Custom Dice Block (v004)
+
+Built by `source/build_custom_dice_v004.py`, which imports the v001 and v002 build scripts as libraries and doesn't re-run them. It uses the **v002 atlas unchanged**. All 61 v001–v003 files are hash-checked before and after the build and are byte-identical (`manifest_v004.json → v001_v003_files_unchanged: true`).
+
+| | |
+|---|---|
+| FBX | `export/CustomDice_v004.fbx` |
+| Hierarchy | `CustomDice_Root` → `CustomDice_Body`, `CustomDice_SelectorRing`, `CustomDice_Pointer` |
+| Triangles | Body 6,840 · Ring 1,380 · Pointer 270 · **total 8,490** |
+| Size | Assembly 4.39 W × 3.65 D × 4.57 H studs; body 3.38 studs (family die at 0.86 scale) |
+| Pivots | All three meshes and the root sit at the die centre with identity local transforms |
+| Dial axis | Blender +Y (front-to-back); ring and pointer rotate together about it, and only about it |
+
+**The selector is a dial:**
+
+- The gold ring lies in the die's front-to-back mid-plane and rides 8 mm above four gold rollers set into the die's front-to-back edges.
+- Its inner radius (566 mm) clears the die's largest radius about the dial axis (544 mm). The clearance is therefore the same at every angle, and the ring never needs to leave its plane.
+- A gimbal pivoting on the side faces was rejected. To clear the die's 3D corners it would need a ring about 4.9 studs across, over the 4.4-stud limit.
+- The **pointer** clips onto the ring top. Its gold arm reaches forward over the die, and a coral arrowhead hangs in front of the selected face's top edge, carrying the teal control button. The arrowhead sits wholly in front of the die's front-most point, so it clears the die at every dial angle.
+- The ring carries 11 cobalt tick marks; the pointer covers the 12th position.
+
+**The die:**
+
+- Same construction and proportions as the family die (optimised v002 build).
+- The body and raised frames are **cream** with a gold inner lip, the faces are teal enamel, the pips are pearl in gold settings, and cobalt corner studs carry gold rivets.
+- The **selected face is 5** (front), and its lip uses GOLD_GLOW.
+- Opposite faces sum to 7: 5/2, 1/6, 3/4.
+
+**Validation** (`validation/fbx_roundtrip_v004.json`, `manifest_v004.json → selector.rotation_test`):
+
+- **Rest pose:** 0 intersections between any pair of meshes.
+  - Ring–body: 7.9 mm.
+  - Pointer–body: 136 mm.
+  - Pointer–ring: 5.6 mm measured (1.5 mm designed seat gap under the arm).
+- **Rotation test:** ring and pointer turned through 24 angles (every 15°). Minimum clearance to the body is **7.2 mm**, with **0 intersections**.
+- **Geometry:** 0 open edges, 0 inside-out shells, 0 degenerate triangles, 0 same-facing coplanar overlaps. UVs are inside 0–1, with one material slot per mesh.
+- **FBX round trip passes:** hierarchy and names, size within 2 mm, every pivot within 2 mm of the root, local transforms identity, and no helpers exported.
+
+**Renders** in `renders/v004_custom_dice/`:
+1. `01_turnaround_front_back_side.png`
+2. `02_front_three_quarter_hero.png`
+3. `03_selector_mechanism_closeup.png`
+4. `04_selector_three_positions.png`
+5. `05_shop_pedestals_with_dice_family.png`
+6. `06_r15_scale_comparison.png`
+7. `07_gameplay_distance_comparison.png`
+8. `08_pivot_rotation_axis.png`
+9. `09_material_closeup.png`
+10. `10_wireframe_triangle_counts.png`
+11. `11_neutral_contact_sheet.png`
+
+**Compromises:**
+
+- The body is 3.38 studs rather than 3.5. That keeps the dial ring at 4.39 studs across, inside the 4.4 limit.
+- Height is 4.57 studs because the pointer's arm and button sit on top of the ring.
+- The ring's outermost ~5 cm falls just outside the atlas projection range. Its UVs clamp to the edge of the GOLD cell: still valid and inside 0–1, with no visible difference.
+- The cream cloud-shaped bracket from the concept is replaced by the edge rollers, so the ring is visibly carried by the die.
+
 ## Open items for the reviewer
 
 - This session ran in a cloud container, so the macOS paths in the brief (`/Users/aaronlee/...`) were not reachable. That includes the required reading (`UI & Visual Style.md`, `Roblox Dev Home.md`, `Party Games.md`), the LihFolk notes and the party-game repository. The item names and effects here are taken **only** from the brief (Party Dice Block, Coin Shield, Warp Token; future Double/Triple/Lucky/controlled-roll dice). No gameplay was invented, but the names still need checking against the real item definitions before the remaining set is modelled.

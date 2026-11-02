@@ -1,0 +1,508 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v004",
+  "stage": "review-4 (Custom Dice Block)",
+  "builds_on": {
+    "scripts": [
+      "source/build_item_kit.py",
+      "source/build_dice_family_v002.py"
+    ]
+  },
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "maps": {
+      "Color": "textures/PGK_Atlas_v002_Color.png",
+      "Roughness": "textures/PGK_Atlas_v002_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_v002_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_v002_Emissive.png"
+    },
+    "new_cells": [],
+    "note": "v002 atlas unchanged: CREAM, GOLD, GOLD_SATIN, GOLD_GLOW, TEAL, CORAL_ENAMEL, COBALT, PEARL"
+  },
+  "material": "PGK_KitAtlas (one slot per mesh, v002 maps)",
+  "items": {
+    "CustomDice": {
+      "collection": "PGK_CustomDice",
+      "root": "CustomDice_Root",
+      "hierarchy": {
+        "CustomDice_Root": [
+          "CustomDice_Body",
+          "CustomDice_SelectorRing",
+          "CustomDice_Pointer"
+        ]
+      },
+      "pivots": {
+        "CustomDice_Root": "die centre (0,0,0)",
+        "CustomDice_Body": "die centre",
+        "CustomDice_SelectorRing": "die centre; rotate about Blender +Y (the item's front-facing axis)",
+        "CustomDice_Pointer": "die centre, aligned to the ring's index position; rotate with the ring (same axis, same angle) or keep it parented to the ring in Roblox"
+      },
+      "selector": {
+        "axis": "Blender Y (front-to-back); FBX/Roblox: the item's look axis",
+        "ring_inner_radius_m": 0.5661,
+        "ring_outer_radius_m": 0.6141,
+        "body_max_radius_about_axis_m": 0.5441,
+        "pointer_tip_radius_m": 0.4591,
+        "roller_gap_m": 0.008,
+        "pointer_seat_gap_m": 0.0015,
+        "rotation_test_step_deg": 15,
+        "rotation_test": [
+          {
+            "angle_deg": 0,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1361,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 15,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.125,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 30,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 45,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0632,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 60,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 75,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.125,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 90,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1361,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 105,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1202,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 120,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 135,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0632,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 150,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 165,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1202,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 180,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1361,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 195,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1203,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 210,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 225,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0632,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 240,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 255,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1202,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 270,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1361,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 285,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.1202,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 300,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 315,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0079,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0632,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 330,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.0776,
+              "intersections": 0
+            }
+          },
+          {
+            "angle_deg": 345,
+            "CustomDice_SelectorRing": {
+              "min_clearance_m": 0.0072,
+              "intersections": 0
+            },
+            "CustomDice_Pointer": {
+              "min_clearance_m": 0.125,
+              "intersections": 0
+            }
+          }
+        ],
+        "min_clearance_over_all_angles_m": 0.0072,
+        "intersections_over_all_angles": 0
+      },
+      "selected_face": {
+        "normal": [
+          0,
+          -1,
+          0
+        ],
+        "value": 5,
+        "highlight": "GOLD_GLOW inner lip",
+        "faces": {
+          "(0, -1, 0)": 5,
+          "(0, 1, 0)": 2,
+          "(0, 0, 1)": 1,
+          "(0, 0, -1)": 6,
+          "(1, 0, 0)": 3,
+          "(-1, 0, 0)": 4
+        },
+        "opposites_sum_to_7": true
+      },
+      "meshes": {
+        "CustomDice_Body": {
+          "export_name": "CustomDice_Body",
+          "triangles": 6840,
+          "vertices": 3532,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CREAM",
+            "GOLD",
+            "GOLD_GLOW",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0328,
+            0.9711
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "bounds_studs": [
+            3.38,
+            3.38,
+            3.4
+          ],
+          "shells": 62,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "CustomDice_SelectorRing": {
+          "export_name": "CustomDice_SelectorRing",
+          "triangles": 1380,
+          "vertices": 712,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "GOLD"
+          ],
+          "uv_bounds": [
+            0.0098,
+            0.9902
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "bounds_studs": [
+            4.39,
+            0.3,
+            4.39
+          ],
+          "shells": 12,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "CustomDice_Pointer": {
+          "export_name": "CustomDice_Pointer",
+          "triangles": 270,
+          "vertices": 141,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "CORAL_ENAMEL",
+            "GOLD",
+            "GOLD_SATIN",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.017,
+            0.9902
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "bounds_studs": [
+            0.46,
+            1.85,
+            0.73
+          ],
+          "shells": 3,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "mesh_count": 3,
+      "triangles_total": 8490,
+      "triangles_body": 6840,
+      "triangles_selector": 1650,
+      "bounds_m": [
+        1.2282,
+        1.0233,
+        1.2787
+      ],
+      "bounds_studs": [
+        4.39,
+        3.65,
+        4.57
+      ],
+      "body_bounds_studs": [
+        3.38,
+        3.38,
+        3.4
+      ],
+      "bbox_centre_offset_from_root_m": [
+        0.0,
+        -0.0388,
+        0.0253
+      ],
+      "coplanar_overlap_pairs": 0,
+      "rest_pose": {
+        "CustomDice_Body - CustomDice_SelectorRing": {
+          "min_clearance_m": 0.0079,
+          "intersections": 0
+        },
+        "CustomDice_Body - CustomDice_Pointer": {
+          "min_clearance_m": 0.1361,
+          "intersections": 0
+        },
+        "CustomDice_SelectorRing - CustomDice_Pointer": {
+          "min_clearance_m": 0.0056,
+          "intersections": 0
+        }
+      },
+      "fbx": "export/CustomDice_v004.fbx"
+    }
+  },
+  "blend": "source/PartyGameItemKit_CustomDice_v004.blend",
+  "review_helpers": {
+    "collections": [
+      "Review_Helpers",
+      "Reference_DiceFamily",
+      "Review_Stage"
+    ],
+    "excluded_from_exports": true
+  },
+  "renders": [
+    "renders/v004_custom_dice/01_turnaround_front_back_side.png",
+    "renders/v004_custom_dice/02_front_three_quarter_hero.png",
+    "renders/v004_custom_dice/03_selector_mechanism_closeup.png",
+    "renders/v004_custom_dice/04_selector_three_positions.png",
+    "renders/v004_custom_dice/05_shop_pedestals_with_dice_family.png",
+    "renders/v004_custom_dice/06_r15_scale_comparison.png",
+    "renders/v004_custom_dice/07_gameplay_distance_comparison.png",
+    "renders/v004_custom_dice/08_pivot_rotation_axis.png",
+    "renders/v004_custom_dice/09_material_closeup.png",
+    "renders/v004_custom_dice/10_wireframe_triangle_counts.png",
+    "renders/v004_custom_dice/11_neutral_contact_sheet.png"
+  ],
+  "validation": {
+    "CustomDice": true
+  },
+  "missing_files": [],
+  "renders_expected": 11,
+  "renders_missing": 0,
+  "v001_v003_files_checked": 61,
+  "v001_v003_files_unchanged": true,
+  "v001_v003_files_changed": []
+}

@@ -1,0 +1,90 @@
+{
+  "version": "v004",
+  "items": {
+    "CustomDice": {
+      "file": "export/CustomDice_v004.fbx",
+      "bytes": 1211452,
+      "importer": "Blender 5.2.3 LTS FBX importer",
+      "hierarchy": {
+        "CustomDice_Body": "CustomDice_Root",
+        "CustomDice_Pointer": "CustomDice_Root",
+        "CustomDice_SelectorRing": "CustomDice_Root",
+        "CustomDice_Root": null
+      },
+      "root_matches": true,
+      "names_match": true,
+      "mesh_count": 3,
+      "helpers_present": [],
+      "meshes": {
+        "CustomDice_Body": {
+          "parent": "CustomDice_Root",
+          "triangles": 6840,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0328,
+            0.9711
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "pivot_at_root_within_2mm": true,
+          "local_transform_identity": true
+        },
+        "CustomDice_Pointer": {
+          "parent": "CustomDice_Root",
+          "triangles": 270,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.017,
+            0.9902
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "pivot_at_root_within_2mm": true,
+          "local_transform_identity": true
+        },
+        "CustomDice_SelectorRing": {
+          "parent": "CustomDice_Root",
+          "triangles": 1380,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0098,
+            0.9902
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "pivot_at_root_within_2mm": true,
+          "local_transform_identity": true
+        }
+      },
+      "world_bounds_m": [
+        1.2282,
+        1.0233,
+        1.2787
+      ],
+      "source_bounds_m": [
+        1.2282,
+        1.0233,
+        1.2787
+      ],
+      "bounds_match_2mm": true,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "pass": true
+    }
+  }
+}
