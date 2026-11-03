@@ -325,6 +325,61 @@ Built by `source/build_custom_dice_v004.py`, which imports the v001 and v002 bui
 - The ring's outermost ~5 cm falls just outside the atlas projection range. Its UVs clamp to the edge of the GOLD cell: still valid and inside 0–1, with no visible difference.
 - The cream cloud-shaped bracket from the concept is replaced by the edge rollers, so the ring is visibly carried by the die.
 
+## Review stage 5: Pickpocket (v005)
+
+Built by `source/build_pickpocket_v005.py` from the Pickpocket turnaround supplied with the v005 brief. It imports the v001 and v002 build scripts as libraries, doesn't re-run them, and uses the **v002 atlas unchanged**. All 77 v001–v004 files are hash-checked before and after the build and are byte-identical (`manifest_v005.json → v001_v004_files_unchanged: true`).
+
+| | |
+|---|---|
+| FBX | `export/Pickpocket_v005.fbx` |
+| Hierarchy | `Pickpocket_Root` → `Pickpocket_Glove` (27 seated shells), `Pickpocket_Coin` |
+| Triangles | Glove 6,624 · Coin 852 · **total 7,476** |
+| Size | 3.03 W × 1.78 D × 3.59 H studs (0.850 × 0.498 × 1.005 m) |
+| Root pivot | Bounding-box (visual) centre of the whole item; the glove is aligned with it |
+| Coin | Local transform: location (0.288, −0.019, 0.128) m, rotation 0, scale 1. The face points along local −Y (the item front); spin axis is local +Z |
+
+**Reading of the reference:** the coin lies in the plane of the finger curl.
+
+- **Front:** the C-shaped pinch, with the index tip above the coin and the thumb tip below, and the coin face toward the viewer.
+- **Palm side (+X):** the coin edge-on in front of the fingers.
+- **Back of the hand (−X):** the faceted sea-glass gem (AQUA) in a gold bezel and cobalt ring, a gold strap and rivets.
+- **Opposite profile (+Y):** the coin's back, which carries a second star.
+
+**Construction:** this is new geometry built with kit tools (sweeps, domes, atlas UVs) plus a new tapered-tube builder for the fingers.
+
+- **Cuff (oval, wider than deep):** gold rims, a coral band, a cobalt stripe, a cream roll and three gold buttons.
+- **Palm:** a rounded teal block.
+- **Fingers:** three teal tube fingers (index, middle, thumb) with gold joint bands, gold knuckle bosses and cream fingertip pads.
+- **Coin:** a gold coin with a raised rim and a four-point star on each face.
+- **Seating:** every glove shell is seated into another, with 0 floating shells.
+
+**Validation** (`validation/fbx_roundtrip_v005.json`, `manifest_v005.json`):
+
+- **Coin:** clearance at rest is 3.7 mm with 0 intersections. A full spin at 36 angles (every 10°) gives a minimum of **3.5 mm** and **0 intersections**. Both fingertips are centred on the spin axis, so the gap stays the same.
+- **Finger-to-finger clearance:** index–middle 27.5 mm, index–thumb 120 mm, middle–thumb 234 mm; 0 intersections.
+- **Geometry:** 0 open edges, 0 inside-out shells, 0 degenerate triangles, 0 same-facing coplanar overlaps. UVs are inside 0–1, with one material slot per mesh.
+- **FBX round trip passes:** hierarchy and names, size within 2 mm, root at the visual centre (0.0 mm), coin pivot within 2 mm, local rotation and scale identity, and no helpers exported.
+
+**Renders** in `renders/v005_pickpocket/`:
+1. `01_turnaround_front_back_side.png` (front, back, palm side, back-of-hand side)
+2. `02_front_three_quarter_hero.png`
+3. `03_back_three_quarter.png`
+4. `04_coin_finger_clearance_closeup.png`
+5. `05_coin_three_spin_angles.png`
+6. `06_shop_pedestals_with_shield_and_token.png`
+7. `07_r15_scale_comparison.png`
+8. `08_gameplay_distance_comparison.png`
+9. `09_pivot_coin_axis.png`
+10. `10_material_joint_closeup.png`
+11. `11_wireframe_triangle_counts.png`
+12. `12_neutral_contact_sheet.png`
+
+**Compromises:**
+
+- **Gem placement:** the brief asks for the gem on the "back". The reference places it on the back of the hand, which faces the item's left side when the coin faces front. The turnaround therefore adds a back-of-hand panel, and the back three-quarter view is aimed at the gem.
+- **Fewer fingers:** the reference's fourth, small finger is folded into the middle finger, so there are three fingers.
+- **Visible gap:** the coin is held with a 3.5 mm gap to each fingertip so it never touches the fingers. At close range a hairline gap shows.
+
 ## Open items for the reviewer
 
 - This session ran in a cloud container, so the macOS paths in the brief (`/Users/aaronlee/...`) were not reachable. That includes the required reading (`UI & Visual Style.md`, `Roblox Dev Home.md`, `Party Games.md`), the LihFolk notes and the party-game repository. The item names and effects here are taken **only** from the brief (Party Dice Block, Coin Shield, Warp Token; future Double/Triple/Lucky/controlled-roll dice). No gameplay was invented, but the names still need checking against the real item definitions before the remaining set is modelled.

@@ -1,0 +1,407 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v005",
+  "stage": "review-5 (Pickpocket)",
+  "builds_on": {
+    "scripts": [
+      "source/build_item_kit.py",
+      "source/build_dice_family_v002.py"
+    ]
+  },
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "maps": {
+      "Color": "textures/PGK_Atlas_v002_Color.png",
+      "Roughness": "textures/PGK_Atlas_v002_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_v002_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_v002_Emissive.png"
+    },
+    "new_cells": [],
+    "note": "v002 atlas unchanged: TEAL, CREAM, CORAL_ENAMEL, GOLD, GOLD_SATIN, COBALT, AQUA (gem)"
+  },
+  "material": "PGK_KitAtlas (one slot per mesh, v002 maps)",
+  "items": {
+    "Pickpocket": {
+      "reference": "Pickpocket turnaround attached to the v005 brief",
+      "collection": "PGK_Pickpocket",
+      "root": "Pickpocket_Root",
+      "hierarchy": {
+        "Pickpocket_Root": [
+          "Pickpocket_Glove",
+          "Pickpocket_Coin"
+        ]
+      },
+      "pivots": {
+        "Pickpocket_Root": "visual (bounding-box) centre of the whole item, at (0,0,0)",
+        "Pickpocket_Glove": "aligned with the root (identity local transform)",
+        "Pickpocket_Coin": {
+          "location_m": [
+            0.28832,
+            -0.01884,
+            0.12773
+          ],
+          "location_studs": [
+            1.03,
+            -0.067,
+            0.456
+          ],
+          "rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "face_normal": "local -Y (faces the item front)",
+          "spin_axis": "local +Z (vertical pinch axis through both fingertips)"
+        }
+      },
+      "meshes": {
+        "Pickpocket_Glove": {
+          "export_name": "Pickpocket_Glove",
+          "triangles": 6624,
+          "vertices": 3364,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "AQUA",
+            "COBALT",
+            "CORAL_ENAMEL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.032,
+            0.9771
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_studs": [
+            2.77,
+            1.78,
+            3.59
+          ],
+          "shells": 27,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "Pickpocket_Coin": {
+          "export_name": "Pickpocket_Coin",
+          "triangles": 852,
+          "vertices": 432,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "GOLD",
+            "GOLD_SATIN"
+          ],
+          "uv_bounds": [
+            0.1149,
+            0.9281
+          ],
+          "origin_m": [
+            0.28832,
+            -0.01884,
+            0.12773
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_studs": [
+            0.97,
+            0.28,
+            0.97
+          ],
+          "shells": 3,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "mesh_count": 2,
+      "triangles_glove": 6624,
+      "triangles_coin": 852,
+      "triangles_total": 7476,
+      "bounds_m": [
+        0.8496,
+        0.498,
+        1.0045
+      ],
+      "bounds_studs": [
+        3.03,
+        1.78,
+        3.59
+      ],
+      "glove_shells": 27,
+      "floating_shells": 0,
+      "finger_clearance": {
+        "index-middle": {
+          "min_clearance_m": 0.0275,
+          "intersections": 0
+        },
+        "index-thumb": {
+          "min_clearance_m": 0.1202,
+          "intersections": 0
+        },
+        "middle-thumb": {
+          "min_clearance_m": 0.2344,
+          "intersections": 0
+        }
+      },
+      "coin": {
+        "radius_m": 0.1365,
+        "thickness_m": 0.0525,
+        "rest_min_clearance_m": 0.0037,
+        "rest_intersections": 0,
+        "spin_test_step_deg": 10,
+        "spin_test": [
+          {
+            "angle_deg": 0,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 10,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 20,
+            "min_clearance_m": 0.0038,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 30,
+            "min_clearance_m": 0.0039,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 40,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 50,
+            "min_clearance_m": 0.0039,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 60,
+            "min_clearance_m": 0.0038,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 70,
+            "min_clearance_m": 0.0039,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 80,
+            "min_clearance_m": 0.0038,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 90,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 100,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 110,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 120,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 130,
+            "min_clearance_m": 0.0035,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 140,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 150,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 160,
+            "min_clearance_m": 0.0035,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 170,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 180,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 190,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 200,
+            "min_clearance_m": 0.0038,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 210,
+            "min_clearance_m": 0.0039,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 220,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 230,
+            "min_clearance_m": 0.0039,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 240,
+            "min_clearance_m": 0.0038,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 250,
+            "min_clearance_m": 0.0039,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 260,
+            "min_clearance_m": 0.0038,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 270,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 280,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 290,
+            "min_clearance_m": 0.0037,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 300,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 310,
+            "min_clearance_m": 0.0035,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 320,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 330,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 340,
+            "min_clearance_m": 0.0035,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 350,
+            "min_clearance_m": 0.0036,
+            "intersections": 0
+          }
+        ],
+        "spin_min_clearance_m": 0.0035,
+        "spin_intersections": 0
+      },
+      "coplanar_overlap_pairs": 0,
+      "fbx": "export/Pickpocket_v005.fbx"
+    }
+  },
+  "blend": "source/PartyGameItemKit_Pickpocket_v005.blend",
+  "review_helpers": {
+    "collections": [
+      "Review_Helpers",
+      "Reference_Items",
+      "Review_Stage"
+    ],
+    "excluded_from_exports": true
+  },
+  "renders": [
+    "renders/v005_pickpocket/01_turnaround_front_back_side.png",
+    "renders/v005_pickpocket/02_front_three_quarter_hero.png",
+    "renders/v005_pickpocket/03_back_three_quarter.png",
+    "renders/v005_pickpocket/04_coin_finger_clearance_closeup.png",
+    "renders/v005_pickpocket/05_coin_three_spin_angles.png",
+    "renders/v005_pickpocket/06_shop_pedestals_with_shield_and_token.png",
+    "renders/v005_pickpocket/07_r15_scale_comparison.png",
+    "renders/v005_pickpocket/08_gameplay_distance_comparison.png",
+    "renders/v005_pickpocket/09_pivot_coin_axis.png",
+    "renders/v005_pickpocket/10_material_joint_closeup.png",
+    "renders/v005_pickpocket/11_wireframe_triangle_counts.png",
+    "renders/v005_pickpocket/12_neutral_contact_sheet.png"
+  ],
+  "validation": {
+    "Pickpocket": true
+  },
+  "missing_files": [],
+  "renders_expected": 12,
+  "renders_missing": 0,
+  "v001_v004_files_checked": 77,
+  "v001_v004_files_unchanged": true,
+  "v001_v004_files_changed": []
+}
