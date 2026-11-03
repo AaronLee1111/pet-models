@@ -1,0 +1,459 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v007",
+  "stage": "review-7 (Snare Trap)",
+  "builds_on": {
+    "scripts": [
+      "source/build_item_kit.py",
+      "source/build_dice_family_v002.py",
+      "source/build_pickpocket_v005.py"
+    ]
+  },
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "maps": {
+      "Color": "textures/PGK_Atlas_v002_Color.png",
+      "Roughness": "textures/PGK_Atlas_v002_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_v002_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_v002_Emissive.png"
+    },
+    "new_cells": [],
+    "note": "v002 atlas unchanged: CREAM, GOLD, GOLD_SATIN, COBALT, TEAL, CORAL_ENAMEL, PEARL"
+  },
+  "material": "PGK_KitAtlas (one slot per mesh, v002 maps)",
+  "items": {
+    "SnareTrap": {
+      "reference": "Snare Trap turnaround attached to the v007 brief (banner reads 'SPRING LOOP')",
+      "collection": "PGK_SnareTrap",
+      "root": "SnareTrap_Root",
+      "hierarchy": {
+        "SnareTrap_Root": [
+          "SnareTrap_Base",
+          "SnareTrap_Loop",
+          "SnareTrap_Trigger"
+        ]
+      },
+      "pivots": {
+        "SnareTrap_Root": "footprint centre at floor level (feet apexes at z = 0)",
+        "SnareTrap_Base": "aligned with the root (identity); stationary",
+        "SnareTrap_Loop": {
+          "location_m": [
+            0.0,
+            -0.39,
+            0.202
+          ],
+          "pivot": "hinge-barrel axis centre",
+          "axis": "local +X (hinge axis, parallel to the front edge)",
+          "armed_rotation_deg": 0,
+          "activated_rotation_deg": 90.0,
+          "direction": "positive X rotation lifts the back of the loop up over the hinge"
+        },
+        "SnareTrap_Trigger": {
+          "location_m": [
+            0.0,
+            0.0,
+            0.158
+          ],
+          "pivot": "top centre of the pressure plate",
+          "travel": "-Z by 0.012 m when activated (top ends just below the bezel)"
+        }
+      },
+      "poses": {
+        "armed": {
+          "loop_deg": 0,
+          "trigger_dz_m": 0
+        },
+        "activated": {
+          "loop_deg": 90.0,
+          "trigger_dz_m": -0.012
+        }
+      },
+      "meshes": {
+        "SnareTrap_Base": {
+          "export_name": "SnareTrap_Base",
+          "triangles": 3108,
+          "vertices": 1588,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "CORAL_ENAMEL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL"
+          ],
+          "uv_bounds": [
+            0.0345,
+            0.9606
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_m": [
+            0.84,
+            0.86,
+            0.252
+          ],
+          "shells": 19,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "SnareTrap_Loop": {
+          "export_name": "SnareTrap_Loop",
+          "triangles": 4740,
+          "vertices": 2374,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "GOLD",
+            "GOLD_SATIN",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0314,
+            0.9299
+          ],
+          "origin_m": [
+            0.0,
+            -0.39,
+            0.202
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_m": [
+            0.8365,
+            0.8732,
+            0.14
+          ],
+          "shells": 2,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "SnareTrap_Trigger": {
+          "export_name": "SnareTrap_Trigger",
+          "triangles": 116,
+          "vertices": 60,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT"
+          ],
+          "uv_bounds": [
+            0.1044,
+            0.6575
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.158
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_m": [
+            0.2,
+            0.2,
+            0.03
+          ],
+          "shells": 1,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "mesh_count": 3,
+      "triangles_total": 7964,
+      "armed_bounds_m": [
+        0.84,
+        0.875,
+        0.272
+      ],
+      "armed_bounds_studs": [
+        3.0,
+        3.12,
+        0.97
+      ],
+      "activated_bounds_m": [
+        0.84,
+        0.88,
+        1.0102
+      ],
+      "activated_bounds_studs": [
+        3.0,
+        3.14,
+        3.61
+      ],
+      "activated_height_studs": 3.61,
+      "floor": {
+        "min_z_m": 0.0,
+        "sits_on": "four gold feet"
+      },
+      "footprint": {
+        "armed_max_radius_m": 0.5277,
+        "armed_max_radius_studs": 1.88,
+        "review_tile_radius_studs": 1.9,
+        "fits_review_tile": true,
+        "recommended_collision": "one invisible, non-colliding Part sized to the armed footprint (3.0 x 3.0 x 1.0 studs) for touch detection; keep all meshes CanCollide = false (CollisionFidelity = Box)"
+      },
+      "armed_pairs": {
+        "SnareTrap_Base - SnareTrap_Loop": {
+          "min_clearance_m": 0.003,
+          "intersections": 0
+        },
+        "SnareTrap_Base - SnareTrap_Trigger": {
+          "min_clearance_m": 0.003,
+          "intersections": 0
+        },
+        "SnareTrap_Loop - SnareTrap_Trigger": {
+          "min_clearance_m": 0.1107,
+          "intersections": 0
+        }
+      },
+      "activated_pairs": {
+        "SnareTrap_Base - SnareTrap_Loop": {
+          "min_clearance_m": 0.003,
+          "intersections": 0
+        },
+        "SnareTrap_Base - SnareTrap_Trigger": {
+          "min_clearance_m": 0.002,
+          "intersections": 0
+        },
+        "SnareTrap_Loop - SnareTrap_Trigger": {
+          "min_clearance_m": 0.2321,
+          "intersections": 0
+        }
+      },
+      "loop_sweep": {
+        "step_deg": 5,
+        "samples": [
+          {
+            "angle_deg": 0,
+            "loop_min_z_m": 0.132,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 5,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 10,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 15,
+            "loop_min_z_m": 0.137,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 20,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 25,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 30,
+            "loop_min_z_m": 0.137,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 35,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 40,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 45,
+            "loop_min_z_m": 0.137,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 50,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 55,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 60,
+            "loop_min_z_m": 0.137,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 65,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 70,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 75,
+            "loop_min_z_m": 0.137,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 80,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 85,
+            "loop_min_z_m": 0.1372,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          },
+          {
+            "angle_deg": 90,
+            "loop_min_z_m": 0.137,
+            "clearance_to_base_m": 0.003,
+            "intersections": 0
+          }
+        ],
+        "min_clearance_to_base_m": 0.003,
+        "intersections": 0,
+        "min_z_m": 0.132,
+        "envelope_min_m": [
+          -0.4182,
+          -0.46,
+          0.132
+        ],
+        "envelope_max_m": [
+          0.4182,
+          0.4182,
+          1.0102
+        ],
+        "envelope_size_studs": [
+          2.99,
+          3.14,
+          3.14
+        ]
+      },
+      "r15_activated": {
+        "proxy": "5.2-stud blocky R15 standing on the depressed pressure plate",
+        "loop_to_r15_min_clearance_m": 0.1821,
+        "loop_r15_intersections": 0,
+        "base_r15_intersections": 0,
+        "loop_inner_opening_m": [
+          0.56,
+          0.46
+        ],
+        "loop_inner_opening_studs": [
+          2.0,
+          1.64
+        ],
+        "r15_extent_studs": {
+          "torso_width": 2.0,
+          "arm_span": 4.0,
+          "height": 5.2
+        },
+        "encloses_r15": false,
+        "note": "the raised loop stands over the front hinge and frames the player from the front; within the 3.5-4.5-stud activated height it cannot enclose a 5.2-stud R15"
+      },
+      "floating_shells": 0,
+      "floating_note": "counted within multi-shell meshes; the one-shell Trigger is a moving part held in its bezel (see activated/armed pairs)",
+      "coplanar_overlap_pairs": 0,
+      "fbx": "export/SnareTrap_v007.fbx"
+    }
+  },
+  "blend": "source/PartyGameItemKit_SnareTrap_v007.blend",
+  "review_helpers": {
+    "collections": [
+      "Review_Helpers",
+      "Reference_Items",
+      "Review_Stage"
+    ],
+    "excluded_from_exports": true
+  },
+  "renders": [
+    "renders/v007_snare_trap/01_front_ortho_armed.png",
+    "renders/v007_snare_trap/02_back_ortho_armed.png",
+    "renders/v007_snare_trap/03_left_side_armed.png",
+    "renders/v007_snare_trap/04_right_side_armed.png",
+    "renders/v007_snare_trap/05_top_armed.png",
+    "renders/v007_snare_trap/06_hero_three_quarter.png",
+    "renders/v007_snare_trap/07_activated_pose.png",
+    "renders/v007_snare_trap/08_armed_vs_activated.png",
+    "renders/v007_snare_trap/09_loop_pivot_envelope.png",
+    "renders/v007_snare_trap/10_trigger_closeup.png",
+    "renders/v007_snare_trap/11_r15_clearance.png",
+    "renders/v007_snare_trap/12_board_space_footprint.png",
+    "renders/v007_snare_trap/13_shop_scale_comparison.png",
+    "renders/v007_snare_trap/14_gameplay_distance.png",
+    "renders/v007_snare_trap/15_material_closeup.png",
+    "renders/v007_snare_trap/16_wireframe_pivots.png",
+    "renders/v007_snare_trap/17_contact_sheet.png"
+  ],
+  "validation": {
+    "SnareTrap": true
+  },
+  "missing_files": [],
+  "renders_expected": 17,
+  "renders_missing": 0,
+  "v001_v006_files_checked": 112,
+  "v001_v006_files_unchanged": true,
+  "v001_v006_files_changed": []
+}

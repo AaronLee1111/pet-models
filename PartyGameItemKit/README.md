@@ -434,6 +434,67 @@ Built by `source/build_crown_heist_v006.py` from the Crown Heist turnaround supp
 - **Texture clamping at the extremes:** the item is 1.31 m tall, which exceeds the atlas projection window (±0.56 m). The outermost ~7 cm (crest tip, pommel) take the edge colour of their cell, with valid UVs inside 0–1.
 - **Tight net budget:** the net is 7,808 triangles against the 8,000 cap, so any further detail would need cuts elsewhere.
 
+## Review stage 7: Snare Trap (v007)
+
+Built by `source/build_snare_trap_v007.py` from the turnaround supplied with the v007 brief (its banner reads "SPRING LOOP"). It imports the v001, v002 and v005 build scripts as libraries, doesn't re-run them, and uses the **v002 atlas unchanged**. All 112 v001–v006 files are hash-checked before and after the build and are byte-identical (`manifest_v007.json → v001_v006_files_unchanged: true`).
+
+| | |
+|---|---|
+| FBX | `export/SnareTrap_v007.fbx` |
+| Hierarchy | `SnareTrap_Root` → `SnareTrap_Base`, `SnareTrap_Loop`, `SnareTrap_Trigger` |
+| Triangles | Base 3,108 · Loop 4,740 · Trigger 116 · **total 7,964** |
+| Armed size | 3.00 W × 3.12 D × 0.97 H studs |
+| Activated size | 3.00 W × 3.14 D × 3.61 H studs |
+| Root pivot | Footprint centre at floor level; the four gold feet touch z = 0 |
+
+**Pivots and poses:**
+
+- **Base:** stationary, with an identity transform.
+- **Loop:** pivot on the hinge-barrel axis at (0, −0.39, 0.202) m. It rotates about local **+X**: **0°** when armed and **+90°** when activated. Positive rotation swings the back of the loop up over the front hinge.
+- **Trigger** (the cobalt pressure plate): pivot at the plate's top centre, (0, 0, 0.158) m. It travels **−Z by 12 mm** when activated.
+- **Rotation envelope** (0–90°): 2.99 × 3.14 × 3.14 studs. The loop's lowest point stays at 0.132 m, so it never reaches the floor.
+
+**Construction:**
+
+- **Base:** a rounded-square brushed-gold frame (corner radius 0.57 studs, so it fits a round board space) on four gold feet. It has a cream deck, a scalloped cream panel with a gold rim, four outward gold chevrons as the step cue, and a gold bezel around the cobalt plate. A coral indicator sits on the front-right corner, and two gold axle bosses with pearl caps carry the hinge.
+- **Loop:** a padded teal tube (soft grooves every twelfth of its length) whose two ends merge into the gold hinge barrel. The barrel turns with the loop, coaxially between the base's axle bosses with 3 mm axial gaps.
+
+**Validation:**
+
+- **Armed and activated poses:** 0 intersections between any pair of meshes. Base–loop 3 mm (the axle gaps); base–trigger 3 mm armed and 2 mm when pressed.
+- **Loop sweep:** tested at 19 angles (every 5°) from 0° to 90°, with **0 intersections** and a minimum clearance of 3 mm.
+- **Footprint:** the armed trap reaches **1.88 studs** from its centre, inside the 1.9-stud-radius review space used in the kit renders. **Recommended collision:** one invisible box of 3.0 × 3.0 × 1.0 studs for touch detection, with every mesh set to CanCollide = false.
+- **R15 proxy** (5.2 studs, standing on the pressed plate): the raised loop stays **182 mm** clear, with 0 intersections. Its inner opening (2.0 × 1.64 studs) frames the player from the front but **cannot enclose** an R15 within the 3.5–4.5-stud activated height.
+- **Geometry:** 0 open edges, 0 inside-out shells, 0 degenerate triangles, 0 same-facing coplanar overlaps, 0 floating shells. UVs are inside 0–1, with one material slot per mesh.
+- **FBX round trip passes:** hierarchy and names, item and per-mesh size within 2 mm, root at the floor (0.0 mm), every pivot within 2 mm, local rotation and scale identity, and no helpers exported.
+
+**Renders** in `renders/v007_snare_trap/`:
+1. `01_front_ortho_armed.png`
+2. `02_back_ortho_armed.png`
+3. `03_left_side_armed.png`
+4. `04_right_side_armed.png`
+5. `05_top_armed.png`
+6. `06_hero_three_quarter.png`
+7. `07_activated_pose.png`
+8. `08_armed_vs_activated.png`
+9. `09_loop_pivot_envelope.png`
+10. `10_trigger_closeup.png`
+11. `11_r15_clearance.png`
+12. `12_board_space_footprint.png`
+13. `13_shop_scale_comparison.png`
+14. `14_gameplay_distance.png`
+15. `15_material_closeup.png`
+16. `16_wireframe_pivots.png`
+17. `17_contact_sheet.png`
+
+**Compromises:**
+
+- **R15 enclosure:** a rigid loop swinging up from the front hinge, kept within the 3.5–4.5-stud activated height, cannot surround a 5.2-stud R15. Options are to scale the loop up during activation with a Size tween, or to sell the capture with an effect.
+- **Loop shape when raised:** the reference shows the raised loop as a taller oval. Here it keeps its folded rounded-square shape.
+- **Board-space size:** the footprint is checked against the kit's own review board space (radius 1.9 studs), not the game's real space size, which was not available.
+- **Vault not read:** the vault notes weren't available to this cloud session.
+- **Tight triangle budget:** the total is 7,964, just under the 8,000 preference.
+
 ## Open items for the reviewer
 
 - This session ran in a cloud container, so the macOS paths in the brief (`/Users/aaronlee/...`) were not reachable. That includes the required reading (`UI & Visual Style.md`, `Roblox Dev Home.md`, `Party Games.md`), the LihFolk notes and the party-game repository. The item names and effects here are taken **only** from the brief (Party Dice Block, Coin Shield, Warp Token; future Double/Triple/Lucky/controlled-roll dice). No gameplay was invented, but the names still need checking against the real item definitions before the remaining set is modelled.

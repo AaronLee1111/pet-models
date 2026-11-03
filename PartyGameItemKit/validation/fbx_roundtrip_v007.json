@@ -1,0 +1,110 @@
+{
+  "version": "v007",
+  "items": {
+    "SnareTrap": {
+      "file": "export/SnareTrap_v007.fbx",
+      "bytes": 1194012,
+      "importer": "Blender 5.2.3 LTS FBX importer",
+      "hierarchy": {
+        "SnareTrap_Base": "SnareTrap_Root",
+        "SnareTrap_Loop": "SnareTrap_Root",
+        "SnareTrap_Trigger": "SnareTrap_Root",
+        "SnareTrap_Root": null
+      },
+      "root_matches": true,
+      "names_match": true,
+      "mesh_count": 3,
+      "helpers_present": [],
+      "meshes": {
+        "SnareTrap_Base": {
+          "parent": "SnareTrap_Root",
+          "triangles": 3108,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0345,
+            0.9606
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pivot_matches_source_2mm": true,
+          "bounds_match_2mm": true,
+          "local_rotation_scale_identity": true
+        },
+        "SnareTrap_Loop": {
+          "parent": "SnareTrap_Root",
+          "triangles": 4740,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0314,
+            0.9299
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            -0.39,
+            0.202
+          ],
+          "pivot_matches_source_2mm": true,
+          "bounds_match_2mm": true,
+          "local_rotation_scale_identity": true
+        },
+        "SnareTrap_Trigger": {
+          "parent": "SnareTrap_Root",
+          "triangles": 116,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.1044,
+            0.6575
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.158
+          ],
+          "pivot_matches_source_2mm": true,
+          "bounds_match_2mm": true,
+          "local_rotation_scale_identity": true
+        }
+      },
+      "world_bounds_m": [
+        0.84,
+        0.875,
+        0.272
+      ],
+      "source_armed_bounds_m": [
+        0.84,
+        0.875,
+        0.272
+      ],
+      "bounds_match_2mm": true,
+      "floor_relative_to_root_m": -0.0,
+      "root_at_floor_2mm": true,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "pass": true
+    }
+  }
+}
