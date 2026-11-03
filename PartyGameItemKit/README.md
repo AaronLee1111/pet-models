@@ -380,6 +380,60 @@ Built by `source/build_pickpocket_v005.py` from the Pickpocket turnaround suppli
 - **Fewer fingers:** the reference's fourth, small finger is folded into the middle finger, so there are three fingers.
 - **Visible gap:** the coin is held with a 3.5 mm gap to each fingertip so it never touches the fingers. At close range a hairline gap shows.
 
+## Review stage 6: Crown Heist (v006)
+
+Built by `source/build_crown_heist_v006.py` from the Crown Heist turnaround supplied with the v006 brief (front, back, left, right, three-quarter and crown detail). It imports the v001, v002 and v005 build scripts as libraries, doesn't re-run them, and uses the **v002 atlas unchanged**. All 94 v001–v005 files are hash-checked before and after the build and are byte-identical (`manifest_v006.json → v001_v005_files_unchanged: true`).
+
+| | |
+|---|---|
+| FBX | `export/CrownHeist_v006.fbx` |
+| Hierarchy | `CrownHeist_Root` → `CrownHeist_Net` (handle, hoop, crest, cage ribbons, trigger, perch; 23 seated shells), `CrownHeist_Crown` |
+| Triangles | Net 7,808 · Crown 1,800 · **total 9,608** |
+| Size | 3.50 W × 1.68 D × 4.66 H studs (0.980 × 0.470 × 1.306 m); crown 0.99 × 1.11 × 0.65 studs |
+| Root pivot | Presentation (bounding-box) centre; the net is aligned with it |
+| Crown | Local transform: location (0, 0, 0.167) m, rotation 0, scale 1. The pivot is the crown's bounding-box centre and the front (pearl diamond) faces −Y |
+| Removal | Straight out through the cage's central front window, toward −Y |
+
+**Construction:**
+
+- **Hoop:** a round gold tube, 72 segments, radius 0.45 m. It carries an asymmetric crest: a cream wing with a gold-set pearl on both faces at the upper left, and a gold horn at the upper right. There are gold diamond clamps at the sides.
+- **Cage:** an ellipsoid with a depth semi-axis of 0.225 m.
+  - Two **cobalt** loops in the planes x = ±0.18 m and two **teal** loops in the planes z = ±0.171 m, each meeting the hoop at its centre line.
+  - **Weave:** the ribbons are displaced ±21 mm along the cage normal in a checkerboard pattern, so at each crossing one passes over the other. The offset fades to zero at the hoop. Ribbon gap at every crossing: **22.1 mm**, 0 intersections.
+  - **Front window:** 0.298 × 0.280 m.
+- **Crown:** a flared gold body with five points (one facing front) and gold balls on the tips, a cream band with gold rims and pearl studs, and a pearl diamond at the front.
+- **Perch:** the crown rests 4 mm above a gold perch with a cream collar, so it doesn't float.
+- **Handle:** cream shaft with gold bands, a pearl-set collar, a gold pommel with a pearl, and a coral trigger on the left.
+
+**Validation:**
+
+- **Crown at rest:** 14.4 mm clearance to the net, 0 intersections.
+- **Removal test:** the crown is slid out in 1 cm steps over 0.41 m until it is fully clear of the cage front. Minimum clearance **4.0 mm** (the perch gap at the start), **0 intersections**.
+- **Geometry:** 0 open edges, 0 inside-out shells, 0 degenerate triangles, 0 same-facing coplanar overlaps, 0 floating shells. UVs are inside 0–1, with one material slot per mesh.
+- **FBX round trip passes:** hierarchy and names, item and per-mesh size within 2 mm, root at the presentation centre (0.0 mm), crown pivot within 2 mm, local rotation and scale identity, and no helpers exported.
+
+**Renders** in `renders/v006_crown_heist/`:
+1. `01_front_ortho.png`
+2. `02_back_ortho.png`
+3. `03_left_right_ortho.png`
+4. `04_hero_three_quarter.png`
+5. `05_crown_net_closeup.png`
+6. `06_crown_separate.png`
+7. `07_crown_removal_path.png`
+8. `08_r15_scale_comparison.png`
+9. `09_shop_scale_comparison.png`
+10. `10_gameplay_distance.png`
+11. `11_material_closeup.png`
+12. `12_wireframe_pivots.png`
+13. `13_contact_sheet.png`
+
+**Compromises:**
+
+- **Vault not read:** the vault notes (`UI & Visual Style.md`, `Roblox Dev Home.md` and the item notes) weren't available to this cloud session. Conventions come from v001–v005 and the reference.
+- **Perch added:** the reference shows no perch. The gold perch was added so the captured crown is visibly supported.
+- **Texture clamping at the extremes:** the item is 1.31 m tall, which exceeds the atlas projection window (±0.56 m). The outermost ~7 cm (crest tip, pommel) take the edge colour of their cell, with valid UVs inside 0–1.
+- **Tight net budget:** the net is 7,808 triangles against the 8,000 cap, so any further detail would need cuts elsewhere.
+
 ## Open items for the reviewer
 
 - This session ran in a cloud container, so the macOS paths in the brief (`/Users/aaronlee/...`) were not reachable. That includes the required reading (`UI & Visual Style.md`, `Roblox Dev Home.md`, `Party Games.md`), the LihFolk notes and the party-game repository. The item names and effects here are taken **only** from the brief (Party Dice Block, Coin Shield, Warp Token; future Double/Triple/Lucky/controlled-roll dice). No gameplay was invented, but the names still need checking against the real item definitions before the remaining set is modelled.

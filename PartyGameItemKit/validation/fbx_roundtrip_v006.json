@@ -1,0 +1,86 @@
+{
+  "version": "v006",
+  "items": {
+    "CrownHeist": {
+      "file": "export/CrownHeist_v006.fbx",
+      "bytes": 1310684,
+      "importer": "Blender 5.2.3 LTS FBX importer",
+      "hierarchy": {
+        "CrownHeist_Crown": "CrownHeist_Root",
+        "CrownHeist_Net": "CrownHeist_Root",
+        "CrownHeist_Root": null
+      },
+      "root_matches": true,
+      "names_match": true,
+      "mesh_count": 2,
+      "helpers_present": [],
+      "meshes": {
+        "CrownHeist_Crown": {
+          "parent": "CrownHeist_Root",
+          "triangles": 1800,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0968,
+            0.9275
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.167
+          ],
+          "pivot_matches_source_2mm": true,
+          "bounds_match_2mm": true,
+          "local_rotation_scale_identity": true
+        },
+        "CrownHeist_Net": {
+          "parent": "CrownHeist_Root",
+          "triangles": 7808,
+          "triangles_match": true,
+          "uv_layers": 1,
+          "uv_bounds": [
+            0.0151,
+            0.9902
+          ],
+          "uv_in_0_1": true,
+          "material_slots": 1,
+          "materials": [
+            "PGK_KitAtlas"
+          ],
+          "local_translation_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pivot_matches_source_2mm": true,
+          "bounds_match_2mm": true,
+          "local_rotation_scale_identity": true
+        }
+      },
+      "world_bounds_m": [
+        0.98,
+        0.4701,
+        1.306
+      ],
+      "source_bounds_m": [
+        0.98,
+        0.4701,
+        1.306
+      ],
+      "bounds_match_2mm": true,
+      "root_to_presentation_centre_m": 0.0,
+      "embedded_images": [
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__7e073b0",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__8897896",
+        "PGK_Atlas_v002_v002_v002_v002_v002_v002_v002_v002_v002__f548d66"
+      ],
+      "root_pivot_within_2mm": true,
+      "pass": true
+    }
+  }
+}

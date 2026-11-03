@@ -1,0 +1,488 @@
+{
+  "kit": "PartyGameItemKit",
+  "version": "v006",
+  "stage": "review-6 (Crown Heist)",
+  "builds_on": {
+    "scripts": [
+      "source/build_item_kit.py",
+      "source/build_dice_family_v002.py",
+      "source/build_pickpocket_v005.py"
+    ]
+  },
+  "units": {
+    "blender": "metres",
+    "stud_m": 0.28
+  },
+  "atlas": {
+    "maps": {
+      "Color": "textures/PGK_Atlas_v002_Color.png",
+      "Roughness": "textures/PGK_Atlas_v002_Roughness.png",
+      "Metalness": "textures/PGK_Atlas_v002_Metalness.png",
+      "Emissive": "textures/PGK_Atlas_v002_Emissive.png"
+    },
+    "new_cells": [],
+    "note": "v002 atlas unchanged: GOLD, GOLD_SATIN, CREAM, TEAL, COBALT, CORAL_ENAMEL, PEARL"
+  },
+  "material": "PGK_KitAtlas (one slot per mesh, v002 maps)",
+  "items": {
+    "CrownHeist": {
+      "reference": "Crown Heist turnaround attached to the v006 brief (front / back / left / right / 3-4 / crown detail)",
+      "collection": "PGK_CrownHeist",
+      "root": "CrownHeist_Root",
+      "hierarchy": {
+        "CrownHeist_Root": [
+          "CrownHeist_Net",
+          "CrownHeist_Crown"
+        ]
+      },
+      "pivots": {
+        "CrownHeist_Root": "presentation (bounding-box) centre of the whole item, at (0,0,0)",
+        "CrownHeist_Net": "aligned with the root (identity local transform)",
+        "CrownHeist_Crown": {
+          "location_m": [
+            0.0,
+            0.0,
+            0.167
+          ],
+          "location_studs": [
+            0.0,
+            0.0,
+            0.596
+          ],
+          "rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "pivot": "crown bounding-box centre",
+          "front": "-Y (pearl diamond)",
+          "removal_direction": "-Y, straight out through the cage's central front window"
+        }
+      },
+      "meshes": {
+        "CrownHeist_Net": {
+          "export_name": "CrownHeist_Net",
+          "triangles": 7808,
+          "vertices": 3940,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "COBALT",
+            "CORAL_ENAMEL",
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL",
+            "TEAL"
+          ],
+          "uv_bounds": [
+            0.0151,
+            0.9902
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_m": [
+            0.98,
+            0.4701,
+            1.306
+          ],
+          "bounds_studs": [
+            3.5,
+            1.68,
+            4.66
+          ],
+          "shells": 23,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        },
+        "CrownHeist_Crown": {
+          "export_name": "CrownHeist_Crown",
+          "triangles": 1800,
+          "vertices": 922,
+          "material": "PGK_KitAtlas",
+          "material_slots": 1,
+          "atlas_cells": [
+            "CREAM",
+            "GOLD",
+            "GOLD_SATIN",
+            "PEARL"
+          ],
+          "uv_bounds": [
+            0.0968,
+            0.9275
+          ],
+          "origin_m": [
+            0.0,
+            0.0,
+            0.167
+          ],
+          "local_rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "local_scale": [
+            1,
+            1,
+            1
+          ],
+          "bounds_m": [
+            0.2781,
+            0.312,
+            0.182
+          ],
+          "bounds_studs": [
+            0.99,
+            1.11,
+            0.65
+          ],
+          "shells": 13,
+          "inverted_shells": 0,
+          "non_manifold_edges": 0,
+          "degenerate_tris": 0
+        }
+      },
+      "mesh_count": 2,
+      "triangles_net": 7808,
+      "triangles_crown": 1800,
+      "triangles_total": 9608,
+      "bounds_m": [
+        0.98,
+        0.4701,
+        1.306
+      ],
+      "bounds_studs": [
+        3.5,
+        1.68,
+        4.66
+      ],
+      "crown_dims_m": [
+        0.2781,
+        0.312,
+        0.182
+      ],
+      "crown_dims_studs": [
+        0.99,
+        1.11,
+        0.65
+      ],
+      "cage": {
+        "hoop_radius_m": 0.45,
+        "depth_semi_axis_m": 0.225,
+        "cobalt_planes_x_m": 0.18,
+        "teal_planes_z_m": 0.171,
+        "front_window_m": [
+          0.298,
+          0.28
+        ],
+        "weave_offset_m": 0.021,
+        "ribbon_clearance": {
+          "cobalt_L - cobalt_R": {
+            "min_clearance_m": 0.2985,
+            "intersections": 0
+          },
+          "cobalt_L - teal_low": {
+            "min_clearance_m": 0.0221,
+            "intersections": 0
+          },
+          "cobalt_L - teal_up": {
+            "min_clearance_m": 0.0221,
+            "intersections": 0
+          },
+          "cobalt_R - teal_low": {
+            "min_clearance_m": 0.0221,
+            "intersections": 0
+          },
+          "cobalt_R - teal_up": {
+            "min_clearance_m": 0.0221,
+            "intersections": 0
+          },
+          "teal_low - teal_up": {
+            "min_clearance_m": 0.2804,
+            "intersections": 0
+          }
+        }
+      },
+      "net_shells": 23,
+      "floating_shells": 0,
+      "crown_rest": {
+        "min_clearance_m": 0.0144,
+        "intersections": 0,
+        "perch_gap_m": 0.004
+      },
+      "crown_removal": {
+        "direction": "-Y (out through the front window)",
+        "step_m": 0.01,
+        "travel_m": 0.41,
+        "min_clearance_m": 0.004,
+        "intersections": 0,
+        "samples": [
+          {
+            "travel_m": 0.0,
+            "min_clearance_m": 0.0144,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.01,
+            "min_clearance_m": 0.0234,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.02,
+            "min_clearance_m": 0.033,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.03,
+            "min_clearance_m": 0.031,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.04,
+            "min_clearance_m": 0.0215,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.05,
+            "min_clearance_m": 0.0128,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.06,
+            "min_clearance_m": 0.0067,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.07,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.08,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.09,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.1,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.11,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.12,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.13,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.14,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.15,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.16,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.17,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.18,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.19,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.2,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.21,
+            "min_clearance_m": 0.004,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.22,
+            "min_clearance_m": 0.0078,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.23,
+            "min_clearance_m": 0.0111,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.24,
+            "min_clearance_m": 0.0159,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.25,
+            "min_clearance_m": 0.0175,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.26,
+            "min_clearance_m": 0.0206,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.27,
+            "min_clearance_m": 0.0218,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.28,
+            "min_clearance_m": 0.0247,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.29,
+            "min_clearance_m": 0.0265,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.3,
+            "min_clearance_m": 0.029,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.31,
+            "min_clearance_m": 0.0336,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.32,
+            "min_clearance_m": 0.0368,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.33,
+            "min_clearance_m": 0.0409,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.34,
+            "min_clearance_m": 0.0465,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.35,
+            "min_clearance_m": 0.0479,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.36,
+            "min_clearance_m": 0.0489,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.37,
+            "min_clearance_m": 0.0506,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.38,
+            "min_clearance_m": 0.0531,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.39,
+            "min_clearance_m": 0.0568,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.4,
+            "min_clearance_m": 0.0604,
+            "intersections": 0
+          },
+          {
+            "travel_m": 0.41,
+            "min_clearance_m": 0.065,
+            "intersections": 0
+          }
+        ]
+      },
+      "coplanar_overlap_pairs": 0,
+      "fbx": "export/CrownHeist_v006.fbx"
+    }
+  },
+  "blend": "source/PartyGameItemKit_CrownHeist_v006.blend",
+  "review_helpers": {
+    "collections": [
+      "Review_Helpers",
+      "Reference_Items",
+      "Review_Stage"
+    ],
+    "excluded_from_exports": true
+  },
+  "renders": [
+    "renders/v006_crown_heist/01_front_ortho.png",
+    "renders/v006_crown_heist/02_back_ortho.png",
+    "renders/v006_crown_heist/03_left_right_ortho.png",
+    "renders/v006_crown_heist/04_hero_three_quarter.png",
+    "renders/v006_crown_heist/05_crown_net_closeup.png",
+    "renders/v006_crown_heist/06_crown_separate.png",
+    "renders/v006_crown_heist/07_crown_removal_path.png",
+    "renders/v006_crown_heist/08_r15_scale_comparison.png",
+    "renders/v006_crown_heist/09_shop_scale_comparison.png",
+    "renders/v006_crown_heist/10_gameplay_distance.png",
+    "renders/v006_crown_heist/11_material_closeup.png",
+    "renders/v006_crown_heist/12_wireframe_pivots.png",
+    "renders/v006_crown_heist/13_contact_sheet.png"
+  ],
+  "validation": {
+    "CrownHeist": true
+  },
+  "missing_files": [],
+  "renders_expected": 13,
+  "renders_missing": 0,
+  "v001_v005_files_checked": 94,
+  "v001_v005_files_unchanged": true,
+  "v001_v005_files_changed": []
+}
